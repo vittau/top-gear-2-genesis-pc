@@ -21,6 +21,7 @@ def main():
     p.add_argument('--out', type=Path, default=ROOT / 'build/fps/stock')
     p.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
     p.add_argument('--extra', nargs='*', default=[])
+    p.add_argument('--port', type=int, default=4410)
     p.add_argument('--start', type=int, default=3600)
     p.add_argument('--count', type=int, default=360)
     p.add_argument('--shots', default='', help='comma-separated extra frame screenshots')
@@ -31,8 +32,8 @@ def main():
     (a.exe.parent / 'debug.ini').touch()
     # Fail on this port only; other worktrees may have their own runtime.
     with socket.socket() as sock:
-        if sock.connect_ex(('127.0.0.1', 4410)) == 0:
-            p.error('port 4410 is occupied')
+        if sock.connect_ex(('127.0.0.1', a.port)) == 0:
+            p.error(f'port {a.port} is occupied')
     actions = {}
     names = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'B', 'C', 'A', 'START']
     for row in json.loads((ROOT / 'game/baseline-route.json').read_text()):
@@ -59,8 +60,11 @@ def main():
     script_path = a.out / 'route.input'
     script_path.write_text('\n'.join(script) + '\n')
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy')
+    # A host $APPIMAGE would anchor debug.ini/saves/evidence to the AppImage
+    # directory and move the TCP server away from this build.
+    env.pop('APPIMAGE', None)
     args = [str(a.exe), str(Path.home() / 'roms/genesis/tg2.bin'), '--no-launcher',
-            '--port', '4410', '--max-frames', str(max(5600, previous + 2)),
+            '--port', str(a.port), '--max-frames', str(max(5600, previous + 2)),
             '--hash-frames', '1', '--fresh-evidence', '--input-script', str(script_path),
             '--wav', str(a.out / 'audio.wav'), *a.extra]
     with (a.out / 'stdout.log').open('w') as out, (a.out / 'stderr.log').open('w') as err:
