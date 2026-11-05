@@ -41,10 +41,10 @@ table. Its atlas holds four perspective road sections in rows 0..431, a
 separator, and the authored skyline panorama in rows 432..511.
 
 - The road sections straddle the plane seam at X=0: the road's two halves
-  meet across X=0/512 and the exterior ground sits at X=256 (and just below
-  512). `road_x()` unwraps the road around the native view's centre so both
-  halves of *one* road are sampled, and clamps to the atlas half-domain
-  `[-256, 255]`. Margins therefore never show a second, wrapped road.
+  meet across X=0/512, with the exterior ground around X=256. `road_x()`
+  unwraps the road around the native view's centre so both halves of *one*
+  road are sampled, and clamps to the atlas half-domain `[-256, 255]`.
+  Margins therefore never show a second, wrapped road.
 - Rows 432..511 are the skyline: they keep the plane's authored panorama wrap,
   so the skyline continues scrolling through the margins.
 - Each row uses its own H-scroll (plane B register / VSRAM) and V-scroll, so
@@ -71,10 +71,10 @@ car and the whole native viewport remain the native pixels.
 
 Two further read-only hooks delimit a scene: `$0067EE` clears the capture at
 the SAT allocator reset (`move.w #$7f,-$6130(a3)`), and `$006982` publishes it
-after `$00B85E` has linked the SAT. A four-scene history keeps each captured
-scene for four frames; the renderer only uses a capture whose SAT bytes match
-the SAT actually present in live VRAM at `$BE00`, so a captured actor is never
-painted over the next frame's picture. The `tg2_video` debug command reports
+after `$00B85E` has linked the SAT. A four-scene history is kept; the renderer
+only uses the newest capture whose SAT bytes match the SAT actually present in
+live VRAM at `$BE00`, so a captured actor is never painted over the next
+frame's picture. The `tg2_video` debug command reports
 `published`/`displayed` serials, matched pieces, margin pieces, sprite margin
 pixels, overflow and the per-line scroll states.
 
@@ -145,9 +145,10 @@ Produced by `tools/verify_widescreen.py --port 4400 --modes off,16:9,21:9`
 | Discovery | `dispatch_misses.toml`, `floor_coverage.toml`, `interior_label_misses.toml`, `floor_unsafe.toml` all report 0 entries after each route |
 
 `margin-*.png` frames show actors and roadside objects crossing the old
-256-pixel edge (for example `16-9/margin-3222.png` has an opponent car
-straddling the right boundary and a tree in the left margin;
-`21-9/margin-3223.png` and neighbours show the wider margins).
+256-pixel edge: `16-9/margin-3222.png` has an opponent car straddling the
+right boundary and a tree in the left margin, and `21-9/margin-3223.png` shows
+the same car wholly inside the right margin with the tree further out in the
+left margin.
 
 ## Known artefacts and limitations
 
