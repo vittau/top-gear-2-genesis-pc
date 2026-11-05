@@ -35,10 +35,10 @@ if ($LASTEXITCODE) { throw 'Applying engine patches failed' }
     "-DTG2_ROM=$Rom" `
     "-DTG2_SDL_SOURCE=$SdlSource" `
     "-DTG2_BUILD_VERSION=$Version" `
-    -DGEN_ENABLE_TRACE=OFF `
-    -DSONIC_REVERSE_DEBUG=OFF `
-    -DGENESIS_NATIVE_IPO=ON `
-    -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+    "-DGEN_ENABLE_TRACE=OFF" `
+    "-DSONIC_REVERSE_DEBUG=OFF" `
+    "-DGENESIS_NATIVE_IPO=ON" `
+    "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
     "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 if ($LASTEXITCODE) { throw 'Release configure failed' }
 
