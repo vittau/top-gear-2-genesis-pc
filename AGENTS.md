@@ -1,0 +1,63 @@
+# Top Gear 2 (Genesis) — native PC static recompilation
+
+Goal: native Linux (and later Windows) executable of **Top Gear 2 (USA), Sega
+Genesis**, built by static recompilation with the `segagenesisrecomp`
+framework. The finished port runs **widescreen (adaptive, 16:9+)** at a
+**true 60 fps**. No emulator core.
+
+`docs/ORIGINAL_PLAN.md` is the owner's initial roadmap. Treat it as a
+suggestion, not a spec. Some of the tools it names don't exist as described.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `segagenesisrecomp/` | Engine submodule (recompiler + shared runner). Read its `CLAUDE.md`, `PRINCIPLES.md` and `DEBUG.md` before working on it. |
+| `recomp-ui/` | Launcher/overlay UI submodule (same one RocketKnightAdventuresRecomp uses). |
+| `game/` | Everything specific to Top Gear 2: `game.toml`, `tg2_spec.c`, renderer, options, discovery evidence. |
+| `tools/` | Project scripts: build, probes, smoke tests. |
+| `docs/` | Findings, RAM/ROM maps, validation ledger. |
+| `patches/segagenesisrecomp/` | Engine fixes we need but can't push upstream. Keep as `git format-patch` files, applied by `tools/apply-engine-patches.sh`. |
+
+Reference implementation: `~/git/tg2-deps/RocketKnightAdventuresRecomp`. It
+is a non-Sonic game with no community disassembly that reached adaptive
+widescreen, so it's the closest template. Copy its structure (CMake, spec,
+`game.toml` discovery loop, `tools/build-linux.sh`, its custom `GameVideo`
+renderer) and adapt it. Don't copy its game-specific addresses.
+
+## ROM
+
+- Top Gear 2 (USA). CRC32 `BD3074D2`, SHA-256
+  `b41909d53090e28c1d1e50941dad01676dd3d19caf26c75f66aac6a3ad689ba6`, 1 MB.
+  Header serial `GM T-23066 -00`, region U.
+- Vectors: SSP `$00FFFFFE`, entry `$000200`, V-int `$00FF01EA` (RAM),
+  H-int `$00FFF9FE` (RAM).
+- Read-only copy at `~/roms/genesis/tg2.bin`. Point builds/tools at it by
+  path. **Never copy a ROM, dump, save state or generated C into git.**
+
+## Rules
+
+- Never edit generated C. Fix `game.toml`, discovery evidence, or the
+  recompiler/runner, then regenerate.
+- Disassembly and runtime evidence are ground truth (engine PRINCIPLES #16).
+  Check every new function seed against the raw ROM before adding it.
+- After every run, check `dispatch_misses.toml` / `floor_coverage.toml`
+  next to the executable. Fix the misses in discovery, not with stubs.
+- Keep game-specific code in `game/`. Change the engine only for genuine
+  framework bugs. Record each engine change as a patch in
+  `patches/segagenesisrecomp/` with a one-line reason in
+  `patches/segagenesisrecomp/README.md`.
+- Widescreen and 60 fps must be options. With both off, the output must stay
+  byte-identical to the stock 4:3 behaviour (framebuffer hashes).
+- One runtime instance at a time. Kill the previous one before relaunching.
+- Run headless/TCP probes. Don't steal the desktop with windows unless the
+  task asks for it.
+- Tools live in `~/tools` (cmake 4.1.2, ninja), linked into `~/.local/bin`.
+  There is no passwordless sudo. Ask before anything that needs it.
+- Commit your work in small, described commits on your branch. Never push.
+  Never commit ROM-derived artifacts.
+
+## Reporting
+
+Finish with evidence: commands run, exit codes, frame hashes or screenshot
+paths, dispatch-miss counts. Say plainly what is verified and what isn't.

@@ -1,0 +1,34 @@
+# Build output
+build/
+build-*/
+engine-local/
+
+# ROMs / dumps: never commit. The canonical dump lives outside the tree
+# (default ~/roms/genesis/tg2.bin). *.md is a ROM extension too, so ROMs
+# with that extension are ignored by name.
+*.bin
+*.gen
+*.smd
+/Top Gear 2*.md
+
+# Runtime / debug artifacts
+*.srm
+*.wav
+*.png
+!/docs/images/*.png
+*.log
+run.err
+run.out
+settings.ini
+*.ram
+*.vram
+rom.cfg
+debug.ini
+dispatch_misses*.toml
+floor_coverage.toml
+interior_label_misses.toml
+floor_unsafe.toml
+
+# Python
+__pycache__/
+*.pyc
