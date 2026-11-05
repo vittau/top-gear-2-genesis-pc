@@ -1,0 +1,38 @@
+From c190675e6a434599cd3adfdd6f4d75ad713a7faa Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 15:08:32 -0300
+Subject: [PATCH] Compile synthetic RTS targets as computed tail transfers
+
+A negative guest stack delta at RTS denotes a pushed return target.
+Pop that longword and dispatch it, preserving stack adjustments across
+split functions instead of returning to C and leaking the guest stack.
+---
+ profiles/genesis/code_generator.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/profiles/genesis/code_generator.c b/profiles/genesis/code_generator.c
+index 2a02db3..b952c0b 100644
+--- a/profiles/genesis/code_generator.c
++++ b/profiles/genesis/code_generator.c
+@@ -2016,6 +2016,18 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+ 
+     /* ------------------------------------------------------------------ */
+     case MN_RTS:
++        /* A negative net stack delta means the guest left a synthetic
++         * return target on the stack (MOVE.L/PEA ...,-(SP); RTS). This is
++         * a computed tail transfer, not a return to the native C caller.
++         * Pop exactly the target longword and carry any earlier stack
++         * adjustment across the split-function dispatch chain. */
++        fprintf(f, "  if (%s < 0) {\n",
++                *has_sp_adjust ? "_sp_popped" : "g_split_sp_popped");
++        fprintf(f, "    uint32_t _rts_target = m68k_read32(g_cpu.A[7]); g_cpu.A[7] += 4;\n");
++        fprintf(f, "    %s += 4;\n", *has_sp_adjust ? "_sp_popped" : "g_split_sp_popped");
++        emit_split_tail_call_expr(f, "    ", "_rts_target", *has_sp_adjust,
++                                  estimate_cycles(instr));
++        fprintf(f, "  }\n");
+         /* A stack skip can discard MORE than one return slot (SMPS's
+          * stop-track command uses addq.w #8,sp). Carry the complete count
+          * through the C callers; a boolean loses the second unwind and
+-- 
+2.56.0
+

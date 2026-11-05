@@ -2,7 +2,7 @@
 [game]
 output_prefix = "tg2"
 jump_table_autodiscovery = true
-discovery_files = ["irq.discovery.toml"]
+discovery_files = ["irq.discovery.toml", "menu.discovery.toml", "driver.discovery.toml", "road.discovery.toml"]
 
 [ram_layout]
 game_mode = 0

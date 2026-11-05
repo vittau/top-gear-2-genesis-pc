@@ -1,0 +1,37 @@
+# Two-level menu state tables, raw-ROM audited by discover_menu_tables.py.
+[functions]
+late_extra = [
+  # Leaf table $01ED98..$01EE34, dispatcher $01ED68.
+  0x01EF02, # pointer at $01ED98
+  0x01EEEA, # pointer at $01ED9C
+  0x01EE64, # pointer at $01EDA0
+  0x01EE34, # pointer at $01EDA4
+  0x01EEC0, # pointer at $01EDA8
+  0x01EE6C, # pointer at $01EDAC
+  0x01EE58, # pointer at $01EDB0
+  0x01EE96, # pointer at $01EDB4
+  0x01EF7C, # pointer at $01EDB8
+  0x01EE3A, # pointer at $01EDC4
+  0x01EFCE, # pointer at $01EDCC
+  0x01F0D4, # pointer at $01EDE8
+  0x01EE4C, # pointer at $01EDF4
+  0x01F06A, # pointer at $01EDFC
+  0x01F126, # pointer at $01EE10
+  0x01EE46, # pointer at $01EE1C
+  0x01F1A4, # pointer at $01EE24
+  # Leaf table $0219DE..$021A4A, dispatcher $0219B6.
+  0x021A62, # pointer at $0219DE
+  0x021D04, # pointer at $0219E2
+  0x021E14, # pointer at $0219E6
+  0x021E68, # pointer at $0219EA
+  0x021D1C, # pointer at $0219EE
+  0x021DE0, # pointer at $0219F2
+  0x021A56, # pointer at $0219F6
+  0x021D74, # pointer at $0219FA
+  0x021AD8, # pointer at $0219FE
+  0x021A4A, # pointer at $021A0A
+  0x021DAC, # pointer at $021A0E
+  0x021C0E, # pointer at $021A12
+  0x021C60, # pointer at $021A26
+  0x021CB2, # pointer at $021A3A
+]

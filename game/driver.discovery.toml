@@ -1,0 +1,20 @@
+# Raw-ROM sound-driver public veneers at $070000..$07006E:
+# BRA.W wrappers, followed by LEA abs.l,a1; JMP(a1) stubs. The function finder
+# follows BRA but cannot resolve these final register jumps without roots.
+# Targets independently audited with tools/disasm_tg2.py (not runtime-only seeds).
+[functions]
+extra = [
+  0x070004, # BRA.W $070038, called when acceleration changes engine pitch
+  0x07000C, # BRA.W $070048
+  0x0700C8, # LEA at $070030
+  0x07018A, # LEA at $070038
+  0x0708E0, # LEA at $070040
+  0x07090E, # LEA at $070048
+  0x07092C, # LEA at $070050
+  0x0709FC, # LEA at $070058
+  0x070A12, # LEA at $070060
+  0x070AC0, # LEA at $070068
+]
+# Standalone object callback, MOVE.L #callback,12(a4) at ROM $003CE8.
+# Body at $00E436 starts MOVE.W 2(a0),d1, early RTS, then motion arithmetic.
+late_extra = [0x00E436]

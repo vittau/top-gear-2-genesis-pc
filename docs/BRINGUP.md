@@ -86,3 +86,28 @@ Distribution targets are recorded in AGENTS.md. This workstation's glibc
 2.44 binary is development evidence only; older-glibc Linux/Deck release
 qualification, bundled SDL release packaging, Windows and both macOS
 architectures still need separate builds and device checks.
+
+## Road renderer RTS dispatch
+
+The accelerated clean-build run showed correct gameplay at frame 3300 (97 MPH,
+19th place), then corrupted and watchdog-exited 2 at frame 3779. Retrospective
+frame snapshots show a falling main SP: `$FFFEDE` near frame 2800 to `$FFFB6A`
+near frame 3300. `build/raster-audit/events.json` locates the earlier damage:
+the copied H-int bytes are intact through frame 3400, then overwritten from
+high addresses downward beginning at `$FFFA42` by frame 3406, before the bad
+H-int fetch and bogus object callback addresses. These are stack writes into
+code, not missing functions; `$00058C` and `$0002C6` must not be seeded.
+
+Raw-ROM road renderers at `$007B00`, `$007CDC` and `$007E70` load a table
+pointer, push it on the guest stack and execute RTS as a computed jump.
+The old generator emitted a C return, losing the target and leaving four
+extra bytes on the guest stack on each renderer call. Patch 3 treats negative
+net stack delta at RTS as a pushed target, pops its longword and tail-dispatches
+it while carrying earlier stack adjustments. `tools/discover_rts_tables.py`
+audits the three bounded 32-entry tables and emits only their callable
+addresses. This is an engine code-generation fix, not generated-C editing.
+
+`tools/test_rts_dispatch.py` executes synthetic generated C for immediate,
+address-register and PEA targets, each with/without a split edge and a saved
+word below the target. The old generator fails the first fixture; the updated
+generator is checked alongside the existing stack-skip regression suite.
