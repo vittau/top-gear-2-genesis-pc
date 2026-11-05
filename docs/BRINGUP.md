@@ -111,3 +111,10 @@ addresses. This is an engine code-generation fix, not generated-C editing.
 address-register and PEA targets, each with/without a split edge and a saved
 word below the target. The old generator fails the first fixture; the updated
 generator is checked alongside the existing stack-skip regression suite.
+
+The CMake consumer also accepts `TG2_SDL_SOURCE` for a supplied SDL2 source
+checkout, builds its static library, and accepts ordinary CMake SDK/sysroot
+selection. Windows development defaults to the engine's bundled SDL package
+and stages its DLL. Linux development currently uses the installed SDL
+package; that path is not a distribution recipe. Only the current Linux
+configuration has been compiled here.

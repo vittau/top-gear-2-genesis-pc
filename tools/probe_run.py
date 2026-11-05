@@ -21,6 +21,7 @@ p.add_argument('--frames', type=int, default=1800)
 p.add_argument('--port', type=int, default=4400)
 p.add_argument('--shots', default='300,600,900,1200,1500')
 p.add_argument('--actions', default='[]', help='JSON list: frame, keys (hex), optional shot name')
+p.add_argument('--actions-file', type=Path, help='Read the timeline from a JSON file')
 p.add_argument('--force-interp', action='store_true', help='Diagnostic comparison only; not native qualification')
 p.add_argument('--timeout', type=int, default=180)
 a = p.parse_args()
@@ -33,7 +34,7 @@ if subprocess.run(['pgrep', '-x', 'TG2Recomp'], stdout=subprocess.DEVNULL).retur
 env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy')
 if a.force_interp:
     env['GENESIS_FORCE_INTERP'] = '1'
-actions = json.loads(a.actions)
+actions = json.loads(a.actions_file.read_text() if a.actions_file else a.actions)
 actions += [dict(frame=int(f), shot=f'frame-{f}') for f in a.shots.split(',') if f]
 actions.sort(key=lambda x: x['frame'])
 events = []
@@ -67,6 +68,10 @@ with (a.out / 'stdout.log').open('w') as out, (a.out / 'stderr.log').open('w') a
             while actions and frame >= actions[0]['frame']:
                 action = actions.pop(0)
                 record = dict(requested=action, observed_frame=frame)
+                if 'cmd' in action:
+                    args = {k: v.replace('{out}', str(a.out)) if isinstance(v, str) else v
+                            for k, v in action.get('args', {}).items()}
+                    record['command'] = command(action['cmd'], **args)
                 if 'keys' in action:
                     record['input'] = command('set_input', keys=action['keys'])
                 if 'shot' in action:

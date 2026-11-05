@@ -1,0 +1,117 @@
+[
+  {
+    "frame": 600,
+    "shot": "title"
+  },
+  {
+    "frame": 700,
+    "keys": "80"
+  },
+  {
+    "frame": 708,
+    "keys": "0"
+  },
+  {
+    "frame": 1000,
+    "keys": "2"
+  },
+  {
+    "frame": 1008,
+    "keys": "0"
+  },
+  {
+    "frame": 1080,
+    "keys": "2"
+  },
+  {
+    "frame": 1088,
+    "keys": "0"
+  },
+  {
+    "frame": 1160,
+    "keys": "2"
+  },
+  {
+    "frame": 1168,
+    "keys": "0"
+  },
+  {
+    "frame": 1240,
+    "keys": "2"
+  },
+  {
+    "frame": 1248,
+    "keys": "0"
+  },
+  {
+    "frame": 1350,
+    "shot": "menu"
+  },
+  {
+    "frame": 1400,
+    "keys": "80"
+  },
+  {
+    "frame": 1408,
+    "keys": "0"
+  },
+  {
+    "frame": 1800,
+    "keys": "80"
+  },
+  {
+    "frame": 1808,
+    "keys": "0"
+  },
+  {
+    "frame": 2200,
+    "keys": "80"
+  },
+  {
+    "frame": 2208,
+    "keys": "0"
+  },
+  {
+    "frame": 2600,
+    "keys": "80"
+  },
+  {
+    "frame": 2608,
+    "keys": "0"
+  },
+  {
+    "frame": 2800,
+    "shot": "race-start"
+  },
+  {
+    "frame": 3000,
+    "keys": "10"
+  },
+  {
+    "frame": 3000,
+    "cmd": "audio_wav",
+    "args": {
+      "action": "start",
+      "path": "{out}/race.wav"
+    }
+  },
+  {
+    "frame": 3300,
+    "shot": "race-moving"
+  },
+  {
+    "frame": 4500,
+    "shot": "mid-race"
+  },
+  {
+    "frame": 4600,
+    "cmd": "audio_wav",
+    "args": {
+      "action": "stop"
+    }
+  },
+  {
+    "frame": 5200,
+    "keys": "0"
+  }
+]

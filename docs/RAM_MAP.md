@@ -40,3 +40,16 @@ Further raw-ROM evidence from the race interrupt path:
 The last two entries matter to the remaining moving-race corruption: at frame
 3445, its indirect call unexpectedly targets noncode `$00058C` / `$0002C6`.
 Do not add these to discovery: raw ROM contains invalid instructions there.
+
+Controller evidence from ROM `$00D7A6..00D872`:
+
+| Address | Size | Meaning | Evidence |
+|---|---|---|---|
+| `$FF18CA` | base | Player-1 record | LEA A3-$6B3E,A4 at `$00D7AC` |
+| `$FF19BE` | byte | Raw player-1 pad mask (active high) | `$00D806` stores D0 at +$F4(A4) |
+| `$FF18FA` | byte | Remapped player-1 controls | `$00D872` stores D0 at +$30(A4) |
+| `$FF18FC` | byte | Previous remapped player-1 controls | `$00D86C` copies +$30 to +$32(A4) |
+| `$FF19AE..FF19BA` | words | Direction/button remapping indices | `$00D80C..00D858`, +$E4..$F0(A4) |
+
+The HUD proves that vehicle speed changes (97 MPH at frame 3300), but its
+canonical RAM speed field is not yet identified; no guessed address is set.

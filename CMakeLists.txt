@@ -8,7 +8,25 @@ set(RECOMP_ROOT "${GENESIS_RECOMP_ROOT}")
 set(RUNNER_ROOT "${RECOMP_ROOT}/runner")
 option(GEN_ENABLE_TRACE "TCP server and retrospective frame rings" ON)
 option(SONIC_REVERSE_DEBUG "WRAM write and instruction history" ON)
-find_package(SDL2 REQUIRED)
+# Development can use an installed SDL package. Release builders supply an
+# SDL source checkout for static linkage and choose their target SDK/sysroot
+# with CMAKE_TOOLCHAIN_FILE (not this workstation's libc).
+set(TG2_SDL_SOURCE "" CACHE PATH "Optional SDL2 source checkout for bundled static builds")
+if(TG2_SDL_SOURCE)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${TG2_SDL_SOURCE}" "${CMAKE_BINARY_DIR}/sdl2" EXCLUDE_FROM_ALL)
+elseif(WIN32)
+    find_package(SDL2 REQUIRED CONFIG NO_DEFAULT_PATH
+        PATHS "${RUNNER_ROOT}/external/SDL2/SDL2-2.28.5/cmake")
+else()
+    find_package(SDL2 REQUIRED CONFIG)
+endif()
+set(TG2_SDL_TARGET SDL2::SDL2)
+if(TARGET SDL2::SDL2-static)
+    set(TG2_SDL_TARGET SDL2::SDL2-static)
+endif()
 include("${RECOMP_ROOT}/cmake/GenesisRecompGenerated.cmake")
 # The engine helper resolves ROM names relative to game/. Keep the private
 # input outside the checkout, with no ROM staging or copying.
@@ -26,7 +44,18 @@ target_compile_definitions(TG2Recomp PRIVATE INCLUDE_GENERATED_CODE=1 ENABLE_REC
     DEFAULT_DEBUG_PORT=4400
     $<$<BOOL:${GEN_ENABLE_TRACE}>:GEN_ENABLE_TRACE=1>
     $<$<BOOL:${SONIC_REVERSE_DEBUG}>:SONIC_REVERSE_DEBUG=1>)
-target_link_libraries(TG2Recomp PRIVATE SDL2::SDL2main SDL2::SDL2)
+target_link_libraries(TG2Recomp PRIVATE ${TG2_SDL_TARGET})
+if(TARGET SDL2::SDL2main)
+    target_link_libraries(TG2Recomp PRIVATE SDL2::SDL2main)
+endif()
+if(WIN32)
+    target_link_libraries(TG2Recomp PRIVATE ws2_32 comdlg32)
+    if(NOT TG2_SDL_SOURCE)
+        add_custom_command(TARGET TG2Recomp POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${RUNNER_ROOT}/external/SDL2/SDL2-2.28.5/lib/x64/SDL2.dll"
+            "$<TARGET_FILE_DIR:TG2Recomp>" VERBATIM)
+    endif()
+endif()
 genesisrecomp_runner_target(TG2Recomp)
 include("${CMAKE_SOURCE_DIR}/recomp-ui/recomp_ui.cmake")
 recomp_target_launcher_ui(TG2Recomp CONSOLE genesis)
