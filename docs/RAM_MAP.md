@@ -16,7 +16,8 @@ unknown fields remain zero in `game/game.toml` rather than borrowing Sonic data.
 | `$FF241C` | long | Selected attract descriptor pointer | `$001E5E` stores through A3-$5FEC |
 | `$FF9F3C` | buffer | Graphics/decompression working buffer | `$01E816..01E840` |
 
-Game mode, player speed and road/camera state have not yet been established.
+Canonical game-mode and player-speed fields have not yet been established;
+known road/raster and input state is listed below.
 The frame counter is 16-bit; generic runner telemetry treats its configured
 address as a long, so raw word reads are the reliable counter measurement.
 
@@ -37,7 +38,7 @@ Further raw-ROM evidence from the race interrupt path:
 | `$FF2734` | word | Active small-object callback count (bounded 64) | A3-$5CD4 at `$003CFA..003D04`, `$00E418` |
 | `$FF2736` | 16-byte slots | Small objects with function pointer at +12 | `$003D12..003D18`, dispatcher `$00E422..00E430` |
 
-The last two entries matter to the remaining moving-race corruption: at frame
+The last two entries helped diagnose the now-fixed moving-race corruption: at frame
 3445, its indirect call unexpectedly targets noncode `$00058C` / `$0002C6`.
 Do not add these to discovery: raw ROM contains invalid instructions there.
 

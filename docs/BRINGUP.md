@@ -1,5 +1,11 @@
 # Native 4:3 bring-up
 
+Verified headless: the native Linux build boots through logos and title, enters
+menus, and completes a 5600-frame scripted run with an accelerating player car,
+road, opponents, track map and HUD. Final ROM dispatch misses and floor coverage
+are both zero; physical speaker playback and owner end-to-end confirmation are
+still outside this headless validation.
+
 Target: stock Top Gear 2 (USA), native `TG2Recomp`, no widescreen or game-rate
 changes. Baseline engine pin: `dd520f1f975a80b080cddc569f3f49035f054101`.
 
@@ -38,7 +44,10 @@ Its committed output contains only addresses and installer locations.
 | Stage | Functions | Runtime evidence |
 |---|---:|---|
 | Reset seed + heuristic jump-table discovery | 361 | 600-frame cold boot stalled black; 0 external misses, 2 interior misses (`$002098`, `$01E722`); floor declined both |
-| Raw-ROM IRQ installer roots | 433 | Validation pending |
+| Raw-ROM IRQ installer roots | 433 | 1800 frames, title and menu correct; 0 external/interior misses, 1 ROM floor entry |
+| + audited menu leaves | 466 | Two-level menu dispatch roots recovered |
+| + sound veneers and object callback | 479 | Moving race exposed the independent RTS stack-dispatch bug |
+| + road RTS tables / final codegen fix | 493 (590 after splitting) | 5600 frames, moving race; 0 misses, 0 ROM floor entries, 0 unsafe/interior entries |
 
 Initial 600-frame run exited 0; its black framebuffer hash was
 `2A0B972960C5E325` at both frames 60 and 300. These describe the failed
@@ -118,3 +127,72 @@ selection. Windows development defaults to the engine's bundled SDL package
 and stages its DLL. Linux development currently uses the installed SDL
 package; that path is not a distribution recipe. Only the current Linux
 configuration has been compiled here.
+
+
+## Final reproducible evidence
+
+Commands (all exit 0):
+
+```sh
+JOBS=4 tools/build-linux.sh ~/roms/genesis/tg2.bin build-verify
+tools/probe_run.py --out build/baseline-final --frames 5600 --shots '' \
+  --actions-file game/baseline-route.json
+tools/test_rom_autodetect.py
+tools/test_rts_dispatch.py
+python3 segagenesisrecomp/tests/tools/test_stack_skip.py \
+  --recompiler build/GenesisRecomp --cc /usr/bin/cc
+```
+
+The clean `build-verify/` was created from scratch with all three engine patches.
+Its 300-frame cold-boot run also exits 0 (`build/clean-boot.log`) and matches
+the final native run's frame-60 and frame-300 framebuffer hashes:
+
+| Cold boot frame | Active framebuffer | FNV-1a-64 |
+|---:|---|---|
+| 60 | 320 × 224 | `2A0B972960C5E325` |
+| 300 | 320 × 224 | `1131D937D70234FD` |
+
+These are measured regression fingerprints, not an independently established
+hardware/original-emulator parity claim. The game switches to its stock H32
+256 × 224 framebuffer for racing; the host presents the native 4:3 view.
+
+| Screenshot | Captured wall frame | Evidence |
+|---|---:|---|
+| `build/baseline-final/title.png` | 601 | Title / Press Start |
+| `build/baseline-final/menu.png` | 1351 | Main menu with Start selected |
+| `build/baseline-final/race-start.png` | 2800 | Actual race, player/opponents/HUD/track map |
+| `build/baseline-final/race-moving.png` | 3300 | 97 MPH, road markings and 19th place |
+| `build/baseline-final/mid-race.png` | 4501 | Moving race beyond the former corruption point, 85 MPH |
+
+Final run: `build/baseline-final-summary.txt` records exit 0 at 5600 frames.
+The adjacent captured `dispatch_misses.toml`, `floor_coverage.toml`,
+`interior_label_misses.toml` and `floor_unsafe.toml` all contain zero entries.
+The runtime reports 0 true misses and 0 ROM interpreter capsules; copied,
+self-modifying RAM H-int code still uses the engine's live RAM handler path.
+SP is stable around `$FFFFEE..FFFFFA` during the race instead of descending
+into `$FFF9FE`. `events.json` contains exact TCP requests and snapshots.
+
+`build/baseline-final/race.wav` contains stereo audio at 223721 Hz before the
+engine's device-rate conversion, 5,967,468 stereo frames (26.67 seconds), peak
+5848 and RMS 1473.91. Audio snapshots report no dropped or underrun flushes.
+The SDL dummy device confirms generation and scheduling, not audible speaker
+quality. The synthetic RTS suite passes all 12 combinations; the pre-patch
+generator fails its first fixture with D1=5 instead of 6 and SP=`$FFFDFC`
+instead of `$FFFE00`. The existing stack-skip suite passes all 12 cases.
+
+Both executable-directory and working-directory auto-detection were exercised
+using symlinks to the private ROM with arbitrary names/extensions, without a
+positional ROM argument, and exited 0 (`build/autodetect-exe.log`,
+`build/autodetect-cwd.log`). No ROM was copied into git or release inputs.
+
+## Remaining scope / limitations
+
+- Full-race completion, all tracks, multiplayer and long-run stability are not
+  qualified by this 5600-frame route.
+- Canonical game-mode and player-speed RAM fields remain unidentified; known
+  counters, raster pointers, input records and object slots are in RAM_MAP.md.
+- Windows, macOS, Steam Deck/Gamescope, old-glibc release builds and physical
+  controller/speaker validation remain future platform qualification work.
+- The engine and its M68K core intentionally show applied working-tree changes;
+  their committed upstream submodule pins are unchanged. The three checked-in
+  format patches reproduce those changes on a clean checkout.
