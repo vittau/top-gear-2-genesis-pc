@@ -139,14 +139,14 @@ Produced by `tools/verify_widescreen.py --port 4400 --modes off,16:9,21:9`
 | Race screenshots | `frame-2800.png`, `frame-3300.png`, `frame-4501.png` in each mode (16:9 = 398×224, 21:9 = 523×224, Off = 256×224) |
 | Menus | `frame-600.png`, `frame-1350.png`: 320-pixel native image centred with bars |
 | Adaptive widths | 398 / 488 / 320 / 1195 from 1600×900 / 1234×567 / 1000×1000 / 3840×720, 256 after a live switch to Off (`adaptive-*.png`) |
-| Sprite capture | up to 31 captured pieces per scene, up to 9 pieces reaching a margin, up to 1759 margin sprite pixels in a frame, 0 overflow; every captured scene matched live SAT bytes |
+| Sprite capture | up to 29 captured pieces per scene, up to 6 pieces reaching a margin, up to 1982 margin sprite pixels in a frame, 0 overflow; every captured scene matched live SAT bytes |
 | Canonical state | RAM and VRAM dumps identical to Off at 600, 1350, 2800, 3300, 4501 |
 | Native centre | pixel-identical to Off at the same frames |
 | Discovery | `dispatch_misses.toml`, `floor_coverage.toml`, `interior_label_misses.toml`, `floor_unsafe.toml` all report 0 entries after each route |
 
 `margin-*.png` frames show actors and roadside objects crossing the old
-256-pixel edge: `16-9/margin-3222.png` has an opponent car straddling the
-right boundary and a tree in the left margin, and `21-9/margin-3223.png` shows
+256-pixel edge: `16-9/margin-3220.png` has an opponent car straddling the
+right boundary and a tree in the left margin, and `21-9/margin-3221.png` shows
 the same car wholly inside the right margin with the tree further out in the
 left margin.
 
