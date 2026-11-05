@@ -5,7 +5,7 @@ the private ROM with `tools/disasm_tg2.py` (Capstone 68000 mode) and against
 native runtime snapshots from the scripted baseline route. Generated C was read,
 never edited.
 
-**Result.** A default-off option now presents a race at **60 pictures/s** (was
+**Result.** The default-on "60 fps races" option presents a race at **60 pictures/s** (was
 31 distinct framebuffers/s, 20 completed picture builds/s) with the game clock,
 lap index and AI cadence untouched. With the option off the build is
 byte-identical to the stock port: all 5600 per-frame framebuffer hashes of the
@@ -260,24 +260,29 @@ finished (`$FF22FA == 0`); fades, countdown and menus keep stock timing.
 
 ## Option surface
 
-Default **off**. Two ways to enable it:
+Default **on**. The player surface is the shared `settings.ini` next to the
+executable, edited by the launcher's Mods page or by the in-game recomp-ui
+overlay (F1/Esc, or Back+RB on a controller):
 
-* `tg2.ini` next to the executable (or in the working directory):
-  `race_60fps = 1`
-* environment override used by the probes: `TG2_RACE_60FPS=1`
+```ini
+[mods.race60]
+enabled = 1
+```
 
-`TG2_RACE60_DIVISOR=<n>` is a research control for the headroom amount
-(default 8, validated 8 and 64 with identical results). An in-game settings row
-is not part of this change: the shared settings UI is a single hard-coded mods
-table in the engine's `main.c`/`app_config.c`, and that file is being edited by
-parallel widescreen work.
+`TG2_RACE_60FPS=0|1` remains a probe-only override and is never persisted. The
+choice is latched at each race start, so toggling it in the overlay during a
+race leaves that race untouched and applies from the next one.
+`TG2_RACE60_DIVISOR=<n>` is likewise a research control for the headroom amount
+(default 8; 8 and 64 measured identically).
 
 ## Reproduction
 
 ```sh
 JOBS=8 tools/build-linux.sh ~/roms/genesis/tg2.bin build
-python3 tools/probe_framerate.py --out build/fps/result-off
-TG2_RACE_60FPS=1 python3 tools/probe_framerate.py --out build/fps/result-on
+# With [mods.race60] enabled = 0 in build/settings.ini:
+python3 tools/probe_framerate.py --port 4450 --out build/fps/result-off
+# With [mods.race60] enabled = 1 (the shipping default):
+python3 tools/probe_framerate.py --port 4450 --out build/fps/result-on
 python3 tools/compare_framerate.py build/fps/result-off build/fps/result-on \
   --out build/fps/comparison.json
 ```

@@ -9,10 +9,11 @@ untouched.
 `game/tg2_video.c` implements this as a game-owned `GameVideo` provider. The
 engine's VDP mode, guest raster lists, projection registers, collision state
 and object activation are never changed. A fresh installation selects
-`video_default = "fit"`; `game/tg2_options.c` describes the feature in the
-shared launcher Mods page, which supplies the Off / Adaptive / fixed 16:9,
-21:9, 32:9 choices and their persistence. `--widescreen off` always selects
-the stock renderer.
+`video_default = "fit"` (Adaptive); the shared launcher Mods page supplies the
+Off / Adaptive / fixed 16:9, 21:9, 32:9 choices and persists them in
+`settings.ini` next to the executable as `[mods.widescreen] enabled` and
+`aspect`. The in-game recomp-ui overlay edits the same values. `--widescreen
+off` always selects the stock renderer.
 
 ## Why a game-owned renderer
 
@@ -109,11 +110,20 @@ first opcodes (`$2C9D`, `$601E`, `$6042` at `$FFF9FE`).
 **Centered** is the default and preserves the existing widescreen pixels.
 **Edges** places the speed/MPH, gear/AUTO, nitro and car icon at the left edge,
 and the track map, LAP and position at the right edge, retaining each native
-inset. The preference is exposed by `tg2_video_set_hud_mode(0|1)` and
-`tg2_video_get_hud_mode()` in `game/tg2_video.h`; probes can select it with
-`TG2_HUD_MODE=centered|edges`. It has no effect with widescreen Off, in menus
-or in split-screen. The options UI can call the setter without resetting the
-renderer; resets and state loads retain the presentation preference.
+inset. The player chooses it on the launcher's Mods page ("HUD at edges") or
+the in-game overlay's Mods section ("HUD"); both persist the same value in
+`settings.ini` as:
+
+```ini
+[mods.hud]
+placement = centered   ; or edges
+```
+
+The renderer applies it through `tg2_video_set_hud_mode(0|1)` /
+`tg2_video_get_hud_mode()` in `game/tg2_video.h` without resetting the scene;
+probes can force it with `TG2_HUD_MODE=centered|edges`. It has no effect with
+widescreen Off, in menus or in split-screen. Resets and state loads retain the
+presentation preference.
 
 Read-only TCP name-table/SAT dumps and per-line raster snapshots establish:
 

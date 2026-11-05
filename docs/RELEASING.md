@@ -96,6 +96,60 @@ three platforms; it does not prove audio, input or rendering on a device.
    configurar nem usar emulador.
 3. Se nenhuma ROM compatível for encontrada, o seletor de arquivos abre.
 
+## Options (English)
+
+Every port option can be changed with only a controller, either before
+starting or from the in-game menu, and is saved immediately in `settings.ini`
+next to the executable (`TG2Recomp` / `TG2Recomp.exe`).
+
+| Option | Values | Default | Persisted as |
+|---|---|---|---|
+| Widescreen | Off / Adaptive (fit) / 16:9 / 21:9 (32:9 also available) | Adaptive | `[mods.widescreen] enabled`, `aspect` |
+| 60 fps races | Off / On | On | `[mods.race60] enabled` |
+| HUD | Centered / Edges | Centered | `[mods.hud] placement` |
+
+- **Launcher:** run `TG2Recomp --launcher` to open it even when the ROM is
+  already beside the executable (a plain double-click still boots straight
+  into the game). Open **Mods**, then **Features**. D-pad moves, A/click
+  selects or toggles, B goes back.
+- **In-game menu:** press F1 or Esc on a keyboard. On a controller, hold
+  **Back + RB** to open or close it. D-pad moves, A accepts or toggles, B goes
+  back, X closes.
+- **60 fps races** applies from the next race start. Changing it during a race
+  never changes that race's physics.
+- **HUD: Edges** only affects widescreen races; **Centered** is the stock
+  centered HUD and has no effect when widescreen is Off.
+- `settings.ini` is hand-editable. Delete it to return every option to its
+  default. `TG2_RACE_60FPS=0|1` and `TG2_HUD_MODE=centered|edges` are
+  probe-only overrides and are never saved.
+
+## Opções (Português)
+
+Todas as opções do port podem ser alteradas só com o controle, antes de
+começar ou pelo menu dentro do jogo, e são salvas na hora em `settings.ini`,
+ao lado do executável (`TG2Recomp` / `TG2Recomp.exe`).
+
+| Opção | Valores | Padrão | Salva como |
+|---|---|---|---|
+| Widescreen | Desligado / Adaptativo (fit) / 16:9 / 21:9 (32:9 também disponível) | Adaptativo | `[mods.widescreen] enabled`, `aspect` |
+| 60 fps nas corridas | Desligado / Ligado | Ligado | `[mods.race60] enabled` |
+| HUD | Centralizado / Nas bordas | Centralizado | `[mods.hud] placement` |
+
+- **Launcher:** execute `TG2Recomp --launcher` para abri-lo mesmo com a ROM já
+  ao lado do executável (um duplo clique normal continua indo direto ao jogo).
+  Abra **Mods** e depois **Features**. O direcional move, A/clique seleciona
+  ou alterna, B volta.
+- **Menu dentro do jogo:** F1 ou Esc no teclado. No controle, segure
+  **Back + RB** para abrir ou fechar. O direcional move, A aceita ou alterna,
+  B volta, X fecha.
+- **60 fps nas corridas** vale a partir da próxima corrida. Mudar durante uma
+  corrida não altera a física daquela corrida.
+- **HUD: Nas bordas** só vale em corridas widescreen; **Centralizado** é o HUD
+  original, centralizado, e não tem efeito com widescreen desligado.
+- `settings.ini` pode ser editado à mão. Apague o arquivo para voltar todas as
+  opções ao padrão. `TG2_RACE_60FPS=0|1` e `TG2_HUD_MODE=centered|edges` são
+  apenas para testes automatizados e nunca são salvos.
+
 ## Steam Deck / SteamOS
 
 1. Copy the extracted `TG2Recomp-linux-x86_64` folder and your ROM to the Deck

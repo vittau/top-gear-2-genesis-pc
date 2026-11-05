@@ -7,11 +7,13 @@
 #include "game_spec.h"
 #include "genesis_runtime.h"
 #include "tg2_video.h"
+#include "tg2_options.h"
 struct RecompLauncherCModProvider;
 const struct RecompLauncherCModProvider *tg2_mods(const struct RecompLauncherCModProvider *base);
-static const GameDebugCommand commands[] = {{"tg2_video", tg2_video_command}};
-
-#include <SDL.h>
+static const GameDebugCommand commands[] = {
+    {"tg2_video", tg2_video_command},
+    {"tg2_ui", tg2_options_ui_command},
+};
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,22 +52,26 @@ static unsigned s_divisor = 8u;
  * picture, which measures as one V-int in three. See docs/FRAMERATE.md. */
 #define TG2_VIEW_PERIOD 3u
 
-static int      s_race60;          /* option state, default off */
+static int      s_race60;          /* option latched for the current race */
+static int      s_race_live;       /* last observed "race is running" state */
 static int      s_race60_hook;     /* re-entrancy guard for the hooks */
 static uint32_t s_phys_view;       /* view position handed to IRQ physics */
 static int      s_phys_view_valid;
-static int      s_race60_probed;   /* option loaded once */
 
-static int tg2_race_active(void)
+static int tg2_race_live(void)
 {
     uint32_t target = glue_peek32(TG2_VINT_TARGET);
     /* $004714 installs $0049CC on entry and restores it on exit, so both
      * values mean "the live V-int handler is the race handler". */
-    return s_race60
-        && (target == TG2_VINT_RACE || target == TG2_VINT_REENT)
+    return (target == TG2_VINT_RACE || target == TG2_VINT_REENT)
         && glue_peek16(TG2_FADE_PHASE) == 0        /* palette fade finished */
         && (int16_t)glue_peek16(TG2_RACE_PHASE) >= 0 /* countdown finished */
         && glue_peek16(TG2_SECOND_PLAYER) == 0;    /* single-player races only */
+}
+
+static int tg2_race_active(void)
+{
+    return s_race60 && tg2_race_live();
 }
 
 static unsigned tg2_main_cpu_divisor(void)
@@ -90,6 +96,16 @@ static void tg2_view_gate(void)
 static void tg2_frame_pre(uint64_t frame_count)
 {
     (void)frame_count;
+    int live = tg2_race_live();
+    if (live && !s_race_live) {
+        /* A race just started: adopt the player's current choice and begin
+         * with a fresh stock-schedule view position. A mid-race toggle is
+         * deliberately deferred to the next race so physics never changes
+         * inside one. */
+        s_race60 = tg2_race60_requested();
+        s_phys_view_valid = 0;
+    }
+    s_race_live = live;
     if (tg2_race_active()) tg2_view_gate();
 }
 
@@ -151,61 +167,20 @@ static int tg2_race60_hook(uint32_t pc)
 }
 
 /* ── Option surface ────────────────────────────────────────────────────────
- * tg2.ini next to the executable (or in the working directory), key
- *   race_60fps = 1
- * and the TG2_RACE_60FPS environment override used by the probes. */
-static int tg2_ini_bool(const char *path, const char *key, int *out)
+ * Player options live in settings.ini ([mods.race60]) and are edited by the
+ * launcher Mods page or the in-game overlay. The environment override below
+ * exists only for automated captures. */
+static void tg2_entry(void)
 {
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
-    char line[256];
-    size_t klen = strlen(key);
-    int found = 0;
-    while (fgets(line, sizeof line, f)) {
-        char *p = line;
-        while (*p == ' ' || *p == '\t') ++p;
-        if (*p == '#' || *p == ';' || *p == '[' || *p == '\0') continue;
-        if (strncmp(p, key, klen) != 0) continue;
-        p += klen;
-        while (*p == ' ' || *p == '\t') ++p;
-        if (*p != '=' && *p != ':') continue;
-        ++p;
-        while (*p == ' ' || *p == '\t') ++p;
-        *out = strtol(p, NULL, 0) != 0;
-        found = 1;
-    }
-    fclose(f);
-    return found;
-}
-
-static void tg2_option_init(void)
-{
-    if (s_race60_probed) return;
-    s_race60_probed = 1;
-    if (!tg2_ini_bool("tg2.ini", "race_60fps", &s_race60)) {
-        char *base = SDL_GetBasePath();
-        if (base) {
-            char path[1024];
-            snprintf(path, sizeof path, "%stg2.ini", base);
-            tg2_ini_bool(path, "race_60fps", &s_race60);
-            SDL_free(base);
-        }
-    }
     const char *div = getenv("TG2_RACE60_DIVISOR");
     if (div) {
         unsigned long v = strtoul(div, NULL, 10);
         if (v >= 1 && v <= 1024) s_divisor = (unsigned)v;
     }
-    const char *env = getenv("TG2_RACE_60FPS");
-    if (env) s_race60 = env[0] == '1' || env[0] == 'o' || env[0] == 'O'
-                            || env[0] == 'y' || env[0] == 'Y';
+    tg2_options_apply_env();
+    s_race60 = tg2_race60_requested();
     if (s_race60)
         fprintf(stderr, "[tg2] race presentation: 60 fps option on\n");
-}
-
-static void tg2_entry(void)
-{
-    tg2_option_init();
     recomp_call_addr(0x000200u);
 }
 
@@ -223,6 +198,11 @@ static void tg2_hblank(void) { recomp_call_addr(0xFFF9FEu); }
 const GameSpec g_game_spec = {
     .video = &tg2_video,
     .video_default = "fit",
+    .load_settings = tg2_options_load,
+    .save_settings = tg2_options_save,
+    .runtime_ui_items = tg2_options_runtime_items,
+    .runtime_ui_get = tg2_options_runtime_get,
+    .runtime_ui_set = tg2_options_runtime_set,
     .mods = tg2_mods,
     .on_post_reset = tg2_video_reset,
     .on_state_loaded = tg2_video_reset,
