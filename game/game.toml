@@ -17,3 +17,66 @@ level_modes = []
 
 [functions]
 extra = [0x000200]
+
+# --- Simultaneous music + SFX (game/tg2_audio_both.c) -----------------------
+# Audited pre-instruction sites. All are stock instruction boundaries checked
+# against the raw ROM; no generated C is edited.
+[[widescreen_site]]
+addr = 0x01F0D4
+kind = "game_hook"
+
+[[widescreen_site]]
+addr = 0x0700C8
+kind = "game_hook"
+
+# SFX-side policy reads: present 0 while BOTH is selected.
+[[widescreen_site]]
+addr = 0x006530
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x0048E2
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x0250E2
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02511C
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02503A
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02504A
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02529A
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x0252CC
+kind = "game_hook"
+
+# Restore the stock word before the branch that consumed the read.
+[[widescreen_site]]
+addr = 0x006538
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x0048EA
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x0250E6
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x025120
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02503E
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02504E
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02529E
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x0252D0
+kind = "game_hook"

@@ -5,6 +5,8 @@
 static void tg2_entry(void) { recomp_call_addr(0x000200u); }
 static void tg2_vblank(void) { recomp_call_addr(0xFF01EAu); }
 static void tg2_hblank(void) { recomp_call_addr(0xFFF9FEu); }
+extern int tg2_instruction_hook(uint32_t pc);
+extern void tg2_frame_post(uint64_t frame_count);
 const GameSpec g_game_spec = {
     .display_name = "Top Gear 2",
     .short_name = "TG2",
@@ -14,4 +16,6 @@ const GameSpec g_game_spec = {
     .call_entry_point = tg2_entry,
     .call_vblank = tg2_vblank,
     .call_hblank = tg2_hblank,
+    .instruction_hook = tg2_instruction_hook,
+    .on_frame_post = tg2_frame_post,
 };
