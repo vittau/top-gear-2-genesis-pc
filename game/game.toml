@@ -1,0 +1,18 @@
+# Stock Top Gear 2 (USA), CRC32 BD3074D2. No curated disassembly.
+[game]
+output_prefix = "tg2"
+jump_table_autodiscovery = true
+
+[ram_layout]
+game_mode = 0
+vint_runcount = 0
+vint_routine = 0
+plc_pending = 0
+initial_ssp = 0x00FFFFFE
+vbla_stack = 0x00FFFFFE
+intr_stack = 0x00FFFFFE
+player_object = 0
+level_modes = []
+
+[functions]
+extra = [0x000200]
