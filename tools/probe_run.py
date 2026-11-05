@@ -36,6 +36,11 @@ with socket.socket() as port_check:
         p.error(f'TCP port {a.port} is already in use; stop its owner before launching')
 (a.exe.parent / 'debug.ini').touch()
 env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy')
+# The runner anchors config/saves beside $APPIMAGE when it is set. This probe
+# launches the native build directly, not the AppImage, so an inherited
+# $APPIMAGE would move debug.ini lookup (and therefore the TCP server) away
+# from the build directory.
+env.pop('APPIMAGE', None)
 if a.force_interp:
     env['GENESIS_FORCE_INTERP'] = '1'
 actions = json.loads(a.actions_file.read_text() if a.actions_file else a.actions)

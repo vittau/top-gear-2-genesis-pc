@@ -25,6 +25,7 @@ p.add_argument('--rom', type=Path, default=Path.home()/'roms/genesis/tg2.bin')
 p.add_argument('--out', type=Path, default=ROOT/'build/ws')
 p.add_argument('--port', type=int, default=4400)
 p.add_argument('--modes', default='off,16:9,21:9')
+p.add_argument('--sweep', action='store_true', help='Steer after frame 4501 to exercise margin crossings')
 a = p.parse_args()
 a.exe, a.out = a.exe.resolve(), a.out.resolve()
 a.out.mkdir(parents=True, exist_ok=True)
@@ -35,6 +36,12 @@ def command(cmd, **args):
         s.sendall((json.dumps(dict(cmd=cmd, id=1, **args))+'\n').encode())
         return json.loads(s.makefile().readline())
 
+def stderr_text_tail(out):
+    try:
+        return (out/'stderr.log').read_text()[-1200:]
+    except OSError:
+        return '(no stderr log)'
+
 def timeline(out):
     actions = {f: [] for f in FRAMES}
     for action in json.loads((ROOT/'game/baseline-route.json').read_text()):
@@ -43,6 +50,11 @@ def timeline(out):
             if action['keys'] != '0':
                 lines += ['HOLD '+{'80':'START', '2':'DOWN', '10':'B'}[action['keys']]]
             actions.setdefault(action['frame'], []).extend(lines)
+    if a.sweep:
+        actions[4600] = ['RELEASE', 'HOLD B', 'HOLD RIGHT']
+        actions[4900] = ['RELEASE', 'HOLD B', 'HOLD LEFT']
+        for frame in range(4600, 5501, 20):
+            actions.setdefault(frame, []).append(f'SCREENSHOT {out}/sweep-{frame}.png')
     for frame in FRAMES:
         actions[frame] += [f'SCREENSHOT {out}/frame-{frame}.png',
                            f'DUMP_RAM {out}/frame-{frame}.ram',
@@ -70,13 +82,36 @@ for mode in a.modes.split(','):
         check.bind(('127.0.0.1', a.port))
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software',
                SDL_AUDIODRIVER='dummy')
+    # A launched native build that inherits a host $APPIMAGE would anchor its
+    # debug.ini lookup (and the required TCP server) to the AppImage directory.
+    env.pop('APPIMAGE', None)
     argv = [str(a.exe), str(a.rom), '--no-launcher', '--port', str(a.port),
             '--widescreen', mode, '--input-script', str(script), '--max-frames', '5601',
             '--hash-frames', '60', '--fresh-evidence', '--turbo']
     diagnostics = []
+    margin_shots = []
+    resize_actions = []
+    if mode == '21:9' and not a.sweep:
+        for frame, dw, dh, expected in [(4600,1600,900,398), (4700,1234,567,488),
+                                        (4800,1000,1000,320), (4900,3840,720,1195)]:
+            resize_actions += [(frame, 'configure', (dw,dh)), (frame+20, 'capture', expected)]
+        resize_actions += [(5000,'off',None), (5020,'capture',256), (5100,'restore',None)]
     with (out/'stdout.log').open('w') as stdout, (out/'stderr.log').open('w') as stderr:
         proc = subprocess.Popen(argv, cwd=a.exe.parent, env=env, stdout=stdout, stderr=stderr)
-        deadline = time.monotonic()+240
+        # The debug.ini TCP server is required for every frame capture; fail
+        # loudly when it never appears instead of timing out silently.
+        ready = time.monotonic()+20
+        while True:
+            try:
+                command('frame_info')
+                break
+            except OSError:
+                if proc.poll() is not None:
+                    raise RuntimeError(f'{mode} exited early:\n'+stderr_text_tail(out))
+                if time.monotonic()>ready:
+                    raise RuntimeError(f'{mode} TCP server never became reachable:\n'+stderr_text_tail(out))
+                time.sleep(.1)
+        deadline = time.monotonic()+600
         next_frame = 2800
         try:
             while proc.poll() is None:
@@ -84,11 +119,29 @@ for mode in a.modes.split(','):
                     raise TimeoutError(f'{mode} runtime deadline exceeded')
                 try:
                     frame = command('frame_info')['current_frame']
+                    while resize_actions and frame >= resize_actions[0][0]:
+                        at, operation, value = resize_actions.pop(0)
+                        if operation == 'configure':
+                            response = command('video_configure', mode='fit', window_width=value[0], window_height=value[1])
+                        elif operation == 'off':
+                            response = command('video_configure', mode='off')
+                        elif operation == 'restore':
+                            response = command('video_configure', mode=mode)
+                        else:
+                            from PIL import Image
+                            path = out/f'adaptive-{value}.png'
+                            response = command('screenshot', path=str(path))
+                            assert Image.open(path).width == value, (at, value, Image.open(path).size)
+                        assert response.get('ok'), response
                     if frame >= next_frame:
                         data = command('tg2_video')
                         diagnostics.append(dict(frame=frame, video=data))
                         (out/'video.json').write_text(json.dumps(diagnostics, indent=2)+'\n')
-                        next_frame += 120
+                        if data.get('sprite_margin_pixels', 0) and len(margin_shots)<12:
+                            path=out/f'margin-{frame}.png'
+                            command('screenshot', path=str(path))
+                            margin_shots.append(str(path))
+                        next_frame += 12
                 except (ConnectionRefusedError, ConnectionResetError, OSError):
                     pass
                 time.sleep(.05)
@@ -105,6 +158,17 @@ for mode in a.modes.split(','):
         if not re.search(r'# entries:\s+0\b', text):
             raise AssertionError(f'{mode}: nonempty {name}')
     summary[mode] = dict(exit=proc.returncode, frames=5600, manifests='all empty')
+    if mode == '21:9' and not a.sweep:
+        assert not resize_actions, resize_actions
+        summary[mode]['adaptive_widths_and_disable'] = [398,488,320,1195,256]
+    if mode != 'off':
+        assert any(d['video'].get('sat_matches', 0)>0 for d in diagnostics), 'captured mappings never matched native SAT pieces'
+        assert margin_shots, 'no captured sprite pixel ever reached the added margins'
+        summary[mode]['margin_screenshots'] = margin_shots
+        summary[mode]['max_sprite_margin_pixels'] = max(
+            d['video'].get('sprite_margin_pixels', 0) for d in diagnostics)
+        summary[mode]['max_margin_pieces'] = max(
+            d['video'].get('margin_pieces', 0) for d in diagnostics)
     if mode == 'off':
         text = (out/'stderr.log').read_text()
         for frame, expected in [(60, '2A0B972960C5E325'), (300, '1131D937D70234FD')]:

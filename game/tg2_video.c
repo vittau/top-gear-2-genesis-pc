@@ -73,7 +73,7 @@ void tg2_video_reset(void) {
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
     shown = NULL;
-    serial = overflow = 0;
+    serial = overflow = matched_pieces = margin_pieces = 0;
 }
 int tg2_video_hook(uint32_t pc) {
     if (!enabled())
@@ -119,7 +119,7 @@ int tg2_video_hook(uint32_t pc) {
             piece->x = px;
             piece->y = py + (int16_t)word(g_ram, 0x2452) - 128;
             piece->size = sz & 15;
-            piece->attr = ((attr ^ (pa & 0x1800)) + (pa & 2047)) | word(g_ram, 0x234E);
+            piece->attr = (((attr ^ (pa & 0x1800)) + (pa & 2047)) | word(g_ram, 0x234E)) & 65535;
             if (g_ram[0x22E8])
                 piece->attr |= 0x8000;
         }
@@ -174,10 +174,10 @@ static struct {
     int ha, hb, va, vb;
     unsigned a, b;
 } rows[240];
-static unsigned wide_lines, native_lines;
+static unsigned wide_lines, native_lines, frame_margin_pixels;
 static int race(const GVDP *v) {
     unsigned op = word(g_ram, 0xF9FE);
-    return !(v->reg[12] & 7) && v->reg[16] == 0x11 && ((v->reg[2] & 56) << 10) == 0xC000 &&
+    return !(v->reg[12] & 15) && v->reg[16] == 0x11 && ((v->reg[2] & 56) << 10) == 0xC000 &&
            ((v->reg[4] & 7) << 13) == 0xE000 && !word(g_ram, 0x189E) &&
            (op == 0x2C9D || op == 0x601E || op == 0x6042);
 }
@@ -195,6 +195,8 @@ static int road_x(int nx, int scroll, int py) {
 static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     int origin = (w - nw) / 2;
+    if (!line)
+        frame_margin_pixels = 0;
     for (int x = 0; x < w; ++x)
         out[x] = 0xFF000000;
     if (!race(v) || !(v->reg[1] & 64)) {
@@ -221,15 +223,11 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, ui
         pal[i] = genesis_dac_cram_to_argb(v->cram[i], 0);
     for (int x = 0; x < w; ++x) {
         int nx = x - origin;
-        unsigned a, b;
-        unsigned ap = nx >= 0 && nx < nw ? pixel(v, ba, nx - ha, line + va, &a) : 0;
+        if (nx >= 0 && nx < nw)
+            continue;
+        unsigned b;
         unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
-        unsigned idx = ap && (a & 0x8000)   ? ap
-                       : bp && (b & 0x8000) ? bp
-                       : ap                 ? ap
-                       : bp                 ? bp
-                                            : v->reg[7] & 63;
-        out[x] = pal[idx];
+        out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
     /* Reverse allocation order matches the native backward SAT builder. */
     unsigned char covered[4096] = {0};
@@ -254,25 +252,31 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, ui
             covered[ox] = 1;
             unsigned b;
             unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
-            if ((s->attr & 0x8000) || !(bp && (b & 0x8000)))
+            if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
+                ++frame_margin_pixels;
+            }
         }
     }
     memcpy(out + origin, native, nw * sizeof *out);
 }
 void tg2_video_command(int id, const char *json) {
-    (void)json;
     char out[22000];
     int n = snprintf(out, sizeof out,
-                     "{\"id\":%d,\"ok\":true,\"wide_lines\":%u,\"native_lines\":%u,\"published\":%"
-                     "u,\"displayed\":%u,\"pieces\":%u,\"overflow\":%u,\"sat_matches\":%u,\"margin_"
-                     "pieces\":%u,\"rows\":[",
-                     id, wide_lines, native_lines, serial, shown ? shown->serial : 0,
-                     shown ? shown->count : 0, overflow, matched_pieces, margin_pieces);
-    for (int i = 0; i < 224; ++i)
-        n += snprintf(out + n, sizeof out - n, "%s[%d,%d,%d,%d,%u,%u]", i ? "," : "", rows[i].ha,
-                      rows[i].hb, rows[i].va, rows[i].vb, rows[i].a, rows[i].b);
-    snprintf(out + n, sizeof out - n, "]}");
+                     "{\"id\":%d,\"ok\":true,\"enabled\":%d,\"wide_lines\":%u,\"native_lines\":%u,"
+                     "\"published\":%u,\"displayed\":%u,\"pieces\":%u,\"overflow\":%u,"
+                     "\"sat_matches\":%u,\"margin_pieces\":%u,\"sprite_margin_pixels\":%u",
+                     id, enabled(), wide_lines, native_lines, serial, shown ? shown->serial : 0,
+                     shown ? shown->count : 0, overflow, matched_pieces, margin_pieces,
+                     frame_margin_pixels);
+    if (json && strstr(json, "\"rows\"")) {
+        n += snprintf(out + n, sizeof out - n, ",\"rows\":[");
+        for (int i = 0; i < 224; ++i)
+            n += snprintf(out + n, sizeof out - n, "%s[%d,%d,%d,%d,%u,%u]", i ? "," : "",
+                          rows[i].ha, rows[i].hb, rows[i].va, rows[i].vb, rows[i].a, rows[i].b);
+        n += snprintf(out + n, sizeof out - n, "]");
+    }
+    snprintf(out + n, sizeof out - n, "}");
     cmd_send_response(out);
 }
 const GameVideo tg2_video = {
