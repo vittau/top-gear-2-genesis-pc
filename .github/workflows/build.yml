@@ -1,0 +1,307 @@
+name: build
+
+# Release-candidate builds for the three distribution targets. Every job
+# fetches the private ROM with the same deploy key rom-access.yml uses, uses it
+# only to generate C, and never uploads, caches or logs it.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SDL2_VERSION: "2.28.5"
+  TG2_ROM_SHA256: b41909d53090e28c1d1e50941dad01676dd3d19caf26c75f66aac6a3ad689ba6
+  TG2_ROM_PATH: private-inputs/rom/tg2.bin
+
+jobs:
+  linux:
+    name: Linux x86_64 (Steam Deck)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    # Fork pull requests never receive repository secrets, so they cannot fetch
+    # the ROM the C generator needs. Same-repository branches and PRs can.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Fetch private ROM input
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: vittau/top-gear-2-private-inputs
+          ssh-key: ${{ secrets.TG2_ROM_DEPLOY_KEY }}
+          path: private-inputs
+          persist-credentials: false
+
+      - name: Verify ROM identity
+        run: echo "${TG2_ROM_SHA256}  ${TG2_ROM_PATH}" | sha256sum -c -
+
+      - name: Compute build version
+        run: echo "TG2_VERSION=0.1.0-g$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build pkg-config python3 \
+            libasound2-dev libpulse-dev libudev-dev \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxss-dev libxxf86vm-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols \
+            libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev
+
+      - name: Restore pinned SDL2 tarball
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/tg2-sdl
+          key: sdl2-${{ env.SDL2_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/release/fetch-sdl.py') }}
+
+      - name: Build release payload
+        run: |
+          sdl=$(python3 tools/release/fetch-sdl.py --dest "$RUNNER_TEMP/sdl" --cache "$HOME/.cache/tg2-sdl")
+          tools/release/build-linux.sh \
+            --rom "$PWD/$TG2_ROM_PATH" \
+            --sdl "$sdl" \
+            --version "$TG2_VERSION" \
+            --jobs "$(nproc)"
+
+      - name: Verify payload contents
+        run: |
+          python3 tools/release/verify_artifact.py \
+            --dir build-release/dist/linux/TG2Recomp-linux-x86_64 \
+            --require TG2Recomp --require assets --require licenses --require README.txt
+
+      - name: Headless smoke run
+        run: |
+          python3 tools/release/smoke_run.py \
+            --dir build-release/dist/linux/TG2Recomp-linux-x86_64 \
+            --exe TG2Recomp \
+            --rom "$TG2_ROM_PATH" \
+            --frames 600
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TG2Recomp-linux-x86_64
+          path: build-release/dist/linux
+          if-no-files-found: error
+          retention-days: 30
+
+  linux-verify:
+    name: Verify Linux artifact (glibc and smoke)
+    needs: linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout (scripts only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch private ROM input
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: vittau/top-gear-2-private-inputs
+          ssh-key: ${{ secrets.TG2_ROM_DEPLOY_KEY }}
+          path: private-inputs
+          persist-credentials: false
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TG2Recomp-linux-x86_64
+          path: downloaded
+
+      - name: Extract and check the published tarball
+        run: |
+          (cd downloaded && sha256sum -c TG2Recomp-linux-x86_64.tar.gz.sha256)
+          tar -C downloaded -xzf downloaded/TG2Recomp-linux-x86_64.tar.gz
+          test -x downloaded/TG2Recomp-linux-x86_64/TG2Recomp
+          python3 tools/release/verify_artifact.py \
+            --dir downloaded/TG2Recomp-linux-x86_64 \
+            --require TG2Recomp --require assets --require licenses --require README.txt
+          file downloaded/TG2Recomp-linux-x86_64/TG2Recomp
+          echo "--- symbol versions required from glibc/libstdc++ ---"
+          objdump -T downloaded/TG2Recomp-linux-x86_64/TG2Recomp \
+            | grep -oE '(GLIBC|GLIBCXX|CXXABI)_[0-9]+(\.[0-9]+)*' | sort -u
+          python3 tools/release/verify_glibc.py \
+            --binary downloaded/TG2Recomp-linux-x86_64/TG2Recomp --max 2.35 --show-ldd
+
+      - name: Headless smoke run of the downloaded artifact
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          python3 tools/release/smoke_run.py \
+            --dir downloaded/TG2Recomp-linux-x86_64 \
+            --exe TG2Recomp \
+            --rom "$TG2_ROM_PATH" \
+            --frames 600
+
+  windows:
+    name: Windows x64 (MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Disable CRLF conversion
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Fetch private ROM input
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: vittau/top-gear-2-private-inputs
+          ssh-key: ${{ secrets.TG2_ROM_DEPLOY_KEY }}
+          path: private-inputs
+          persist-credentials: false
+
+      - name: Verify ROM identity
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -LiteralPath $env:TG2_ROM_PATH -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:TG2_ROM_SHA256) { throw "ROM SHA-256 mismatch: $hash" }
+          "ROM SHA-256 verified: $hash"
+
+      - name: Compute build version
+        shell: pwsh
+        run: |
+          $short = (git rev-parse --short=7 HEAD)
+          "TG2_VERSION=0.1.0-g$short" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Restore pinned SDL2 tarball
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/tg2-sdl
+          key: sdl2-${{ env.SDL2_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/release/fetch-sdl.py') }}
+
+      - name: Fetch SDL2 source
+        shell: pwsh
+        run: |
+          $sdl = python tools/release/fetch-sdl.py --dest "$env:RUNNER_TEMP\sdl" --cache "$env:USERPROFILE\.cache\tg2-sdl"
+          if ($LASTEXITCODE) { throw 'SDL2 fetch failed' }
+          "TG2_SDL_DIR=$sdl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build release payload
+        shell: pwsh
+        run: |
+          ./tools/release/build-windows.ps1 `
+            -Rom (Join-Path $PWD $env:TG2_ROM_PATH) `
+            -SdlSource $env:TG2_SDL_DIR `
+            -Version $env:TG2_VERSION
+
+      - name: Verify payload contents
+        shell: pwsh
+        run: |
+          python tools/release/verify_artifact.py `
+            --dir build-release/dist/windows/TG2Recomp-windows-x64 `
+            --require TG2Recomp.exe --require assets --require licenses --require README.txt
+
+      - name: Headless smoke run
+        shell: pwsh
+        run: |
+          python tools/release/smoke_run.py `
+            --dir build-release/dist/windows/TG2Recomp-windows-x64 `
+            --exe TG2Recomp.exe `
+            --rom $env:TG2_ROM_PATH `
+            --frames 600
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TG2Recomp-windows-x64
+          path: build-release/dist/windows/TG2Recomp-windows-x64
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    name: macOS (universal2)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Fetch private ROM input
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: vittau/top-gear-2-private-inputs
+          ssh-key: ${{ secrets.TG2_ROM_DEPLOY_KEY }}
+          path: private-inputs
+          persist-credentials: false
+
+      - name: Verify ROM identity
+        run: echo "${TG2_ROM_SHA256}  ${TG2_ROM_PATH}" | shasum -a 256 -c -
+
+      - name: Compute build version
+        run: echo "TG2_VERSION=0.1.0-g$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+
+      - name: Restore pinned SDL2 tarball
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/tg2-sdl
+          key: sdl2-${{ env.SDL2_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/release/fetch-sdl.py') }}
+
+      - name: Build release payload
+        run: |
+          sdl=$(python3 tools/release/fetch-sdl.py --dest "$RUNNER_TEMP/sdl" --cache "$HOME/.cache/tg2-sdl")
+          tools/release/build-macos.sh \
+            --rom "$PWD/$TG2_ROM_PATH" \
+            --sdl "$sdl" \
+            --version "$TG2_VERSION" \
+            --jobs "$(sysctl -n hw.ncpu)"
+
+      - name: Verify payload contents
+        run: |
+          python3 tools/release/verify_artifact.py \
+            --dir build-release/dist/macos/TG2Recomp-macos \
+            --require TG2Recomp --require assets --require licenses --require README.txt
+
+      - name: Headless smoke run
+        run: |
+          python3 tools/release/smoke_run.py \
+            --dir build-release/dist/macos/TG2Recomp-macos \
+            --exe TG2Recomp \
+            --rom "$TG2_ROM_PATH" \
+            --frames 600
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TG2Recomp-macos
+          path: build-release/dist/macos
+          if-no-files-found: error
+          retention-days: 30
