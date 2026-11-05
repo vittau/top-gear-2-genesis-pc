@@ -1,0 +1,20 @@
+# Road renderer RTS jump tables: raw-ROM producer + bounded leaf audit.
+[functions]
+late_extra = [
+  # 32 absolute-long pointers at $007B08..$007B88.
+  0x007BA4, # pointer at $007B08
+  0x007B88, # pointer at $007B0C
+  0x007BEC, # pointer at $007B14
+  0x007C3E, # pointer at $007B18
+  0x007C14, # pointer at $007B1C
+  # 32 absolute-long pointers at $007CE4..$007D64.
+  0x007D84, # pointer at $007CE4
+  0x007D64, # pointer at $007CE8
+  0x007DD2, # pointer at $007CF4
+  0x007DA8, # pointer at $007CF8
+  # 32 absolute-long pointers at $007E78..$007EF8.
+  0x007F18, # pointer at $007E78
+  0x007EF8, # pointer at $007E7C
+  0x007F66, # pointer at $007E88
+  0x007F3C, # pointer at $007E8C
+]

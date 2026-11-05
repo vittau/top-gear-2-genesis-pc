@@ -1,0 +1,64 @@
+From 669e84d5a70546196c0c6d49a4c6c8e95e326d26 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 14:56:00 -0300
+Subject: [PATCH] Preserve guest register effects across interrupt delivery
+
+Only restore the interrupted PC, SR and stack after guest RTE.
+ISRs preserve their own general registers and raster handlers may carry
+address-register state between scanlines; restoring all registers loses it.
+---
+ runner/glue.c | 24 +++++++++++++++++++++---
+ 1 file changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/runner/glue.c b/runner/glue.c
+index 230d760..973552e 100644
+--- a/runner/glue.c
++++ b/runner/glue.c
+@@ -912,7 +912,13 @@ static void own_deliver_vint(GVDP *vdp)
+     g_rte_pending_ptr = &s_rte_real; g_rte_pending = 0;
+     s_in_vblank_service = 0;
+     for (int i = 0; i < 256; i++) g_ram[(byteoff + i) & 0xFFFFu] = save[i];
+-    g_cpu = saved;
++    /* RTE restores the interrupted PC/SR/stack, not D0-D7/A0-A6.
++     * Guest ISRs save the registers they preserve themselves; raster ISRs
++     * may intentionally carry a postincremented address register between
++     * scanlines. Restoring the entire CPU here discards that live state. */
++    g_cpu.A[7] = saved.A[7];
++    g_cpu.SR = saved.SR;
++    g_cpu.PC = saved.PC;
+     recomp_interrupt_context_leave(saved_split_sp_popped);
+     s_game_yielded_vblank = 0;
+ }
+@@ -949,7 +955,13 @@ static void own_run_handler_interleaved(int level, GVDP *vdp)
+     g_rte_pending_ptr = &s_rte_real; g_rte_pending = 0;
+     vdp->in_vblank = saved_vb;
+     for (int i = 0; i < 256; i++) g_ram[(byteoff + i) & 0xFFFFu] = save[i];
+-    g_cpu = saved;
++    /* RTE restores the interrupted PC/SR/stack, not D0-D7/A0-A6.
++     * Guest ISRs save the registers they preserve themselves; raster ISRs
++     * may intentionally carry a postincremented address register between
++     * scanlines. Restoring the entire CPU here discards that live state. */
++    g_cpu.A[7] = saved.A[7];
++    g_cpu.SR = saved.SR;
++    g_cpu.PC = saved.PC;
+     recomp_interrupt_context_leave(saved_split_sp_popped);
+     s_irq_in_progress = 0;
+     s_game_yielded_vblank = 0;
+@@ -1046,7 +1058,13 @@ void glue_own_interrupt(int level, GVDP *vdp)
+         g_68k_stamp_rebase = saved_rebase;
+         s_in_vblank_service = 0;
+         for (int i = 0; i < 256; i++) g_ram[(byteoff + i) & 0xFFFFu] = save[i];
+-        g_cpu = saved;
++        /* RTE restores the interrupted PC/SR/stack, not D0-D7/A0-A6.
++         * Guest ISRs save the registers they preserve themselves; raster ISRs
++         * may intentionally carry a postincremented address register between
++         * scanlines. Restoring the entire CPU here discards that live state. */
++        g_cpu.A[7] = saved.A[7];
++        g_cpu.SR = saved.SR;
++        g_cpu.PC = saved.PC;
+         recomp_interrupt_context_leave(saved_split_sp_popped);
+     }
+ }
+-- 
+2.56.0
+

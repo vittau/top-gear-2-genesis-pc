@@ -1,0 +1,155 @@
+From 4cb4d731862f628cd509a4ab59ee5339eafdff2b Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 15:01:05 -0300
+Subject: [PATCH] Find exact cartridge content beside the executable or in cwd
+
+Use the GameSpec CRC and size rather than filenames or extensions.
+Search native executable and AppImage directories before launching a picker.
+Keep explicit command-line ROM identity validation unchanged.
+---
+ runner/main.c           | 29 ++++++++++++++
+ runner/rom_autodetect.h | 85 +++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 114 insertions(+)
+ create mode 100644 runner/rom_autodetect.h
+
+diff --git a/runner/main.c b/runner/main.c
+index 0cc90f7..0f4388f 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -45,6 +45,7 @@
+ #include "runtime_evidence.h"
+ #include "local_states.h"
+ #include "diagnostic_replay.h"
++#include "rom_autodetect.h"
+ 
+ /* =========================================================================
+  * Path helper: resolve filenames relative to the exe directory.
+@@ -2622,6 +2623,34 @@ int main(int argc, char *argv[])
+     }
+ #endif
+ 
++    /* Prefer a verified local cartridge before opening any launcher/picker.
++     * s_exe_dir also names the external AppImage directory, when applicable;
++     * SDL_GetBasePath handles native executable paths on macOS/Windows/Linux.
++     * An explicit CLI ROM remains authoritative and is identity-checked below. */
++    if (!rom_path && g_game_spec.expected_rom_crc32) {
++        static char detected_rom[2048];
++        char *base = SDL_GetBasePath();
++        int found = genesis_find_rom_in_directory(s_exe_dir,
++            g_game_spec.expected_rom_crc32, g_game_spec.expected_rom_size,
++            detected_rom, sizeof detected_rom);
++        if (!found && base) found = genesis_find_rom_in_directory(base,
++            g_game_spec.expected_rom_crc32, g_game_spec.expected_rom_size,
++            detected_rom, sizeof detected_rom);
++        if (!found) found = genesis_find_rom_in_directory(".",
++            g_game_spec.expected_rom_crc32, g_game_spec.expected_rom_size,
++            detected_rom, sizeof detected_rom);
++        SDL_free(base);
++        if (found) {
++            rom_path = detected_rom;
++            fprintf(stderr, "[ROM] found matching cartridge: %s\n", rom_path);
++        } else {
++            fprintf(stderr, "[ROM] No matching %s cartridge found (CRC32 %08X). "
++                "Place it next to the executable or select it in the launcher.\n",
++                g_game_spec.display_name ? g_game_spec.display_name : "game",
++                (unsigned)g_game_spec.expected_rom_crc32);
++        }
++    }
++
+     {
+         /* The GUI launcher only runs for a plain double-click: no positional
+          * ROM and no automation/headless flag (preserves every scripted dev /
+diff --git a/runner/rom_autodetect.h b/runner/rom_autodetect.h
+new file mode 100644
+index 0000000..219b7e1
+--- /dev/null
++++ b/runner/rom_autodetect.h
+@@ -0,0 +1,85 @@
++/* Content-based cartridge discovery. No extension, shell or file-picker
++ * dependency: suitable for double-click and controller-only launches. */
++#ifndef GENESIS_ROM_AUTODETECT_H
++#define GENESIS_ROM_AUTODETECT_H
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++#include "state_crc.h"
++#ifdef _WIN32
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++#else
++#include <dirent.h>
++#include <sys/stat.h>
++#endif
++
++static int genesis_rom_matches_file(const char *path, uint32_t crc, uint32_t size)
++{
++    unsigned char data[16384];
++    uint32_t state = UINT32_MAX;
++    uint64_t total = 0;
++    size_t n;
++    FILE *f;
++#ifndef _WIN32
++    struct stat st;
++    if (stat(path, &st) || !S_ISREG(st.st_mode) ||
++        (size && (uint64_t)st.st_size != size)) return 0;
++#else
++    WIN32_FILE_ATTRIBUTE_DATA st;
++    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &st) ||
++        (st.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
++        (size && (st.nFileSizeHigh || st.nFileSizeLow != size))) return 0;
++#endif
++    if (!crc || !(f = fopen(path, "rb"))) return 0;
++    while ((n = fread(data, 1, sizeof data, f)) != 0) {
++        state = genesis_state_crc32_update(state, data, n);
++        total += n;
++        if (size && total > size) break;
++    }
++    int ok = !ferror(f) && (!size || total == size) && ~state == crc;
++    fclose(f);
++    return ok;
++}
++
++static int genesis_find_rom_in_directory(const char *dir, uint32_t crc,
++                                         uint32_t size, char *out, size_t cap)
++{
++    char path[2048];
++    int found = 0;
++    if (!dir || !*dir || !crc || !out || !cap) return 0;
++#ifdef _WIN32
++    WIN32_FIND_DATAA entry;
++    int len = snprintf(path, sizeof path, "%s/*", dir);
++    if (len < 0 || (size_t)len >= sizeof path) return 0;
++    HANDLE scan = FindFirstFileA(path, &entry);
++    if (scan == INVALID_HANDLE_VALUE) return 0;
++    do {
++        const char *name = entry.cFileName;
++#else
++    DIR *scan = opendir(dir);
++    struct dirent *entry;
++    if (!scan) return 0;
++    while ((entry = readdir(scan)) != NULL) {
++        const char *name = entry->d_name;
++#endif
++        if (!strcmp(name, ".") || !strcmp(name, "..")) continue;
++        int n = snprintf(path, sizeof path, "%s/%s", dir, name);
++        if (n < 0 || (size_t)n >= sizeof path || (size_t)n >= cap) continue;
++        if (genesis_rom_matches_file(path, crc, size)) {
++            memcpy(out, path, (size_t)n + 1);
++            found = 1;
++            break;
++        }
++#ifdef _WIN32
++    } while (FindNextFileA(scan, &entry));
++    FindClose(scan);
++#else
++    }
++    closedir(scan);
++#endif
++    return found;
++}
++#endif
+-- 
+2.56.0
+
