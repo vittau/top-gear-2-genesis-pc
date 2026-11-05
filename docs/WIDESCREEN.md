@@ -137,9 +137,10 @@ rather than cutting fixed rectangles from the framebuffer. Each row uses its
 actual plane-A H-scroll and V-scroll; the HUD appears at screen row 14 even
 though it starts at name-table row 0, and the raster switches to other cells
 above and below it. Classification also requires the signed-negative plane-A
-V-scroll phase: the initial black band briefly samples some HUD cells with
-nonnegative V-scroll and a different palette, and remains unchanged. Each opaque HUD pixel moves by the corresponding margin
-width (71/71 at 16:9, 133/134 at 21:9). The asymmetric right margin is handled
+V-scroll phase: the initial window band hides plane A, whose nonnegative
+V-scroll can point at HUD cells behind that window; those hidden cells must
+not be relocated. The window band remains unchanged. Each opaque HUD pixel
+moves by the corresponding margin width (71/71 at 16:9, 133/134 at 21:9). The asymmetric right margin is handled
 explicitly, so odd-width canvases preserve the right inset exactly.
 
 Vacated opaque pixels are recomposed from the current plane B, non-HUD plane
@@ -211,8 +212,8 @@ Artifacts remain under `build/hud/` and are excluded from git:
 | Machine-readable results | `summary.json`, per-mode `stderr.log`, `state-*.json`, and copied manifests |
 
 The first comparison exposed a one-row change in the top black band because
-its transitional raster state samples HUD pattern IDs. Requiring the HUD's
-signed-negative V-scroll phase fixes that classification without a fixed
+our sampler found HUD pattern IDs in plane A behind the active window.
+Requiring the HUD's signed-negative V-scroll phase fixes that classification without a fixed
 screen rectangle; the corrected captures preserve those top rows exactly.
 
 The options-page row is intentionally left for integration with task 06:
@@ -221,6 +222,53 @@ The setter/getter and environment selection are ready for it; this branch
 adds no overlapping settings implementation. Coverage remains the baseline
 single-player first track; the additional tracks and conditions listed below
 have not been qualified by this HUD probe.
+
+### Native red/orange top band
+
+The red/orange marks in rows 0..7 are **window-plane pixels**, separate from
+the HUD and from the sprite/object pool. They are already present in stock.
+Race VDP setup `$002520` selects window base `$0000` (`$00254E`, register 3),
+left boundary 0 (`$00260A`, register 17 = 0) and top window height 8
+(`$002618`, register 18 = 1). Thus the window replaces plane A across the
+first eight rows, while the actual HUD starts below it.
+
+`$002628..$00263E` initializes the first 32 VRAM words to `$8003`, selecting
+the high-priority solid-black pattern 3. The displayed dumps have window
+cells 2 and 3 (VRAM `$0004/$0006`) equal to zero, selecting pattern 0. That
+pattern aliases the same low VRAM words: `$80038003` decodes as nibbles
+`8,0,0,3,8,0,0,3`, while its row 1 is zero. Palette-0 entry 8 is `$000C`
+(red RGB 206/0/0), and entry 3 is `$024C` (orange 206/87/49). This accounts
+for all 56 colored pixels in columns 16..31, rows 0 and 2..7. No displayed
+SAT sprite intersects rows 0..7. The exact source of the later zeroed two
+name-table cells was not traced; the displayed layer, patterns and colors
+are established directly by the dumps and per-line palette snapshots.
+
+At baseline frame 4501 (also checked at 2800 and 3300):
+
+| Mode | Native origin | Red/orange columns, inclusive |
+|---|---:|---:|
+| Off, 256 pixels | 0 | 16..31 |
+| 16:9 Centered or Edges, 398 pixels | 71 | 87..102 |
+| 21:9 Centered or Edges, 523 pixels | 133 | 149..164 |
+
+The apparent x≈88 element is already shifted by the 71-pixel margin;
+x≈88 is **not** its native coordinate. Its position is correct in both HUD
+modes. The entire eight-row native band matches stock after subtracting each
+margin, and the investigation's read-only diagnostics leave all captured
+full images unchanged. Off hashes remain frame 60 `2A0B972960C5E325`, frame
+300 `1131D937D70234FD`; all four manifests remain empty in every new run.
+No presentation-position change was needed.
+
+`tg2_video` with `{"top":1}` now returns the live registers, first two VSRAM
+words and CRAM for each of the first eight scanlines. The read-only snapshots
+also cover rows that do not qualify for margin extension, avoiding stale
+scroll-only observations. `tools/analyze_top_band.py` checks the source
+texels, offsets, complete native bands and unchanged before/after images.
+Its artifacts are under `build/hud/top-band/`: `stock-top.png`,
+`before-after-{centered,edges}-{16-9,21-9}.png`, and `top-band-summary.json`.
+The before/after crops are identical because this follow-up adds diagnostics
+and evidence, without changing rendering. The route capture command and its
+logs are retained alongside those artifacts in `capture.py`/`capture.log`.
 
 ## Known artefacts and limitations
 

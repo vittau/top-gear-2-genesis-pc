@@ -187,6 +187,11 @@ static struct {
     unsigned a, b;
 } rows[240];
 static unsigned wide_lines, native_lines, frame_margin_pixels;
+/* Read-only evidence for the race's transitional top raster/window band. */
+static struct {
+    unsigned char reg[24];
+    unsigned short vsram[2], cram[64];
+} top_rows[8];
 static int race(const GVDP *v) {
     unsigned op = word(g_ram, 0xF9FE);
     return !(v->reg[12] & 15) && v->reg[16] == 0x11 && ((v->reg[2] & 56) << 10) == 0xC000 &&
@@ -225,9 +230,9 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     unsigned short spr_attr[256] = {0};
     int dirty = 0;
     /* The HUD raster phase uses signed-negative 10-bit V-scroll (-14 on
-     * this ROM). The initial black-band phase briefly samples the same
-     * cells with nonnegative V-scroll and a different palette: those are
-     * raster artefacts, not the displayed instruments. */
+     * this ROM). During the initial window-plane band, nonnegative plane-A
+     * scroll can point at HUD cells hidden behind that window. They are
+     * not displayed instruments and must not be relocated. */
     for (int x = 0; (va & 512) && x < nw; ++x) {
         unsigned attr, c = pixel(v, ba, x - ha, line + va, &attr);
         int side = hud_tile(attr);
@@ -318,6 +323,11 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
 static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     int origin = (w - nw) / 2;
+    if (line < 8) {
+        memcpy(top_rows[line].reg, v->reg, sizeof top_rows[line].reg);
+        memcpy(top_rows[line].vsram, v->vsram, sizeof top_rows[line].vsram);
+        memcpy(top_rows[line].cram, v->cram, sizeof top_rows[line].cram);
+    }
     if (!line) {
         frame_margin_pixels = 0;
         hud_plane_pixels = hud_marker_pixels = 0;
@@ -401,6 +411,20 @@ void tg2_video_command(int id, const char *json) {
         for (int i = 0; i < 224; ++i)
             n += snprintf(out + n, sizeof out - n, "%s[%d,%d,%d,%d,%u,%u]", i ? "," : "",
                           rows[i].ha, rows[i].hb, rows[i].va, rows[i].vb, rows[i].a, rows[i].b);
+        n += snprintf(out + n, sizeof out - n, "]");
+    }
+    if (json && strstr(json, "\"top\"")) {
+        n += snprintf(out + n, sizeof out - n, ",\"top\":[");
+        for (int row = 0; row < 8; ++row) {
+            n += snprintf(out + n, sizeof out - n, "%s{\"reg\":[", row ? "," : "");
+            for (int i = 0; i < 24; ++i)
+                n += snprintf(out + n, sizeof out - n, "%s%u", i ? "," : "", top_rows[row].reg[i]);
+            n += snprintf(out + n, sizeof out - n, "],\"vsram\":[%u,%u],\"cram\":[",
+                          top_rows[row].vsram[0], top_rows[row].vsram[1]);
+            for (int i = 0; i < 64; ++i)
+                n += snprintf(out + n, sizeof out - n, "%s%u", i ? "," : "", top_rows[row].cram[i]);
+            n += snprintf(out + n, sizeof out - n, "]}");
+        }
         n += snprintf(out + n, sizeof out - n, "]");
     }
     snprintf(out + n, sizeof out - n, "}");
