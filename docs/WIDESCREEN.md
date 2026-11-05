@@ -3,7 +3,7 @@
 Top Gear 2 races now render in an adaptive widescreen viewport: the road, its
 rumble strips, the roadside scenery, the skyline and ordinary sprite actors
 continue into the added margins, while the native 256-pixel image stays
-byte-identical in the centre of every row. `Off` keeps the stock 4:3 renderer
+byte-identical in the centre of every row with HUD: Centered. `Off` keeps the stock 4:3 renderer
 untouched.
 
 `game/tg2_video.c` implements this as a game-owned `GameVideo` provider. The
@@ -36,7 +36,7 @@ hills and banked curves keep their per-line perspective in the margins.
 
 ## What each layer does
 
-**Plane B — road and skyline.** Plane B is `$C000`, a 64×64 (512×512) name
+**Plane B — road and skyline.** Plane B is `$E000`, a 64×64 (512×512) name
 table. Its atlas holds four perspective road sections in rows 0..431, a
 separator, and the authored skyline panorama in rows 432..511.
 
@@ -50,10 +50,10 @@ separator, and the authored skyline panorama in rows 432..511.
 - Each row uses its own H-scroll (plane B register / VSRAM) and V-scroll, so
   the margin continues that exact scanline's perspective.
 
-**Plane A — HUD, player car, special effects.** Plane A is `$E000` and holds
-the HUD, the player car art and raster-positioned special effects. It is
-carried through the exact native centre and is **not** repeated into the
-added columns; see the limitations below.
+**Plane A — HUD, player car, special effects.** Plane A is `$C000` and holds
+the HUD, the player car art and raster-positioned special effects. With HUD: Centered it is
+carried through the exact native centre. HUD: Edges relocates only the HUD
+cells and map markers; car art and effects keep their native positions.
 
 **Sprites — opponent cars and roadside objects.** The game's mapper at
 `$00B584` projects each object and then performs the native horizontal cull at
@@ -105,15 +105,48 @@ first opcodes (`$2C9D`, `$601E`, `$6042` at `$FFF9FE`).
 
 ## HUD
 
-The HUD stays centred, exactly like the reference
-`RocketKnightAdventuresRecomp` renderer keeps its native window/HUD counters
-centred. It is plane A content interleaved with the player car and with
-raster-positioned effects; at a race frame the per-line plane-A H-scroll alone
-takes values 0, 244, 246 and 256, so "move only the HUD tiles" would need a
-per-row classification the raster program does not expose. Moving the whole
-plane would take the player car with it. No edge-anchored HUD option is
-implemented; this is the main deliberate gap against the original task.
-Selecting `Off` restores the stock layout and placement.
+**Centered** is the default and preserves the existing widescreen pixels.
+**Edges** places the speed/MPH, gear/AUTO, nitro and car icon at the left edge,
+and the track map, LAP and position at the right edge, retaining each native
+inset. The preference is exposed by `tg2_video_set_hud_mode(0|1)` and
+`tg2_video_get_hud_mode()` in `game/tg2_video.h`; probes can select it with
+`TG2_HUD_MODE=centered|edges`. It has no effect with widescreen Off, in menus
+or in split-screen. The options UI can call the setter without resetting the
+renderer; resets and state loads retain the presentation preference.
+
+Read-only TCP name-table/SAT dumps and per-line raster snapshots establish:
+
+| Content | Displayed source | Ownership |
+|---|---|---|
+| Left instruments | Plane A `$C000`, cells in columns 2..8, rows 0..9 | High-priority pattern IDs `$0004..$003C` |
+| Map, LAP, position | Plane A, columns 22..29, rows 0..9 | High-priority pattern IDs `$003D..$0084` |
+| Map's player/leader markers | Displayed SAT `$BE00` | 2×2 sprites, first patterns `$0106` and `$010E` |
+| Window | Inactive over the race HUD | No HUD content |
+
+All 129 instrument cells occur exactly once in the name table at baseline
+frames 2800, 3300 and 4501. Their identities remain fixed while the guest
+updates their pattern data: `$00F5F8` converts speed, `$00F71E` selects the lap,
+and `$00F79A` prepares changed pattern DMA sources. `$00FE8A` positions the
+map marker templates at `$FF8B76/$FF8B7E`; `$00F468` copies them to the SAT.
+The markers bypass the scenery mapper and therefore need their own displayed
+SAT read in addition to the existing pre-cull scenery capture.
+
+The renderer classifies the live name-table cells by these pattern IDs,
+rather than cutting fixed rectangles from the framebuffer. Each row uses its
+actual plane-A H-scroll and V-scroll; the HUD appears at screen row 14 even
+though it starts at name-table row 0, and the raster switches to other cells
+above and below it. Classification also requires the signed-negative plane-A
+V-scroll phase: the initial black band briefly samples some HUD cells with
+nonnegative V-scroll and a different palette, and remains unchanged. Each opaque HUD pixel moves by the corresponding margin
+width (71/71 at 16:9, 133/134 at 21:9). The asymmetric right margin is handled
+explicitly, so odd-width canvases preserve the right inset exactly.
+
+Vacated opaque pixels are recomposed from the current plane B, non-HUD plane
+A and ordinary SAT sprites, with native layer priority. Transparent HUD pixels
+do not overwrite the scene. The two map marker sprites move with the right
+cluster, sampling the displayed SAT and current patterns on every scanline.
+There are no guest RAM/VRAM writes, new function seeds or engine changes.
+`tg2_video` reports `hud_edges`, `hud_plane_pixels` and `hud_marker_pixels`.
 
 ## Off-mode guarantees
 
@@ -122,8 +155,8 @@ callbacks are never entered: `game_video_prepare_frame` leaves the frame
 unowned and the runner presents the native image. The measured stock hashes
 are unchanged (frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`).
 
-For the widened modes the native centre is copied from the original row after
-the margins are filled, so the canonical RAM, VRAM and native-centre pixels are
+For the widened modes with HUD: Centered the native centre is copied from
+the original row after the margins are filled, so the canonical RAM, VRAM and native-centre pixels are
 byte-identical to the Off run at every comparison frame (2800, 3300, 4501 and
 the menu frames 600/1350).
 
@@ -152,7 +185,6 @@ left margin.
 
 ## Known artefacts and limitations
 
-- **HUD is centred, not edge-anchored.** See above.
 - **Plane-A special effects are not extended.** Objects the game rasterises
   through plane A (rather than the sprite mapper) are visible only where they
   fall inside the native centre. Ordinary actors and roadside objects are
@@ -171,9 +203,8 @@ left margin.
   image instead of shrinking to it.
 - **The skyline panorama wraps.** It is an authored repeating background; its
   wrap is retained rather than synthesised.
-- The HUD's per-line raster splits and the game's own black bottom rows are
-  reproduced exactly because the native centre is copied from the original
-  row.
+- The game's own black bottom rows remain native pixels. HUD: Edges samples
+  each row's live raster state; the existing non-HUD plane-A limitations remain.
 
 ## Still untested
 
