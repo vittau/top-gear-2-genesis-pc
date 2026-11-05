@@ -19,6 +19,7 @@ p.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
 p.add_argument('--out', type=Path, default=ROOT / 'build/probe')
 p.add_argument('--frames', type=int, default=1800)
 p.add_argument('--port', type=int, default=4400)
+p.add_argument('--widescreen', default='off', help='Explicit presentation mode (off, fit, 16:9, 21:9)')
 p.add_argument('--shots', default='300,600,900,1200,1500')
 p.add_argument('--actions', default='[]', help='JSON list: frame, keys (hex), optional shot name')
 p.add_argument('--actions-file', type=Path, help='Read the timeline from a JSON file')
@@ -28,8 +29,11 @@ a = p.parse_args()
 a.exe = a.exe.resolve()
 a.out = a.out.resolve()
 a.out.mkdir(parents=True, exist_ok=True)
-if subprocess.run(['pgrep', '-x', 'TG2Recomp'], stdout=subprocess.DEVNULL).returncode == 0:
-    p.error('TG2Recomp is already running; stop it before launching another')
+with socket.socket() as port_check:
+    try:
+        port_check.bind(('127.0.0.1', a.port))
+    except OSError:
+        p.error(f'TCP port {a.port} is already in use; stop its owner before launching')
 (a.exe.parent / 'debug.ini').touch()
 env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy')
 if a.force_interp:
@@ -52,7 +56,8 @@ def command(cmd, **args):
 
 with (a.out / 'stdout.log').open('w') as out, (a.out / 'stderr.log').open('w') as err:
     proc = subprocess.Popen([str(a.exe), str(a.rom), '--no-launcher', '--port', str(a.port),
-        '--max-frames', str(a.frames), '--hash-frames', '60', '--fresh-evidence',
+        '--max-frames', str(a.frames), '--widescreen', a.widescreen,
+        '--hash-frames', '60', '--fresh-evidence',
         '--exec-coverage-out', str(a.out / 'executed-pcs.txt')], cwd=a.exe.parent,
         env=env, stdout=out, stderr=err)
     deadline = time.monotonic() + a.timeout
