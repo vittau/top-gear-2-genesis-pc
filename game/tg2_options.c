@@ -5,9 +5,10 @@
  * the options that are specific to Top Gear 2. They live in settings.ini as
  * [mods.<id>] sections, are offered by the launcher's Mods page through the
  * shared mod-provider ABI, and appear as rows in the in-game recomp-ui
- * overlay. Adding another boolean option is one row in s_options[].
+ * overlay. Adding another option is one row in s_options[].
  */
 #include "tg2_options.h"
+#include "tg2_video.h"
 #include "cmd_server.h"
 
 #include <SDL.h>
@@ -22,34 +23,70 @@
 
 /* ── Option registry ─────────────────────────────────────────────────────── */
 
+typedef enum Tg2OptionKind {
+    TG2_OPT_BOOL,       /* feature checkbox / BOOL row                 */
+    TG2_OPT_CHOICE,     /* enumerated feature option / CHOICE row      */
+} Tg2OptionKind;
+
 typedef struct Tg2Option {
     const char *id;           /* stable id: package/feature/overlay key */
     const char *section;      /* settings.ini section it is saved under */
     const char *key;          /* key inside that section */
-    const char *name;         /* player-facing label */
+    const char *name;         /* player-facing label (overlay row) */
+    const char *mod_name;     /* launcher feature label */
     const char *group;        /* launcher feature group / overlay section */
     const char *description;  /* one paragraph, shared by both UIs */
-    const char *status_on;
+    const char *status_on;    /* boolean status text */
     const char *status_off;
     int         default_value;
     int        *value;
+    Tg2OptionKind kind;
+    const char *const *choices;   /* serialized choice values */
+    const char *const *labels;    /* player-facing choice labels */
+    int         choice_count;
+    void      (*apply)(int value); /* live renderer/config update, optional */
 } Tg2Option;
 
 static int s_race60 = 1;      /* task default: 60 fps races On */
+static int s_hud_edges = 0;   /* task default: HUD Centered */
+
+static const char *const s_hud_choices[] = { "centered", "edges" };
+static const char *const s_hud_labels[]  = { "Centered", "Edges" };
 
 static const Tg2Option s_options[] = {
-    /* A third option is one more row here. */
+    /* Another option is one more row here. */
     { "race60", "mods.race60", "enabled",
-      "60 fps races", "Presentation",
+      "60 fps races", "60 fps races", "Presentation",
       "Present races at 60 pictures per second while the game clock, lap "
       "counter and AI cadence stay native. Off restores the stock rate. "
       "Changes take effect from the next race.",
       "Enabled (60 pictures/s)", "Disabled (stock rate)",
-      1, &s_race60 },
+      1, &s_race60, TG2_OPT_BOOL, NULL, NULL, 0, NULL },
+    { "hud", "mods.hud", "placement",
+      "HUD", "HUD at edges", "Presentation",
+      "Centered keeps the widescreen HUD with the car and effects. Edges "
+      "anchors the instruments and track map to the left and right margins. "
+      "Only meaningful while widescreen is on.",
+      "Edges", "Centered",
+      0, &s_hud_edges, TG2_OPT_CHOICE, s_hud_choices, s_hud_labels, 2,
+      tg2_video_set_hud_mode },
 };
 #define TG2_OPTION_COUNT ((int)(sizeof s_options / sizeof s_options[0]))
 
 int tg2_race60_requested(void) { return s_race60 != 0; }
+
+static void apply_option(const Tg2Option *o)
+{
+    if (o->apply) o->apply(*o->value);
+}
+
+static const char *option_text(const Tg2Option *o)
+{
+    if (o->kind == TG2_OPT_CHOICE && o->choices &&
+        *o->value >= 0 && *o->value < o->choice_count)
+        return o->choices[*o->value];
+    return *o->value ? "1" : "0";
+}
 
 /* ── settings.ini ─────────────────────────────────────────────────────────── */
 
@@ -66,6 +103,16 @@ static int parse_bool(const char *v)
 {
     while (*v == ' ' || *v == '\t') ++v;
     return strtol(v, NULL, 0) != 0;
+}
+
+static int parse_option(const Tg2Option *o, const char *v)
+{
+    while (*v == ' ' || *v == '\t') ++v;
+    if (o->kind == TG2_OPT_CHOICE) {
+        for (int i = 0; i < o->choice_count; ++i)
+            if (!strcmp(v, o->choices[i])) return i;
+    }
+    return parse_bool(v) ? 1 : 0;
 }
 
 /* One-time migration for the pre-settings.ini surface: tg2.ini next to the
@@ -131,13 +178,15 @@ void tg2_options_load(const char *settings_path)
         *eq = '\0';
         char *key = trim(s);
         if (strcmp(key, current->key)) continue;
-        *current->value = parse_bool(trim(eq + 1));
+        *current->value = parse_option(current, trim(eq + 1));
         seen[current_index] = 1;
     }
     if (f) fclose(f);
     for (int i = 0; i < TG2_OPTION_COUNT; ++i)
         if (!seen[i] && !strcmp(s_options[i].id, "race60"))
             (void)legacy_ini_bool(settings_path, "race_60fps", &s_race60);
+    for (int i = 0; i < TG2_OPTION_COUNT; ++i)
+        apply_option(&s_options[i]);
 }
 
 /* Copy the file to a temporary path, dropping any section this game owns,
@@ -173,8 +222,8 @@ int tg2_options_save(const char *settings_path)
     }
     if (in) fclose(in);
     for (int i = 0; i < TG2_OPTION_COUNT; ++i)
-        fprintf(out, "[%s]\n%s = %d\n\n", s_options[i].section,
-                s_options[i].key, *s_options[i].value != 0);
+        fprintf(out, "[%s]\n%s = %s\n\n", s_options[i].section,
+                s_options[i].key, option_text(&s_options[i]));
 
     int ok = !ferror(out);
     if (fclose(out) != 0) ok = 0;
@@ -199,6 +248,14 @@ void tg2_options_apply_env(void)
         s_race60 = env[0] == '1' || env[0] == 'o' || env[0] == 'O'
                 || env[0] == 'y' || env[0] == 'Y' || env[0] == 't'
                 || env[0] == 'T';
+    const char *hud = getenv("TG2_HUD_MODE");
+    if (hud) {
+        if (!strcmp(hud, "edges") || !strcmp(hud, "1"))
+            s_hud_edges = 1;
+        else if (!strcmp(hud, "centered") || !strcmp(hud, "0"))
+            s_hud_edges = 0;
+        tg2_video_set_hud_mode(s_hud_edges);
+    }
 }
 
 /* ── In-game overlay rows ─────────────────────────────────────────────────── */
@@ -210,6 +267,11 @@ static const RecompRuntimeUiItem s_runtime_items[] = {
       "counter and AI cadence stay native. Off restores the stock rate. "
       "Changes take effect from the next race.",
       RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
+    { "mods.hud.placement", "Mods", "HUD",
+      "Centered keeps the widescreen HUD with the car and effects. Edges "
+      "anchors the instruments and track map to the left and right margins. "
+      "Only meaningful while widescreen is on.",
+      RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, s_hud_labels, 2, NULL },
 };
 #endif
 
@@ -231,7 +293,7 @@ int tg2_options_runtime_get(const char *key, int *out)
         char k[96];
         snprintf(k, sizeof k, "%s.%s", s_options[i].section, s_options[i].key);
         if (!strcmp(key, k)) {
-            *out = *s_options[i].value != 0;
+            *out = *s_options[i].value;
             return 1;
         }
     }
@@ -245,7 +307,10 @@ int tg2_options_runtime_set(const char *key, int value)
         char k[96];
         snprintf(k, sizeof k, "%s.%s", s_options[i].section, s_options[i].key);
         if (!strcmp(key, k)) {
-            *s_options[i].value = value != 0;
+            if (s_options[i].kind == TG2_OPT_CHOICE && value >= s_options[i].choice_count)
+                return 0;
+            *s_options[i].value = value;
+            apply_option(&s_options[i]);
             return 1;
         }
     }
@@ -302,9 +367,10 @@ void tg2_options_ui_command(int id, const char *json)
     if (key != SDLK_UNKNOWN) push_key(key);
     char out[192];
     snprintf(out, sizeof out,
-             "{\"id\":%d,\"ok\":%s,\"action\":\"%s\",\"race60\":%d,\"menu_open\":%d}",
+             "{\"id\":%d,\"ok\":%s,\"action\":\"%s\",\"race60\":%d,"
+             "\"hud_edges\":%d,\"menu_open\":%d}",
              id, key != SDLK_UNKNOWN ? "true" : "false", action, s_race60,
-             runner_runtime_ui_open());
+             s_hud_edges, runner_runtime_ui_open());
     cmd_send_response(out);
 }
 
@@ -347,13 +413,13 @@ static int tg2_package_get(void *ctx, int i, RecompLauncherCModPackage *out)
         if (ok && !strcmp(out->id, "custom-widescreen"))
             snprintf(out->description, sizeof out->description,
                      "Widen single-player races. Menus and split-screen keep their original view; the "
-                     "HUD stays centered. Off restores stock 4:3.");
+                     "HUD placement is a separate option. Off restores stock 4:3.");
         return ok;
     }
     if (!out) return 0;
     memset(out, 0, sizeof *out);
     snprintf(out->id, sizeof out->id, "tg2-%s", o->id);
-    snprintf(out->name, sizeof out->name, "%s", o->name);
+    snprintf(out->name, sizeof out->name, "%s", o->mod_name);
     snprintf(out->version, sizeof out->version, "1");
     snprintf(out->author, sizeof out->author, "Top Gear 2 Recomp contributors");
     snprintf(out->description, sizeof out->description, "%s", o->description);
@@ -380,13 +446,17 @@ static int tg2_feature_get(void *ctx, int i, RecompLauncherCModFeature *out)
     snprintf(out->package_id, sizeof out->package_id, "tg2-%s", o->id);
     snprintf(out->package_name, sizeof out->package_name, "%s", o->name);
     snprintf(out->package_version, sizeof out->package_version, "1");
-    snprintf(out->name, sizeof out->name, "%s", o->name);
+    snprintf(out->name, sizeof out->name, "%s", o->mod_name);
     snprintf(out->group, sizeof out->group, "%s", o->group);
     snprintf(out->author, sizeof out->author, "Top Gear 2 Recomp contributors");
     snprintf(out->description, sizeof out->description, "%s", o->description);
-    snprintf(out->status, sizeof out->status, "%s",
-             *o->value ? o->status_on : o->status_off);
+    if (o->kind == TG2_OPT_CHOICE)
+        snprintf(out->status, sizeof out->status, "%s", o->labels[*o->value]);
+    else
+        snprintf(out->status, sizeof out->status, "%s",
+                 *o->value ? o->status_on : o->status_off);
     out->enabled = *o->value != 0;
+    out->option_count = o->kind == TG2_OPT_CHOICE ? 1 : 0;
     return 1;
 }
 
@@ -399,15 +469,35 @@ static int tg2_option_identity(const char *package, const char *feature,
            !strcmp(feature, o->id);
 }
 
+static const Tg2Option *option_by_identity(const char *package,
+                                           const char *feature)
+{
+    for (int n = 0; n < TG2_OPTION_COUNT; ++n)
+        if (tg2_option_identity(package, feature, &s_options[n]))
+            return &s_options[n];
+    return NULL;
+}
+
 static int tg2_option_get(void *ctx, const char *package, const char *feature,
                           int i, RecompLauncherCModOption *out)
 {
-    for (int n = 0; n < TG2_OPTION_COUNT; ++n)
-        if (tg2_option_identity(package, feature, &s_options[n])) {
-            (void)i;
-            (void)out;
-            return 0;   /* booleans use the list checkbox */
-        }
+    const Tg2Option *o = option_by_identity(package, feature);
+    if (o) {
+        if (!out || i != 0 || o->kind != TG2_OPT_CHOICE) return 0;
+        memset(out, 0, sizeof *out);
+        out->type = RECOMP_MOD_OPTION_CHOICE;
+        out->step = 1;
+        out->choice_count = o->choice_count;
+        snprintf(out->id, sizeof out->id, "%s", o->key);
+        snprintf(out->label, sizeof out->label, "Placement");
+        snprintf(out->description, sizeof out->description,
+                 "Centered keeps the HUD with the car; Edges anchors it to the "
+                 "widescreen margins.");
+        snprintf(out->value, sizeof out->value, "%s", o->choices[*o->value]);
+        snprintf(out->default_value, sizeof out->default_value, "%s",
+                 o->choices[o->default_value]);
+        return 1;
+    }
     return s_base->feature_option_get
         ? s_base->feature_option_get(s_base->ctx, package, feature, i, out) : 0;
 }
@@ -416,6 +506,14 @@ static int tg2_option_choice(void *ctx, const char *package, const char *feature
                              const char *option, int i, RecompLauncherCModChoice *out)
 {
     (void)ctx;
+    const Tg2Option *o = option_by_identity(package, feature);
+    if (o && o->kind == TG2_OPT_CHOICE && option && !strcmp(option, o->key)) {
+        if (!out || i < 0 || i >= o->choice_count) return 0;
+        memset(out, 0, sizeof *out);
+        snprintf(out->value, sizeof out->value, "%s", o->choices[i]);
+        snprintf(out->label, sizeof out->label, "%s", o->labels[i]);
+        return 1;
+    }
     return s_base->feature_choice_get
         ? s_base->feature_choice_get(s_base->ctx, package, feature, option, i, out) : 0;
 }
@@ -424,18 +522,30 @@ static int tg2_feature_enable(void *ctx, const char *package, const char *featur
                               int on)
 {
     (void)ctx;
-    for (int n = 0; n < TG2_OPTION_COUNT; ++n)
-        if (tg2_option_identity(package, feature, &s_options[n])) {
-            *s_options[n].value = on != 0;
-            return 1;
-        }
+    const Tg2Option *o = option_by_identity(package, feature);
+    if (o) {
+        *o->value = o->kind == TG2_OPT_CHOICE ? (on ? 1 : 0) : (on != 0);
+        apply_option(o);
+        return 1;
+    }
     return s_base->feature_enable(s_base->ctx, package, feature, on);
 }
 
 static int tg2_feature_set(void *ctx, const char *package, const char *feature,
                            const char *option, const char *value)
 {
-    (void)ctx; (void)package; (void)feature; (void)option; (void)value;
+    (void)ctx;
+    const Tg2Option *o = option_by_identity(package, feature);
+    if (o && o->kind == TG2_OPT_CHOICE && option && value &&
+        !strcmp(option, o->key)) {
+        for (int i = 0; i < o->choice_count; ++i)
+            if (!strcmp(value, o->choices[i])) {
+                *o->value = i;
+                apply_option(o);
+                return 1;
+            }
+        return 0;
+    }
     return s_base->feature_set_option
         ? s_base->feature_set_option(s_base->ctx, package, feature, option, value) : 0;
 }
