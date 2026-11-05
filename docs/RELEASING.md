@@ -5,13 +5,30 @@ push, pull request and manual dispatch, and publishes downloadable artifacts:
 
 | Artifact | Runner | Payload |
 |---|---|---|
-| `TG2Recomp-linux-x86_64` | `ubuntu-22.04` (glibc 2.35) | `TG2Recomp-linux-x86_64.tar.gz` + `.sha256` |
-| `TG2Recomp-windows-x64` | `windows-latest` (MSVC, static CRT) | `TG2Recomp.exe`, `assets/`, `licenses/`, `README.txt` |
-| `TG2Recomp-macos` | `macos-latest` (universal2: arm64 + x86_64) | `TG2Recomp-macos.tar.gz` + `.sha256` |
+| `TG2Recomp-linux-x86_64` | `ubuntu-22.04` (glibc 2.35) | folder + `TG2Recomp-linux-x86_64.tar.gz` + `.sha256` |
+| `TG2Recomp-windows-x64` | `windows-latest` (MSVC, default VS generator, static CRT) | `TG2Recomp.exe`, `assets/`, `licenses/`, `README.txt` |
+| `TG2Recomp-macos` | `macos-latest` (universal2: arm64 + x86_64) | folder + `TG2Recomp-macos.tar.gz` + `.sha256` |
 
-Linux and macOS artifacts are tarballs because GitHub artifact ZIPs do not
-preserve the executable bit. Windows has no such bit, so the artifact is the
-folder itself.
+Linux and macOS artifacts contain both the staged folder (convenient for
+inspection) and a tarball, because GitHub artifact ZIPs do not preserve the
+executable bit. Publish or distribute the `.tar.gz`: extracting it keeps
+`TG2Recomp` executable. Windows has no such bit, so the artifact is the folder
+itself.
+
+## Runtime requirements
+
+- **Linux:** glibc ≤ 2.35 and the standard desktop graphics stack every
+  SteamOS 3.x or desktop image ships — OpenGL (GLVND), X11 or Wayland,
+  FreeType and HarfBuzz. SDL2 and libstdc++ are linked statically; `ldd`
+  shows only those system libraries and the binary carries a `$ORIGIN`
+  RUNPATH for any future bundled library.
+- **Windows:** one executable, static MSVC runtime and static SDL2. No DLLs
+  and no Visual C++ redistributable.
+- **macOS:** only system frameworks. The universal2 payload deliberately
+  skips Homebrew FreeType/HarfBuzz (arm64-only dylibs would break the x86_64
+  slice and add host-specific dependencies), so the launcher uses outline
+  emoji instead of colour emoji.
+
 
 ## What the build does
 
@@ -21,7 +38,8 @@ folder itself.
    the ROM SHA-256. The ROM is used only as the recompiler's input; it is never
    copied into a payload, cache or log.
 3. Applies `patches/segagenesisrecomp/*.patch` through
-   `tools/apply-engine-patches.sh` (Git Bash on Windows, plain bash elsewhere).
+   `tools/apply-engine-patches.sh` on Linux/macOS and its portable Python twin
+   `tools/apply-engine-patches.py` on Windows.
 4. Builds SDL2 2.28.5 from the pinned, SHA-256-verified upstream tarball
    (`tools/release/fetch-sdl.py`) and links it **statically**.
 5. Configures a Release build with native IPO and the debug instrumentation
@@ -34,7 +52,9 @@ folder itself.
 7. Uploads the artifact. A separate `linux-verify` job downloads the uploaded
    Linux artifact, checks the tarball hash, extracts it, proves the highest
    required glibc symbol version is ≤ 2.35 (`objdump -T`,
-   `tools/release/verify_glibc.py`, plus `ldd`), and repeats the smoke run.
+   `tools/release/verify_glibc.py`, plus a clean `ldd` after installing the
+   desktop runtime libraries), and repeats the smoke run on the downloaded
+   payload.
 
 Pull requests from forks are skipped: GitHub does not expose repository
 secrets to fork PRs, so the private ROM (and therefore C generation) is not
