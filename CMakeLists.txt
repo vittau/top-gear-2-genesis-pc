@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.19)
 project(TopGear2Recomp VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
+# Release identity embedded in the executable (launcher/about and the
+# runtime evidence header). CI passes 0.1.0-g<commit>; the default keeps a
+# plain developer build valid.
+set(TG2_BUILD_VERSION "${PROJECT_VERSION}" CACHE STRING
+    "Release build version reported by the executable")
+if(NOT TG2_BUILD_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9.]+)?$")
+    message(FATAL_ERROR "Invalid TG2_BUILD_VERSION: ${TG2_BUILD_VERSION}")
+endif()
+set(GENESIS_GAME_VERSION "${TG2_BUILD_VERSION}")
 set(GENESIS_RECOMP_ROOT "${CMAKE_SOURCE_DIR}/segagenesisrecomp" CACHE PATH "Genesis framework")
 set(TG2_ROM "$ENV{HOME}/roms/genesis/tg2.bin" CACHE FILEPATH "Stock Top Gear 2 USA ROM")
 set(RECOMP_ROOT "${GENESIS_RECOMP_ROOT}")
