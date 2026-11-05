@@ -27,7 +27,10 @@ $SdlSource = (Resolve-Path -LiteralPath $SdlSource).Path
 & python "$repo/tools/apply-engine-patches.py" --repo $repo
 if ($LASTEXITCODE) { throw 'Applying engine patches failed' }
 
-& cmake -S $repo -B $BuildDir -G 'Visual Studio 17 2022' -A x64 `
+# Use whatever Visual Studio the runner has (the image may ship VS 2022 or a
+# newer release): let CMake pick its default Visual Studio generator and keep
+# the x64 platform explicit.
+& cmake -S $repo -B $BuildDir -A x64 `
     "-DGENESIS_RECOMP_ROOT=$repo/segagenesisrecomp" `
     "-DTG2_ROM=$Rom" `
     "-DTG2_SDL_SOURCE=$SdlSource" `
