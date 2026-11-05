@@ -9,6 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 static int mode;
+static int hud_edges, hud_configured;
+void tg2_video_set_hud_mode(int edges) {
+    hud_edges = edges != 0;
+    hud_configured = 1;
+}
+int tg2_video_get_hud_mode(void) {
+    if (!hud_configured) {
+        const char *s = getenv("TG2_HUD_MODE");
+        tg2_video_set_hud_mode(s && (!strcmp(s, "edges") || !strcmp(s, "1")));
+    }
+    return hud_edges;
+}
 static double ratio = 16.0 / 9.0;
 static unsigned word(const unsigned char *p, unsigned a) {
     return (p[a & 65535] << 8) | p[(a + 1) & 65535];
@@ -175,6 +187,11 @@ static struct {
     unsigned a, b;
 } rows[240];
 static unsigned wide_lines, native_lines, frame_margin_pixels;
+/* Read-only evidence for the race's transitional top raster/window band. */
+static struct {
+    unsigned char reg[24];
+    unsigned short vsram[2], cram[64];
+} top_rows[8];
 static int race(const GVDP *v) {
     unsigned op = word(g_ram, 0xF9FE);
     return !(v->reg[12] & 15) && v->reg[16] == 0x11 && ((v->reg[2] & 56) << 10) == 0xC000 &&
@@ -192,11 +209,129 @@ static int road_x(int nx, int scroll, int py) {
     int x = nx - center;
     return x < -256 ? -256 : x > 255 ? 255 : x;
 }
+/* Single-player HUD name-table ownership, verified from the race dumps:
+ * $0004..$003C = left instruments, $003D..$0084 = map/lap/position.
+ * The game changes their pattern data, not these cell identities. Testing
+ * the live cells (rather than screen rectangles) follows every raster split
+ * without accidentally moving the player car or the skyline effect cells. */
+static int hud_tile(unsigned attr) {
+    unsigned tile = attr & 2047;
+    return (attr & 0x8000) && tile >= 4 && tile <= 0x84
+               ? (tile < 0x3D ? -1 : 1) : 0;
+}
+static unsigned hud_plane_pixels, hud_marker_pixels;
+static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
+                    unsigned ba, unsigned bb, const uint32_t *pal, int nw,
+                    uint32_t *out, int w) {
+    if (!tg2_video_get_hud_mode() || nw != 256 || w <= nw)
+        return;
+    int origin = (w - nw) / 2, right = w - nw - origin;
+    unsigned char removed[256] = {0}, sprites[256] = {0}, shifted[4096] = {0};
+    unsigned short spr_attr[256] = {0};
+    int dirty = 0;
+    /* The HUD raster phase uses signed-negative 10-bit V-scroll (-14 on
+     * this ROM). During the initial window-plane band, nonnegative plane-A
+     * scroll can point at HUD cells hidden behind that window. They are
+     * not displayed instruments and must not be relocated. */
+    for (int x = 0; (va & 512) && x < nw; ++x) {
+        unsigned attr, c = pixel(v, ba, x - ha, line + va, &attr);
+        int side = hud_tile(attr);
+        if (side && c) {
+            removed[x] = 1;
+            shifted[origin + x + (side < 0 ? -origin : right)] = c;
+            ++hud_plane_pixels;
+            dirty = 1;
+        }
+    }
+    /* The map's 1P/leader markers bypass the scenery mapper. ROM $00FE8A
+     * positions two 2x2 sprites from $FF8B76/$FF8B7E; $00F468 copies them
+     * into the SAT. Read the displayed SAT, never the next CPU picture. */
+    unsigned sat = (v->reg[5] & 127) << 9;
+    int link = 0, on_line = 0, budget = nw;
+    unsigned char occupied[4096] = {0};
+    for (int n = 0; n < 64; ++n) {
+        unsigned e = sat + link * 8;
+        int y = (word(v->vram, e) & 1023) - 128;
+        unsigned size = v->vram[(e + 2) & 65535], attr = word(v->vram, e + 4);
+        int sw = (((size >> 2) & 3) + 1) * 8, sh = ((size & 3) + 1) * 8;
+        int next = v->vram[(e + 3) & 65535] & 127;
+        if (line >= y && line < y + sh) {
+            if (++on_line > 16)
+                break;
+            int xword = word(v->vram, e + 6) & 1023;
+            if (!xword && on_line > 1)
+                break;
+            int x = xword - 128, sy = line - y;
+            int marker = size == 5 && (attr & 0x8000) &&
+                         ((attr & 2047) == 0x106 || (attr & 2047) == 0x10E);
+            if (attr & 0x1000)
+                sy = sh - 1 - sy;
+            for (int dx = 0; dx < sw; ++dx) {
+                int nx = x + dx, ox = origin + nx + (marker ? right : 0);
+                int sx = attr & 0x800 ? sw - 1 - dx : dx;
+                unsigned tile = ((attr & 2047) + (sx / 8) * (sh / 8) + sy / 8) & 2047;
+                unsigned data = v->vram[(tile * 32 + (sy & 7) * 4 + (sx & 7) / 2) & 65535];
+                unsigned c = sx & 1 ? data & 15 : data >> 4;
+                if (!c)
+                    continue;
+                c |= (attr >> 9) & 48;
+                if (marker && nx >= 0 && nx < nw) {
+                    removed[nx] = 1;
+                    dirty = 1;
+                }
+                if (ox < 0 || ox >= w || occupied[ox])
+                    continue;
+                occupied[ox] = 1;
+                if (marker) {
+                    shifted[ox] = c;
+                    ++hud_marker_pixels;
+                } else if (nx >= 0 && nx < nw) {
+                    sprites[nx] = c;
+                    spr_attr[nx] = attr;
+                }
+            }
+            budget -= sw;
+            if (budget <= 0)
+                break;
+        }
+        if (!next)
+            break;
+        link = next;
+    }
+    if (!dirty)
+        return;
+    /* Restore only vacated opaque HUD pixels. Retain the actual plane B,
+     * any non-HUD plane A, and ordinary SAT sprites underneath, with the
+     * native priority order. Transparent HUD pixels never copy sky over an
+     * actor, and unrelated native pixels remain the original framebuffer. */
+    for (int x = 0; x < nw; ++x) {
+        if (!removed[x])
+            continue;
+        unsigned a, b, ap = pixel(v, ba, x - ha, line + va, &a);
+        unsigned bp = pixel(v, bb, x - hb, line + vb, &b), sp = sprites[x];
+        if (hud_tile(a))
+            ap = 0;
+        unsigned c = sp && (spr_attr[x] & 0x8000) ? sp :
+                     ap && (a & 0x8000) ? ap : bp && (b & 0x8000) ? bp :
+                     sp ? sp : ap ? ap : bp ? bp : v->reg[7] & 63;
+        out[origin + x] = pal[c];
+    }
+    for (int x = 0; x < w; ++x)
+        if (shifted[x])
+            out[x] = pal[shifted[x]];
+}
 static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     int origin = (w - nw) / 2;
-    if (!line)
+    if (line < 8) {
+        memcpy(top_rows[line].reg, v->reg, sizeof top_rows[line].reg);
+        memcpy(top_rows[line].vsram, v->vsram, sizeof top_rows[line].vsram);
+        memcpy(top_rows[line].cram, v->cram, sizeof top_rows[line].cram);
+    }
+    if (!line) {
         frame_margin_pixels = 0;
+        hud_plane_pixels = hud_marker_pixels = 0;
+    }
     for (int x = 0; x < w; ++x)
         out[x] = 0xFF000000;
     if (!race(v) || !(v->reg[1] & 64)) {
@@ -259,21 +394,37 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, ui
         }
     }
     memcpy(out + origin, native, nw * sizeof *out);
+    hud_row(v, line, ha, hb, va, vb, ba, bb, pal, nw, out, w);
 }
 void tg2_video_command(int id, const char *json) {
     char out[22000];
     int n = snprintf(out, sizeof out,
                      "{\"id\":%d,\"ok\":true,\"enabled\":%d,\"wide_lines\":%u,\"native_lines\":%u,"
                      "\"published\":%u,\"displayed\":%u,\"pieces\":%u,\"overflow\":%u,"
-                     "\"sat_matches\":%u,\"margin_pieces\":%u,\"sprite_margin_pixels\":%u",
+                     "\"sat_matches\":%u,\"margin_pieces\":%u,\"sprite_margin_pixels\":%u,"
+                     "\"hud_edges\":%d,\"hud_plane_pixels\":%u,\"hud_marker_pixels\":%u",
                      id, enabled(), wide_lines, native_lines, serial, shown ? shown->serial : 0,
                      shown ? shown->count : 0, overflow, matched_pieces, margin_pieces,
-                     frame_margin_pixels);
+                     frame_margin_pixels, tg2_video_get_hud_mode(), hud_plane_pixels, hud_marker_pixels);
     if (json && strstr(json, "\"rows\"")) {
         n += snprintf(out + n, sizeof out - n, ",\"rows\":[");
         for (int i = 0; i < 224; ++i)
             n += snprintf(out + n, sizeof out - n, "%s[%d,%d,%d,%d,%u,%u]", i ? "," : "",
                           rows[i].ha, rows[i].hb, rows[i].va, rows[i].vb, rows[i].a, rows[i].b);
+        n += snprintf(out + n, sizeof out - n, "]");
+    }
+    if (json && strstr(json, "\"top\"")) {
+        n += snprintf(out + n, sizeof out - n, ",\"top\":[");
+        for (int row = 0; row < 8; ++row) {
+            n += snprintf(out + n, sizeof out - n, "%s{\"reg\":[", row ? "," : "");
+            for (int i = 0; i < 24; ++i)
+                n += snprintf(out + n, sizeof out - n, "%s%u", i ? "," : "", top_rows[row].reg[i]);
+            n += snprintf(out + n, sizeof out - n, "],\"vsram\":[%u,%u],\"cram\":[",
+                          top_rows[row].vsram[0], top_rows[row].vsram[1]);
+            for (int i = 0; i < 64; ++i)
+                n += snprintf(out + n, sizeof out - n, "%s%u", i ? "," : "", top_rows[row].cram[i]);
+            n += snprintf(out + n, sizeof out - n, "]}");
+        }
         n += snprintf(out + n, sizeof out - n, "]");
     }
     snprintf(out + n, sizeof out - n, "}");
