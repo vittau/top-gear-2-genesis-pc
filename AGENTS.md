@@ -60,3 +60,10 @@ renderer) and adapt it. Don't copy its game-specific addresses.
 
 Finish with evidence: commands run, exit codes, frame hashes or screenshot
 paths, dispatch-miss counts. Say plainly what is verified and what isn't.
+
+## Distribution targets
+
+- Release targets: Windows x64, Linux x86_64 (including Steam Deck / SteamOS / Gamescope with controller-only operation), and macOS on Apple Silicon and Intel.
+- Build Linux releases against an older glibc than this host's 2.44; bundle or statically link SDL2 and avoid dependencies on host installation paths. This workstation build is development evidence, not a qualified release artifact.
+- Zero setup: users place their ROM next to the executable and launch it. Search the executable directory and working directory by content for CRC32 `BD3074D2`, regardless of filename or extension; show a clear message or launcher picker only when no match exists. Deck users must not need terminal commands.
+- Releases contain prebuilt native code; users never build or run a generator. Generated C, ROMs, dumps and save states stay out of git and release payloads.

@@ -65,3 +65,24 @@ that exploratory timeline pressed Start again at frame 3000; the final
 qualification uses acceleration instead. A 9.9-second stereo audio capture
 at 223721 Hz has peak 8800 and RMS 1507.45 (`audio.wav` in the same directory).
 Speaker playback has not been assessed: probes use SDL's dummy audio device.
+
+## Distribution and startup
+
+The existing shared launcher remembers `rom-TG2.cfg` and offers a file picker;
+its game bridge provides the required CRC32 and its launcher model validates
+selected content. It does **not** search the desktop executable directory by
+CRC. Engine patch 2 adds that search before launch UI: external AppImage
+folder, native executable folder (SDL's platform path API), then cwd. It
+accepts any filename or extension, requires matching content CRC and size,
+and skips directories and nonregular files. CLI-selected ROMs keep their
+existing strict identity gate. With no match, the launcher/picker remains
+available and stderr explains the required cartridge and CRC.
+
+`tools/test_rom_autodetect.py` compiles the shared detector with `-Werror`
+and exercises synthetic non-ROM data, arbitrary names/extensions, wrong
+CRC/size, directories, FIFO and absent directory; exit 0.
+
+Distribution targets are recorded in AGENTS.md. This workstation's glibc
+2.44 binary is development evidence only; older-glibc Linux/Deck release
+qualification, bundled SDL release packaging, Windows and both macOS
+architectures still need separate builds and device checks.
