@@ -77,3 +77,32 @@ Race timing fields verified by raw ROM and per-frame native snapshots
 | `$FF2424` | byte | Main picture ready for V-int submission | `$006982` sets, `$004762` tests, `$00476C` clears |
 | `$FF2425` | byte | Low byte of per-V-int race counter used beside ready flag | `$00474C` |
 | `$FF2426` | word | V-int-latched ready/counter pair | `$004750`, tested `$0048BE`, `$004954` |
+
+Fields added while mapping the main-loop -> IRQ-physics feedback
+(`docs/FRAMERATE.md`), all verified against the ROM and against stock/60 fps
+runtime captures:
+
+| Address | Size | Meaning | Evidence |
+|---|---|---|---|
+| `$FF1996` | long | Track segment-table base for the sampled segment | written `$0088E8`, read by road/scenery builders |
+| `$FF199A` | long | Second segment-table base (same value) | written `$0088EC` |
+| `$FF18CA`+`$70` | word | Picture snapshot: steering input | `$00683A` copies `+$20` |
+| `$FF18CA`+`$74` | long | Picture snapshot: physical track position | `$00682E` copies `+0` |
+| `$FF18CA`+`$78` | long | Picture snapshot: secondary position | `$006834` copies `+$4A` |
+| `$FF18CA`+`$7C` | long | Picture snapshot: view position used to draw the road | `$006822` copies `+8` |
+| `$FF18CA`+`$80` | word | Picture snapshot: state word | `$006828` copies `+$52` |
+| `$FF18CA`+`$84` | word | Picture snapshot: track slope | `$006846` copies `+$16` |
+| `$FF18CA`+`$86` | word | Picture snapshot: track curvature | `$006840` copies `+$14` |
+| `$FF189E` | word | Two-player race active; non-zero makes `$00CD76` run record `$FF1D22` instead of `$00CD84` running `$FF18CA` | `$00CD76..$00CD82` |
+| `$FF1D22` | record | Second player record (`$FF18CA` + `$458`), zero in a single-player race | `$00CD7E`, `$00684C` |
+| `$FF168E` | word | Deferred VRAM block work gate/counter; zero disables `$00E4A0` | `$00E4A0..$00E4AA` |
+| `$FF233A` | word | Deferred work call counter; its parity selects block list A or B | `$00E4C0..$00E4D2` |
+| `$FF238E` | long | Deferred VRAM block mask, list A | `$00E4D0`, uploaded by `$00E696` |
+| `$FF2392` | long | Deferred VRAM block mask, list B | `$00E4EE`, uploaded by `$00ED0A` |
+| `$FF23C4` | byte | Queued VRAM block upload pending | `$0047B2..$0047B8`, serviced by `$0052C2` |
+| `$FF23B6` | word | VDP command staging word during a deferred block upload | `$00E6BE..$00E6C4` |
+
+VRAM layout in the race mode (VDP registers 2/4/5/13 = `$30`/`$07`/`$5F`/`$2E`):
+sprite attribute table `$BE00` (640 bytes), H-scroll table `$B800` (896
+bytes), plane A `$C000`, plane B `$E000`.
+

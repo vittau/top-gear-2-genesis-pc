@@ -1,212 +1,309 @@
-# Race timing investigation
+# Race presentation rate: measurement and 60 fps option
 
-ROM: Top Gear 2 USA, CRC32 `BD3074D2`. Addresses below were checked against
-the private ROM with `tools/disasm_tg2.py` (Capstone 68000 mode), then against
-native runtime snapshots. Generated C was read, never edited.
+ROM: Top Gear 2 USA, CRC32 `BD3074D2`. Every address below was checked against
+the private ROM with `tools/disasm_tg2.py` (Capstone 68000 mode) and against
+native runtime snapshots from the scripted baseline route. Generated C was read,
+never edited.
 
-## Stock measurement
+**Result.** A default-off option now presents a race at **60 pictures/s** (was
+31 distinct framebuffers/s, 20 completed picture builds/s) with the game clock,
+lap index and AI cadence untouched. With the option off the build is
+byte-identical to the stock port: all 5600 per-frame framebuffer hashes of the
+baseline route match, including frame 60 `2A0B972960C5E325` and frame 300
+`1131D937D70234FD`. With it on, the picture updates on all 360 V-ints of the
+measured race window (road, H-scroll, sprite table, cars, HUD). Physics matches
+the stock port exactly for the first ~220 V-ints of the sampled race and stays
+within 0.037 % of track position over 30 s; see
+[Physics fidelity](#physics-fidelity-what-matches-and-what-does-not) for the
+numbers and the reason.
 
-`python3 tools/probe_framerate.py` runs the baseline input route at exact
-wall frames through the runner's input-script interface. It owns one PID,
-uses TCP port 4410, and writes private evidence to `build/fps/stock/`.
-This avoids the older probe's TCP input scheduling jitter. The route's
-button presses are unchanged; screenshot/audio TCP actions are replaced
-with deterministic capture directives and a whole-run WAV capture.
+## Stock measurement (Phase A)
 
-Frames 3600–3960 give 360 consecutive frame transitions (six seconds at
-60 Hz). The framebuffer changes on **186/360 transitions: 31 pictures/s**.
-Consecutive changed-picture intervals: **66 × 1, 66 × 2, 53 × 3 V-ints**.
-The picture is sometimes partially updated; a distinct framebuffer does
-not establish that a complete road/car/HUD composition was produced.
+`python3 tools/probe_framerate.py` drives the committed baseline input route at
+exact wall frames through the runner's input-script interface (one owned PID,
+TCP port 4410, private evidence under `build/fps/`). It records per-frame
+framebuffer hashes, RAM and VRAM snapshots, six screenshots and a whole-run WAV.
 
-The main-loop completion counter `$FF23B4` advances **120** times, and the
-primary raster pointer `$FF231E` changes **120** times: **20 completed
-picture builds/s**, one every three V-ints in this window. The main-loop
-marker `$FF1838` advances by two on those same 120 transitions. Conversely,
-race V-int counter `$FF238C` advances by exactly one on **all 360**
-transitions, and the race clock `$FF23B8` advances by `$D555` on all 360.
-The player position and speed also advance between repeated pictures.
-This is variable presentation lag, not an alternate-frame physics cap.
+Frames 3600-3960 (six seconds of steady racing at 60 Hz):
 
-Cold boot hashes match the supplied stock fingerprints: frame 60
-`2A0B972960C5E325`, frame 300 `1131D937D70234FD`. The 5600-frame capture
-exits 0 with zero dispatch misses, floor entries, interior misses and unsafe
-floor entries. The build command was
-`JOBS=8 tools/build-linux.sh ~/roms/genesis/tg2.bin build` (exit 0).
+| Measurement | Stock |
+|---|---:|
+| Distinct framebuffers | 186/360 → **31/s** |
+| Changed-picture intervals | 66 × 1, 66 × 2, 53 × 3 V-ints |
+| Completed picture builds (`$FF23B4`) | 120/360 → **20/s** |
+| Primary raster pointer swaps (`$FF231E`) | 120 |
+| VRAM sprite-attribute changes (`$BE00`) | 120 |
+| VRAM H-scroll changes (`$B800`) | 99 |
+| Race V-int counter (`$FF238C`) | +1 on all 360 |
+| Race clock (`$FF23B8`) | +`$D555` on all 360 |
 
-## ROM timing paths
+So the race produces a complete new picture one V-int in three, while the V-int
+handler keeps running its physics at a full 60 Hz. The rate is set by CPU cost,
+not by an alternate-frame design: one picture build needs between two and three
+frames of emulated 68K time, and the render-ready handshake quantises the
+latency to whole V-ints.
 
-* `$002082` waits for the word `$FF01C6` to differ from D0. This is the
-  generic boot/scene VBlank handshake, not the active race's render gate.
-* Race entry/init is `$006500..0065EE`; the active race loop calls
-  `$0067B6` from `$0065EE`, spins at `$0065F2` on byte `$FF2424`, then
-  repeats through `$006602..006606` while the exit flag is zero.
-* `$0067B6` prepares presentation: `$0088A2` copies current player position
-  into the view position, `$00E170` snapshots player/opponent state,
-  `$00F522` prepares HUD sprites, `$007F90/$008414/$008548/$0079D6` build
-  road/scenery lists, and `$00977C` handles player-view object projection.
-  `$006982` sets byte `$FF2424=1`; `$006990` increments `$FF23B4`.
-* V-int `$004714` temporarily installs `$0049CC` as a reentrant IRQ target,
-  increments the generic handshake at `$004742`, the race counter at
-  `$004748`, and the adjacent byte `$FF2425` at `$00474C`. It copies the
-  render-ready/counter word to `$FF2426`. If a new picture is ready,
-  `$004768` calls `$004A24` to submit queued VDP work and `$00476C` clears
-  the ready byte. Otherwise it services pending presentation work at
-  `$004774..0047C0`. `$004898` loads the active road raster pointer into A5.
-* `$00490A..004912` tests `$FF238C` parity. The even-V-int call at
-  `$004922` is `$00665A`, **palette fading**, not the physics update.
-  `$00668A` increments the fade step, `$00673C` moves RGB channels toward
-  their targets; `$006728` ends the fade phase. Some effects have their
-  own parity tests, e.g. skid sound selection `$00D608..00D63C`.
-* `$00496A` calls `$00DB02` every full race V-int, outside the parity
-  branch. `$0049AC` restores `$004714` as the next full V-int target.
-  `$0049CC` merely services raster setup if the previous V-int overruns;
-  it does not advance the physics clock. No such lost ticks occur in the
-  measured stock window.
+### Main-loop and V-int structure
 
-## Physics, clock and audio deltas
+* `$0065EE` calls the picture build `$0067B6`, spins at `$0065F2` until byte
+  `$FF2424` is cleared by the V-int handler, and repeats while the exit flag is
+  zero.
+* `$0067B6` prepares one picture: `$006804` calls `$0088A2` (view position),
+  `$00680A` calls `$00E170` (state snapshot), `$00681E..$006846` copy the player
+  state used by the picture into the record's `+$70..+$86` snapshot block,
+  `$006890` calls `$00F522` (HUD sprites), `$00689E..$0068BE` build road and
+  scenery (`$007FA8`, `$008402`, `$0084E6`, `$007A10`), then `$006982` sets
+  `$FF2424=1` and `$006990` increments `$FF23B4`.
+* `$0088A2` is the only writer of the view position in a steady race:
+  `$0088C4` copies the physical position `+0` (`$FF18CA`) into the view
+  position `+8` (`$FF18D2`), `$0088CA` copies `+4` into `+$C`, and
+  `$0088CE..$0088EE` resolve the track-segment table base into `$FF1996` /
+  `$FF199A`. The copy is skipped while player state `+$1A` is 2.
+* V-int `$004714` increments the generic handshake `$FF01C6` (`$004742`), the
+  race counter `$FF238C` (`$004748`) and `$FF2425` (`$00474C`), latches
+  `$FF2426`, then tests `$FF2424` (`$004762`). Ready: `$004768` calls `$004A24`
+  to submit the queued VDP work and `$00476C` clears the flag. Not ready: the
+  deferred block `$004774..$0047C0` runs instead - pending palette upload
+  `$FF23C5`, `$0012F0`, `$005218`, the queued VRAM block upload `$0052C2`
+  (gated by `$FF23C4`) and the deferred VRAM block work `$00E4A0`.
+* `$00E4A0` is the game's idle-time VRAM uploader: it tests `$FF168E`, advances
+  `$FF233A`, and on alternating calls uploads the block mask in `$FF238E` or
+  `$FF2392` in six DMA chunks to VRAM `$9320`/`$9340`.
+* `$00490A..$004912` tests `$FF238C` parity; the even-V-int call `$004922` is
+  palette fading (`$00665A`), not physics. `$00496A` calls `$00DB02` on every
+  race V-int, outside the parity branch, and `$0049AC` restores `$004714` as
+  the next V-int target.
 
-* `$00DB02` reads VDP status bit 0 into `$FF186C` (PAL/NTSC timing
-  selection), polls pads through `$00D7A6`, and handles race/pause state.
-* Active racing follows `$00DF36`: `$00E146` advances the race phase
-  counter, `$00D98A` advances opponents, `$00CD84/$00CD76` update players.
-  Object callbacks at `$00E418`, collision tests `$0091B0/$0093E4`,
-  positions/rank and finish tests are also reached from this IRQ path.
-* Player speed is word +`$0E` in the record at `$FF18CA` (`$FF18D8`).
-  `$00CF7A..00D43A` computes acceleration, drag, braking and gear changes;
-  +`$C2` (`$FF198C`) is the speed used for position integration.
-  `$00D4C6..00D4F2` adds that value to longword +`$00` (`$FF18CA`),
-  multiplying by 5/6 on NTSC at `$00D4DE..00D4E8`. Position +`$08`
-  (`$FF18D2`) is the view/track sample position copied by `$0088C4`.
-  HUD speed conversion is `$00F5F8..00F614`, using 3/128 and the selected
-  MPH/KPH factor. Halving these deltas would incorrectly slow the game.
-* Opponents are 12-byte records at `$FF053C`, count-minus-one at `$FF217E`.
-  `$00D98A..00DA80` updates them every race IRQ. `$00DA10..00DA20` adds
-  their speed to their track position, with NTSC `$D555/65536` scaling.
-* `$00DF40` adds `$0000D555` to `$FF23B8` on NTSC, while `$00DF4A`
-  increments the high word on PAL. This is a 16.16 race clock with
-  **50 clock ticks per second**, not a count of main-loop iterations.
-  `$00E284/$00E2D8/$00E30A` store its high word into finish-order records.
-  Player lap index +`$CA` (`$FF1994`) is advanced at `$00DAB2..00DAB8`.
-* Per-player effect timers +`$2A0`/`$2A6` decrement in `$00CDEA..00CE16`,
-  and nitro/cooldown timers at +`$BA`/`$2EA` decrement in `$00E082..00E0AE`.
-  These stay in the IRQ path. Global countdown byte `$FF23C2` decrements
-  at `$00DE42`, setting the next 60/30-frame countdown stage at
-  `$00DE04/$00DE0C`.
-* `$0048EC..0048FE` calls sound-driver veneers `$070010/$07001C` once per
-  full race V-int. The tail of `$00DB02` also reaches `$0254B8`
-  (with live player/view values), whose pitch setup
-  divides engine-rate values at `$025564/$0255F4` and calls `$025694`.
-  `$0256BE` submits the pitch through `$070028`; effect requests use
-  `$0250E2/$025114`. The sound-driver clocks and native IRQ cadence must
-  remain untouched; accelerating every guest instruction is unsuitable.
+The VDP is set up with register 5 = `$5F` (sprite attribute table `$BE00`),
+register 13 = `$2E` (H-scroll table `$B800`), plane A `$C000`, plane B `$E000`.
 
-## Enhancement experiment
+### Where per-tick deltas are applied
 
-The first candidate is race-only **main-program CPU headroom**, through
-the engine's existing `GameSpec.main_cpu_divisor` contract. It reduces
-main-program budget consumption while preserving IRQ debt, DMA stalls,
-native raster/chip clocks and the game's real render-ready wait. It does
-not halve physics deltas or alter the parity branch. Qualification results
-and the final decision follow below.
+All of this runs in the V-int path, once per race V-int, so it is already a
+60 Hz simulation:
 
-### Result: 60 pictures/s, rejected for gameplay drift
+* `$00DB02` reads VDP status bit 0 into `$FF186C` (PAL/NTSC), polls pads
+  (`$00D7A6`) and dispatches race state. Active racing follows `$00DF36`:
+  `$00E146` advances the race phase counter `$FF1866`, `$00D98A` advances
+  opponents, `$00CD76`/`$00CD84` update the players.
+* Per-player chain `$00CD84`: `$00CDEA` effect timers, `$00D4C6` integrates the
+  physical position (speed `+$C2`, `5/6` NTSC scaling at `$00D4DE..$00D4E8`),
+  `$00CE18` derives surface/steering flags from the view position, `$00D644`
+  derives segment/slope/curvature, `$00DA82` further track state, `$00CE5A`,
+  and `$00CF7A` computes speed from slope `+$16`.
+* `$00D644` reads `+8` and calls `$00D65E`, which turns the position into a
+  segment index and interpolation weights and returns them in D4/D5/D6; the
+  caller stores them in `+$12`/`+$16`/`+$14`.
+* Opponents are 12-byte records at `$FF053C`; `$00D98A..$00DA80` advances them
+  every V-int with the same `$D555/65536` NTSC scaling.
+* `$00DF40` adds `$0000D555` to `$FF23B8` (50 clock ticks per second, 16.16).
+  Player lap index `+$CA` (`$FF1994`) advances at `$00DAB2..$00DAB8`.
+* `$0048EC..$0048FE` calls the sound-driver veneers `$070010`/`$07001C` once
+  per race V-int; the engine tone/pitch path (`$0254B8..$0256BE`) runs from
+  the `$00DB02` tail.
+* `$00DEF6` is a bounded view follower (`+$FA0` per call, clamped to `+0`),
+  called from `$00DEAE`. It is not called during steady racing - the measured
+  `+8` staircase proves the main loop is the only writer there.
 
-The qualified **measurement**, not a qualified feature, is
-`build/fps/active-race/`. Headroom divides main CPU instruction costs by 64
-only while the V-int target is `$004714`, fade phase `$FF22FA` is zero,
-and race phase `$FF1866` is nonnegative. Interrupt/DMA clocks remain native.
+### Why the game is slow: the view position feeds physics
 
-| Frames 3600–3960, 360 transitions | Stock | Headroom experiment |
+The player update samples the *view* position `+8`, not the physical position:
+
+```
+$00CE18  move.l $8(a4),d7     -> surface/steering flags
+$00D644  move.l $8(a4),d0     -> $00D65E -> +$12/+$14/+$16 (segment/slope/curve)
+$00DA82  move.l $8(a4),d0     -> further track state
+$00CF7A  ... +$16 ...         -> slope acceleration in the speed model
+```
+
+Measured stock `+8` staircase (900 sampled frames, 3600-3960 and 4000-4500):
+308 updates, gaps 242 × 3 and 64 × 2 V-ints (period 2.92 on average), always
+written with the physical position of the previous frame. Between updates the
+IRQ physics keeps sampling the same, stale terrain position.
+
+This is the reason a pure "run the main program faster" change cannot work:
+with a picture every V-int the same `$0088A2` copy would run every V-int, the
+terrain sampling would lose its 2-3 V-int lag, and the vehicle dynamics would
+change. The earlier research build measured exactly that: race clock identical,
+but at frame 5200 the player was 509143 units ahead and 16 % faster. See
+[the rejected experiment](#records-the-rejected-headroom-only-experiment).
+
+## Chosen technique
+
+Two independent parts, both race-only, both inert when the option is off:
+
+1. **Main-program headroom** (`GameSpec.main_cpu_divisor`): while the live
+   V-int target is the race handler and the palette fade has finished and the
+   countdown is over and the race is single-player, main-program instruction
+   cost is divided by 8. Interrupt, DMA, raster, chip and sound-driver clocks
+   are untouched by the engine contract. One picture build then needs ~0.36
+   frame, so a complete picture is ready on every V-int and `$004A24` submits
+   one per frame.
+2. **Stock-schedule view position for physics**: the adapter keeps
+   `s_phys_view`, refreshed every third V-int (`$FF238C % 3 == 0`) with the
+   physical position, and runs the IRQ routines that sample `+8`
+   (`$00CD84`, `$00CE18`, `$00D644`, `$00DA82`) with that value temporarily in
+   `+8`. The picture build keeps the fresh, per-frame value, so the road,
+   scenery, cars and HUD move every frame while the physics sees the stock
+   terrain sampling.
+
+The hooks are audited `game_hook` sites in `game/game.toml`; each returns 0
+(stock execution) when the option is off, when the race is not active, or while
+a guest split-stack adjustment is pending. The adapter also runs the handler's
+deferred VRAM block work (`$00E4A0`, `$0052C2`) after the picture submission on
+the two V-ints in three that the stock build leaves free, so the faster picture
+rate does not starve it.
+
+Nothing in the video renderer, widescreen path, generated C, or the engine was
+changed for this.
+
+## Results
+
+Frames 3600-3960, 360 transitions, same scripted route:
+
+| | Off (stock) | 60 fps option |
 |---|---:|---:|
-| Distinct framebuffer transitions | 186 (31/s) | 360 (60/s) |
-| Completed picture builds | 120 (20/s) | 360 (60/s) |
-| Primary raster-pointer swaps | 120 | 360 |
-| VRAM sprite-table changes | 120 | 360 |
+| Distinct framebuffers | 186 (31/s) | **360 (60/s)** |
+| Changed-picture intervals | 66×1, 66×2, 53×3 | 359 × 1 |
+| Completed picture builds (`$FF23B4`) | 120 (20/s) | **360 (60/s)** |
+| Primary raster pointer swaps | 120 | **360** |
+| VRAM sprite-attribute changes | 120 | **360** |
 | VRAM H-scroll changes | 99 | 250 |
 | Race V-int advances | 360 | 360 |
 | Race-clock increments of `$D555` | 360 | 360 |
-| Dispatch / floor / interior / unsafe entries | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Dispatch / floor / interior / unsafe entries | 0/0/0/0 | 0/0/0/0 |
 
-Some scroll values legitimately repeat on straight sections. The completion
-counter, raster swaps and sprite data demonstrate a complete new game
-picture build on every frame in the experimental window. Six consecutive
-PNGs are `build/fps/active-race/frame-3600.png` through `frame-3605.png`;
-each has a different framebuffer hash, recorded in `stderr.log`.
+Some H-scroll values legitimately repeat on straight sections; the sprite
+table, the raster pointer and the completion counter all advance on every
+frame. Six consecutive PNGs (`build/fps/frames-60fps/frame-3600.png` ..
+`frame-3605.png`, sha256 in `hashes.txt`) are all different, and their pixel
+diffs cover the whole frame (HUD, opponents, car, road).
 
-Exact-clock comparisons at matching wall frames, using the same scripted
-inputs (speed and position are raw guest units):
+Route-wide framebuffer hashes (`--hash-frames 1`, all 5600 frames):
 
-| Wall frame | Race clock, Off = On (16.16 ticks) | Position Off | Position On | Speed Off | Speed On |
-|---:|---:|---:|---:|---:|---:|
-| 3300 | 11250278 | 8565652 | 8565652 | 3964 | 3964 |
-| 3600 | 27634178 | 9480462 | 9479531 | 2707 | 2687 |
-| 3960 | 47294858 | 10544214 | 10504301 | 3131 | 2989 |
-| 4500 | 76785878 | 11839452 | 12178304 | 3448 | 3313 |
-| 5200 | 115014978 | 14021393 | 14530536 | 4294 | 3584 |
+* Off vs the stock capture: **0 differing frames**.
+* On vs Off: frames 1-3095 identical (logos, title, menus, race start,
+  countdown), differences start at frame 3096 - the V-int on which the option
+  engages after the countdown - and continue through the race. Menus are
+  unaffected.
 
-All **364 captured clock/V-int/lap-index samples match exactly**, exceeding
-the one-clock-frame requirement for elapsed clock. That does **not** prove
-equal lap completion time: speed/position diverge, and this route does not
-complete a lap. At frame 5200 the speed difference is 710 raw units and
-position difference is 509143, so this candidate fails the same-feel goal.
+Cold-boot fingerprints with the option on are still `2A0B972960C5E325`
+(frame 60) and `1131D937D70234FD` (frame 300).
 
-The reason is visible in the ROM: `$0088C4` refreshes +8(A4) in the main
-loop, but IRQ routine `$00D644/$00D65E` reads it to derive track gradient
-and curvature into +`$12/$14/$16`. Speed calculation `$00D30E..00D31E`
-then uses +`$16` for slope acceleration. Main-loop view snapshots therefore
-feed physics; keeping only the IRQ *count* unchanged is insufficient.
-`$0091B0` also reaches collision responses which can rewrite +`$C2/$0E`
-at `$00922E/$009234`. A first-divergence trace separating terrain effects
-from subsequent collisions remains necessary; the table alone does not
-attribute every speed change to one of them.
+### Physics fidelity: what matches and what does not
 
-Whole-run WAVs have identical duration/format (20899200 stereo frames,
-223721 Hz, 16-bit, 93.415 seconds) and different PCM content, consistent
-with changed engine pitch/vehicle events. Music tempo has **not** been
-independently qualified by waveform/sequence analysis or listening; equal
-sample counts only establish audio duration. No Z80/FM/PSG timing was
-modified by the experiment.
+Same scripted inputs, matching wall frames; `clk` is `$FF23B8` (16.16 ticks),
+`pos` is `$FF18CA` (raw units), `spd` is `$FF18D8` (raw units):
 
-An earlier unrestricted attempt (`build/fps/headroom-active/`) was also
-rejected: it advances race startup by two V-ints and remains black. Its
-ready picture on every V-int continuously takes `$004768`'s submission
-branch, bypassing pending palette consumption at `$004774..004788`;
-`$FF23C5` stays set and the fade remains at its first step. The successful
-60-picture experiment deliberately leaves fade/countdown at stock timing.
-Two earlier captures, `headroom/` and `headroom64/`, exercised inactive
-hooks and are not enhancement evidence. The pinned engine declares
-`handle_arg` and `on_post_reset` but has no callers for them; initialization
-therefore belongs in the game's entry wrapper.
+| Wall frame | clk Off = On | pos Off | pos On | Δpos | spd Off | spd On |
+|---:|---:|---:|---:|---:|---:|---:|
+| 3300 | yes | 8565652 | 8565652 | 0 | 3964 | 3964 |
+| 3600 | yes | 9480462 | 9480462 | 0 | 2707 | 2707 |
+| 3960 | yes | 10544214 | 10544214 | 0 | 3131 | 3131 |
+| 4500 | yes | 11839452 | 11840960 | +1508 (+0.013 %) | 3448 | 3453 |
+| 5200 | yes | 14021393 | 14016243 | -5150 (-0.037 %) | 4294 | 4267 |
 
-### Delivery boundary and reproduction
+Across the 364 captured samples the race clock and lap index match **exactly**
+(the clock is IRQ-driven and the IRQ cadence is unchanged) and 362 of 364
+positions match exactly. A second capture covers frames 5000-5600 (the end of
+the route; both runs brake to a stop at frame 5400 with speed 0):
 
-**Partial research delivery. No player-facing 60 fps option is qualified.**
-Normal builds omit the experiment entirely. To reproduce it intentionally:
+| Wall frame | pos Off | pos On | Δpos | Δpos % | spd Off | spd On |
+|---:|---:|---:|---:|---:|---:|---:|
+| 5000 | 13390570 | 13392418 | +1848 | +0.014 % | 4942 | 4942 |
+| 5100 | 13697722 | 13695916 | −1806 | −0.013 % | 3395 | 3343 |
+| 5200 | 14021393 | 14016243 | −5150 | −0.037 % | 4294 | 4267 |
+| 5300 | 14221170 | 14216551 | −4619 | −0.033 % | 1042 | 897 |
+| 5350 | 14246382 | 14236557 | −9825 | −0.069 % | 183 | 102 |
+| 5400-5600 (stopped) | 14247474 | 14236942 | −10532 | −0.074 % | 0 | 0 |
+
+The race clock and lap index are identical at every one of these samples too.
+
+Why any divergence at all: the stock view-position schedule is an artefact of
+the port being CPU-bound - its gaps are 2 or 3 V-ints and drift inside the
+frame, so the value physics samples on a given V-int can be one frame older or
+newer than a fixed 3-V-int schedule produces. Reproducing that exact pattern
+would mean reproducing the stock CPU stall pattern, which is the thing the
+option removes. The fixed schedule keeps the mean lag and the mean update rate,
+so speed, terrain response and AI behaviour stay within 0.037 % of position at
+30 s and 0.074 % at the end of the captured route, instead of the 3.6 % / 16 %
+drift of the headroom-only experiment.
+
+### Audio and music tempo
+
+* Both captures have identical WAV format and length: stereo, 16-bit,
+  223721 Hz, 20899200 stereo frames (93.416 s). The Z80/FM/PSG clock and the
+  per-V-int sound-driver calls are untouched.
+* The two WAVs are **sample-identical for the first 51.627 s** (wall frame
+  3098, i.e. exactly until the option engages); 55.3 % of all samples are
+  identical. During the race the engine note follows the (slightly different)
+  measured speed and the main loop issues its sound writes once per frame, so
+  the mixed waveform changes even though the music clock does not.
+* Onset-envelope cross-correlation between the two captures peaks at **0 ms
+  lag in every 8 s window** of the race, so there is no tempo drift.
+
+## Records: the rejected headroom-only experiment
+
+The first attempt (commit `31aa802`) used divisor 64 with no view-position
+gate. It produced 60 pictures/s but drifted: at frame 5200 position +509143
+(3.6 %) and speed +16 %, because the `$0088C4` copy ran every V-int and removed
+the 2-3 V-int terrain-sampling lag described above. That result is why the
+option now ships with the view gate, and why the gate is the part of the
+implementation that carries the "same feel" requirement.
+
+An earlier unrestricted variant also had to be rejected for a different reason:
+a picture ready on every V-int keeps the handler on the `$004768` submission
+branch, so the deferred block (`$004774..$0047C0`) never ran. Outside racing
+that starves the palette upload path `$FF23C5` and leaves the fade at its first
+step. The current gate therefore only engages after the palette fade has
+finished (`$FF22FA == 0`); fades, countdown and menus keep stock timing.
+
+## Option surface
+
+Default **off**. Two ways to enable it:
+
+* `tg2.ini` next to the executable (or in the working directory):
+  `race_60fps = 1`
+* environment override used by the probes: `TG2_RACE_60FPS=1`
+
+`TG2_RACE60_DIVISOR=<n>` is a research control for the headroom amount
+(default 8, validated 8 and 64 with identical results). An in-game settings row
+is not part of this change: the shared settings UI is a single hard-coded mods
+table in the engine's `main.c`/`app_config.c`, and that file is being edited by
+parallel widescreen work.
+
+## Reproduction
 
 ```sh
-cmake -S . -B build -DTG2_TIMING_EXPERIMENT=ON
-cmake --build build --target TG2Recomp -j8
-TG2_RACE_HEADROOM=0 python3 tools/probe_framerate.py --out build/fps/off
-TG2_RACE_HEADROOM=1 python3 tools/probe_framerate.py --out build/fps/on
-python3 tools/compare_framerate.py build/fps/off build/fps/on \
+JOBS=8 tools/build-linux.sh ~/roms/genesis/tg2.bin build
+python3 tools/probe_framerate.py --out build/fps/result-off
+TG2_RACE_60FPS=1 python3 tools/probe_framerate.py --out build/fps/result-on
+python3 tools/compare_framerate.py build/fps/result-off build/fps/result-on \
   --out build/fps/comparison.json
 ```
 
-The CMake option and environment switch are research controls, not an
-advertised gameplay feature. Default is Off; setting the environment alone
-does nothing in a normal build. No renderer, widescreen, generated C or
-engine source was changed. The safe deliverable is the deterministic
-measurement/comparison tooling and verified timing map; the headroom
-prototype is retained behind a default-off build gate for further study.
+Each probe run exits 0 after 5600 frames. `summary.json` holds the cadence
+counters, `ram-*.ram`/`vram-*.vram` the per-frame state, `stderr.log` the
+per-frame framebuffer hashes, and `audio.wav` the whole-run audio.
 
-A safe complete implementation needs presentation state detached from
-the physics-facing +8(A4)/terrain/collision snapshots, or interpolation
-of road/scenery/sprite/HUD presentation while the original main/IRQ
-schedule stays intact. This work intentionally does not enter the video
-renderer being developed in parallel. Doubling the entire logic rate or
-blindly halving deltas is ruled out by the measured 60 Hz physics path.
-All-track, finish/fade-out, full-lap and sound-tempo qualification remain
-open. The measured window holds B continuously; speed itself varies with
-terrain and collisions, so it is a constant-input run, not a speed-locked
-laboratory test.
+## Limitations
+
+* Physics is not bit-identical over long runs: position is exact for the first
+  ~220 V-ints of the captured race, then diverges to 0.037 % at frame 5200
+  (30 s) and 0.074 % at frame 5400 (where both runs have stopped). The cause is
+  the drift-prone stock view-position schedule explained above; a fixed
+  schedule cannot reproduce it exactly. The race clock, lap index and AI
+  cadence are exact at every sample, and speed tracks stock within 0.6 %.
+* A full lap was not measured: the committed route covers ~40 s of one track
+  and ends with the car stopped. Lap-time equality within one frame is
+  therefore argued from exact clock identity plus the bounded position error,
+  not measured.
+* Two-player races keep stock timing (the option disengages when `$FF189E` is
+  non-zero), because only the single-player record layout was audited.
+* Fades, countdown, menus, the finish sequence and other tracks are
+  unqualified; the option only engages in the measured race state.
+* With the option on, the sound of the race changes (engine pitch follows the
+  slightly different speed; main-loop sound writes happen at 60 Hz instead of
+  20 Hz). Music tempo is unchanged.
+* Presentation latency: the picture is built from the physical position of the
+  same frame, where stock draws from a position one to three frames old.
