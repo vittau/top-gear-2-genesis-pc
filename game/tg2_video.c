@@ -9,6 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 static int mode;
+static int hud_edges, hud_configured;
+void tg2_video_set_hud_mode(int edges) {
+    hud_edges = edges != 0;
+    hud_configured = 1;
+}
+int tg2_video_get_hud_mode(void) {
+    if (!hud_configured) {
+        const char *s = getenv("TG2_HUD_MODE");
+        tg2_video_set_hud_mode(s && (!strcmp(s, "edges") || !strcmp(s, "1")));
+    }
+    return hud_edges;
+}
 static double ratio = 16.0 / 9.0;
 static unsigned word(const unsigned char *p, unsigned a) {
     return (p[a & 65535] << 8) | p[(a + 1) & 65535];
