@@ -67,7 +67,8 @@ The pieces are drawn only in the added columns, with live VRAM patterns and
 CRAM palette, in the native reverse allocation order, and with plane-B
 priority resolved exactly as the native compositor does (sprite high priority
 always wins; low priority loses to a high-priority plane-B pixel). The player
-car and the whole native viewport remain the native pixels.
+car remains native. The whole native viewport remains native with HUD: Centered;
+HUD: Edges changes only the classified HUD pixels.
 
 Two further read-only hooks delimit a scene: `$0067EE` clears the capture at
 the SAT allocator reset (`move.w #$7f,-$6130(a3)`), and `$006982` publishes it
@@ -182,6 +183,44 @@ Produced by `tools/verify_widescreen.py --port 4400 --modes off,16:9,21:9`
 right boundary and a tree in the left margin, and `21-9/margin-3221.png` shows
 the same car wholly inside the right margin with the tree further out in the
 left margin.
+
+## HUD validation
+
+`tools/verify_hud.py` replays the same baseline input on **port 4460** using
+headless SDL, read-only TCP queries and exact-frame input-script captures.
+`--record-baseline` records Centered with the pre-change renderer; after
+rebuilding, a normal invocation captures and compares both placements.
+`--check-only` validates the saved artifacts without launching another game.
+The implementation build (`JOBS=8 tools/build-linux.sh ~/roms/genesis/tg2.bin
+build`) and final verification both exited 0.
+
+Artifacts remain under `build/hud/` and are excluded from git:
+
+| Evidence | Result / path |
+|---|---|
+| Off, both HUD preferences | Frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`; captured pixels, RAM and VRAM identical |
+| Centered compatibility | All 75 full-frame hashes at 60-frame intervals match the pre-change renderer in each ratio; all nine PNGs match exactly |
+| Required 16:9 PNGs | `{centered,edges}-16-9/frame-{2800,3300,4501}.png`, 398×224 |
+| Required 21:9 PNGs | `{centered,edges}-21-9/frame-{2800,3300,4501}.png`, 523×224 |
+| Consecutive 60 fps PNGs | `fps60-edges/frame-4510.png` through `frame-4515.png`, with Centered counterparts; six distinct pictures in each run |
+| HUD translation | Every opaque HUD/marker pixel matches its Centered source at exactly the left/right margin offset at all nine samples in each pair |
+| Vacated HUD positions | Match the independent uncovered sky column; no residual HUD pixels |
+| Other raster rows | Rows 0..13 and 94..223 identical, including the initial black-band artefacts and all road/car pixels |
+| Guest state | RAM and VRAM byte-identical between Centered and Edges at every capture, including 60 fps |
+| Discovery | All four manifests report 0 entries after every completed route |
+| Machine-readable results | `summary.json`, per-mode `stderr.log`, `state-*.json`, and copied manifests |
+
+The first comparison exposed a one-row change in the top black band because
+its transitional raster state samples HUD pattern IDs. Requiring the HUD's
+signed-negative V-scroll phase fixes that classification without a fixed
+screen rectangle; the corrected captures preserve those top rows exactly.
+
+The options-page row is intentionally left for integration with task 06:
+that plumbing was not yet in `origin/main` when this branch was completed.
+The setter/getter and environment selection are ready for it; this branch
+adds no overlapping settings implementation. Coverage remains the baseline
+single-player first track; the additional tracks and conditions listed below
+have not been qualified by this HUD probe.
 
 ## Known artefacts and limitations
 
