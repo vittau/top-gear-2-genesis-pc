@@ -98,22 +98,22 @@ for mode in a.modes.split(','):
         resize_actions += [(5000,'off',None), (5020,'capture',256), (5100,'restore',None)]
     with (out/'stdout.log').open('w') as stdout, (out/'stderr.log').open('w') as stderr:
         proc = subprocess.Popen(argv, cwd=a.exe.parent, env=env, stdout=stdout, stderr=stderr)
-        # The debug.ini TCP server is required for every frame capture; fail
-        # loudly when it never appears instead of timing out silently.
-        ready = time.monotonic()+20
-        while True:
-            try:
-                command('frame_info')
-                break
-            except OSError:
-                if proc.poll() is not None:
-                    raise RuntimeError(f'{mode} exited early:\n'+stderr_text_tail(out))
-                if time.monotonic()>ready:
-                    raise RuntimeError(f'{mode} TCP server never became reachable:\n'+stderr_text_tail(out))
-                time.sleep(.1)
         deadline = time.monotonic()+600
         next_frame = 2800
         try:
+            # The debug.ini TCP server is required for every frame capture;
+            # fail loudly when it never appears instead of timing out silently.
+            ready = time.monotonic()+20
+            while True:
+                try:
+                    command('frame_info')
+                    break
+                except OSError:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f'{mode} exited early:\n'+stderr_text_tail(out))
+                    if time.monotonic()>ready:
+                        raise RuntimeError(f'{mode} TCP server never became reachable:\n'+stderr_text_tail(out))
+                    time.sleep(.1)
             while proc.poll() is None:
                 if time.monotonic()>deadline:
                     raise TimeoutError(f'{mode} runtime deadline exceeded')
@@ -152,7 +152,10 @@ for mode in a.modes.split(','):
                 proc.terminate()
                 proc.wait(timeout=10)
             for name in MANIFESTS:
-                shutil.copyfile(a.exe.parent/name, out/name)
+                try:
+                    shutil.copyfile(a.exe.parent/name, out/name)
+                except OSError:
+                    pass
     for name in MANIFESTS:
         text = (out/name).read_text()
         if not re.search(r'# entries:\s+0\b', text):
