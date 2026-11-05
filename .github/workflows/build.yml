@@ -128,6 +128,26 @@ jobs:
           name: TG2Recomp-linux-x86_64
           path: downloaded
 
+      - name: Install runtime libraries a desktop provides
+        # The payload links SDL2 statically but still needs the system
+        # graphics/audio stack (libOpenGL, X11, FreeType, HarfBuzz) that every
+        # SteamOS 3.x and desktop Linux image already has. Install it here so
+        # ldd must resolve every dependency.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopengl0 libglx0 libfreetype6 libharfbuzz0b libx11-6 \
+            libasound2 libpulse0
+
+      - name: Install runtime libraries a desktop provides
+        # The payload links the system OpenGL/Freetype stack (not SDL2, which is
+        # static). A clean ldd below is only meaningful with those present, and
+        # this mirrors what SteamOS ships.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopengl0 libglx0 libgl1 libfreetype6 libharfbuzz0b libx11-6
+
       - name: Extract and check the published tarball
         run: |
           (cd downloaded && sha256sum -c TG2Recomp-linux-x86_64.tar.gz.sha256)

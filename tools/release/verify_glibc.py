@@ -58,14 +58,18 @@ def main():
         raise SystemExit(
             f"verify-glibc: FAIL requires GLIBC {printable(glibc)}, limit is {args.max}"
         )
-    print(f"verify-glibc: PASS obeys glibc <= {args.max} (needs {printable(glibc)})")
 
     if args.show_ldd:
         ldd = subprocess.run(["ldd", args.binary], stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True)
         print(ldd.stdout.rstrip())
-        if "not found" in ldd.stdout:
-            raise SystemExit("verify-glibc: FAIL missing shared library in ldd output")
+        missing = [line.strip() for line in ldd.stdout.splitlines() if "not found" in line]
+        if missing:
+            raise SystemExit(
+                "verify-glibc: FAIL missing shared libraries: " + "; ".join(missing)
+            )
+
+    print(f"verify-glibc: PASS obeys glibc <= {args.max} (needs {printable(glibc)})")
 
 
 if __name__ == "__main__":

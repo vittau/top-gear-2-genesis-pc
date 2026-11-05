@@ -67,8 +67,10 @@ LINUX_EXTRA = """STEAM DECK / STEAMOS (controller only)
   3. Steam > Games > "Add a Non-Steam Game" > Browse > select {exe} >
      Add. Optionally switch to Game Mode: the game shows up in your library
      and starts with the controller.
-  The binary is built against glibc 2.35 and links SDL2 statically, so it
-  runs on SteamOS 3.x without extra packages or terminal commands.
+  The binary is built against glibc 2.35 and links SDL2 statically. It still
+  uses the system graphics stack every SteamOS/desktop image ships (OpenGL,
+  X11/Wayland, FreeType, HarfBuzz), so no extra packages or terminal
+  commands are needed.
 
 """
 
