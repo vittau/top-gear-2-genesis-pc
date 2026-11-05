@@ -34,6 +34,9 @@ a = p.parse_args()
 a.exe = a.exe.resolve()
 a.out = a.out.resolve()
 a.out.mkdir(parents=True, exist_ok=True)
+for pattern in ('launcher-*.png', 'overlay-*.png', 'settings-after-*.ini', 'summary.json'):
+    for stale in a.out.glob(pattern):
+        stale.unlink()
 (a.exe.parent / 'debug.ini').touch()
 
 # The launcher only lists a cartridge it can find through content detection.
@@ -65,20 +68,24 @@ def wait_server(proc, timeout):
 
 
 def run_launcher(user_dir, shots):
-    script = ('wait:20;'
+    script = ('size:880x736;wait:20;'
               f'shot:{shots}/launcher-dashboard.png;'
               'view:mods;wait:20;'
               f'shot:{shots}/launcher-mods.png;'
               'click:62,516;click:62,570;wait:20;'
               'click:500,200;wait:20;'
-              'mod-select:4;wait:10;'
-              f'shot:{shots}/launcher-changed.png;'
-              f'shot:{shots}/launcher-hud.png;'
               'mod-select:3;wait:10;'
               f'shot:{shots}/launcher-race60.png;'
+              'mod-select:4;wait:10;'
+              f'shot:{shots}/launcher-hud.png;'
+              'click:740,456;wait:60;'
+              f'shot:{shots}/launcher-hud-values.png;'
+              'click:500,200;wait:20;'
               'mod-select:0;wait:10;'
+              'click:740,440;wait:60;'
               f'shot:{shots}/launcher-widescreen.png;'
-              'click:830,682;wait:120')
+              'click:500,200;wait:20;'
+              'click:750,682;wait:120')
     env = dict(os.environ, SDL_VIDEODRIVER='offscreen', LNG_TEST_HIDDEN='1',
                LNG_SCRIPT=script, GENESIS_USER_DIR=str(user_dir) + '/')
     env.pop('APPIMAGE', None)
