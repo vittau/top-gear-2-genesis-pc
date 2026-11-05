@@ -41,6 +41,8 @@ done
 
 "$repo/tools/apply-engine-patches.sh"
 
+# Homebrew's FreeType/HarfBuzz are single-architecture dylibs, which break a
+# universal2 link; skip them so the payload only uses system frameworks.
 cmake -S "$repo" -B "$build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES="$architectures" \
@@ -51,7 +53,9 @@ cmake -S "$repo" -B "$build" -G Ninja \
     -DTG2_BUILD_VERSION="$version" \
     -DGEN_ENABLE_TRACE=OFF \
     -DSONIC_REVERSE_DEBUG=OFF \
-    -DGENESIS_NATIVE_IPO=ON
+    -DGENESIS_NATIVE_IPO=ON \
+    -DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 cmake --build "$build" --target TG2Recomp -j"$jobs"
 
 name="TG2Recomp-macos"

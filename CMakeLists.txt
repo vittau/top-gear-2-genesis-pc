@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.19)
+# The pinned SDL2 2.28.5 source tree declares cmake_minimum_required(3.0...3.5).
+# CMake 4 removed compatibility below 3.5, so keep a floor that lets it build
+# the release payload's bundled SDL2 without patching that tree.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING
+        "Policy floor for the pinned SDL2 source used by release builds")
+endif()
 project(TopGear2Recomp VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
