@@ -1,5 +1,7 @@
 # Engine patches
 
-One line per patch: file, reason.
+- `0001-preserve-irq-register-effects.patch`: preserve general-register changes made by guest ISRs, including raster pointers advanced between H-interrupts.
 
-(none yet)
+`tools/build-linux.sh` applies these idempotently through
+`tools/apply-engine-patches.sh`. The submodule stays pinned to the upstream
+commit; local fixes remain visible as its applied working-tree diff.

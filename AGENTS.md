@@ -54,8 +54,7 @@ renderer) and adapt it. Don't copy its game-specific addresses.
   task asks for it.
 - Tools live in `~/tools` (cmake 4.1.2, ninja), linked into `~/.local/bin`.
   There is no passwordless sudo. Ask before anything that needs it.
-- Commit your work in small, described commits on your branch. Never push.
-  Never commit ROM-derived artifacts.
+- Commit often in small, described commits and push your branch to origin (private repo). Never commit ROM-derived artifacts.
 
 ## Reporting
 
