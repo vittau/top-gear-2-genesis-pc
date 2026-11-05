@@ -27,6 +27,7 @@ def main():
     a.out = a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=True)
     a.exe = a.exe.resolve()
+    (a.exe.parent / 'debug.ini').touch()
     # Fail on this port only; other worktrees may have their own runtime.
     with socket.socket() as sock:
         if sock.connect_ex(('127.0.0.1', 4410)) == 0:
@@ -47,7 +48,8 @@ def main():
     for frame in range(a.start, a.start + 6):
         actions.setdefault(frame, []).append(f'SCREENSHOT {a.out}/frame-{frame}.png')
     script = []
-    previous = 0
+    # input_script_tick first runs at wall frame 1.
+    previous = 1
     for frame, lines in sorted(actions.items()):
         script.extend([f'WAIT {frame - previous}', *lines])
         previous = frame
@@ -56,7 +58,8 @@ def main():
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy')
     args = [str(a.exe), str(Path.home() / 'roms/genesis/tg2.bin'), '--no-launcher',
             '--port', '4410', '--max-frames', str(max(5600, previous + 2)),
-            '--hash-frames', '1', '--fresh-evidence', '--input-script', str(script_path), *a.extra]
+            '--hash-frames', '1', '--fresh-evidence', '--input-script', str(script_path),
+            '--wav', str(a.out / 'audio.wav'), *a.extra]
     with (a.out / 'stdout.log').open('w') as out, (a.out / 'stderr.log').open('w') as err:
         proc = subprocess.Popen(args, cwd=a.exe.parent, env=env, stdout=out, stderr=err)
         try:
@@ -70,8 +73,12 @@ def main():
         if src.exists():
             (a.out / name).write_bytes(src.read_bytes())
     hashes = {int(f): h for f, h in re.findall(r'\[FBHASH\] frame=(\d+).*?hash=0x([A-F0-9]+)', (a.out / 'stderr.log').read_text())}
+    if code == 0 and (max(5600, previous + 2) not in hashes or
+                      any(f not in hashes for f in range(a.start, a.start + a.count + 1))):
+        raise RuntimeError('runtime ended without the complete measurement window')
     changes = [f for f in range(a.start + 1, a.start + a.count + 1) if hashes.get(f) != hashes.get(f - 1)]
-    summary = dict(exit=code, command=args, cold_boot={f: hashes.get(f) for f in [60, 300]},
+    summary = dict(exit=code, command=args, race_headroom=env.get('TG2_RACE_HEADROOM', '0'),
+                   cold_boot={f: hashes.get(f) for f in [60, 300]},
                    start=a.start, frames=a.count, changed_pictures=len(changes),
                    pictures_per_60_frames=len(changes) * 60 / a.count,
                    intervals=dict(Counter(b - c for c, b in zip(changes, changes[1:]))),

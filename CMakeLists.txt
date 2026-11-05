@@ -8,6 +8,7 @@ set(RECOMP_ROOT "${GENESIS_RECOMP_ROOT}")
 set(RUNNER_ROOT "${RECOMP_ROOT}/runner")
 option(GEN_ENABLE_TRACE "TCP server and retrospective frame rings" ON)
 option(SONIC_REVERSE_DEBUG "WRAM write and instruction history" ON)
+option(TG2_TIMING_EXPERIMENT "Build unqualified race CPU-headroom research hook (changes gameplay)" OFF)
 # Development can use an installed SDL package. Release builders supply an
 # SDL source checkout for static linkage and choose their target SDK/sysroot
 # with CMAKE_TOOLCHAIN_FILE (not this workstation's libc).
@@ -35,6 +36,8 @@ genesisrecomp_add_generated_sources(GENERATED tg2 "${CMAKE_SOURCE_DIR}/game" "${
     REVERSE_DEBUG "${SONIC_REVERSE_DEBUG}")
 genesisrecomp_runner_sources(RUNNER TRACE "${GEN_ENABLE_TRACE}" REVERSE_DEBUG "${SONIC_REVERSE_DEBUG}")
 add_executable(TG2Recomp ${RUNNER} ${GENERATED} game/tg2_spec.c)
+set_property(SOURCE game/tg2_spec.c APPEND PROPERTY COMPILE_DEFINITIONS
+    $<$<BOOL:${TG2_TIMING_EXPERIMENT}>:TG2_TIMING_EXPERIMENT=1>)
 add_dependencies(TG2Recomp ${GENERATED_TARGET})
 target_include_directories(TG2Recomp PRIVATE
     "${RUNNER_ROOT}" "${RUNNER_ROOT}/include" "${RUNNER_ROOT}/video"
