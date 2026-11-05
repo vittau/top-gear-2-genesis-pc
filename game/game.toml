@@ -17,3 +17,30 @@ level_modes = []
 
 [functions]
 extra = [0x000200]
+
+# Optional 60 fps race presentation (game/tg2_spec.c, docs/FRAMERATE.md).
+# These four routines are the IRQ physics chain that samples the player view
+# position; the adapter runs them with the stock-cadence view position while
+# the picture build keeps the fresh one. The hook returns 0 (stock behaviour)
+# whenever the option is off.
+[[widescreen_site]]
+addr = 0x00CD84
+kind = "game_hook"
+
+[[widescreen_site]]
+addr = 0x00CE18
+kind = "game_hook"
+
+[[widescreen_site]]
+addr = 0x00D644
+kind = "game_hook"
+
+[[widescreen_site]]
+addr = 0x00DA82
+kind = "game_hook"
+
+# Race V-int, after the picture submission; the adapter also runs the deferred
+# VRAM block work that a 60 Hz picture rate would otherwise starve.
+[[widescreen_site]]
+addr = 0x00476C
+kind = "game_hook"

@@ -23,6 +23,7 @@ def main():
     p.add_argument('--extra', nargs='*', default=[])
     p.add_argument('--start', type=int, default=3600)
     p.add_argument('--count', type=int, default=360)
+    p.add_argument('--shots', default='', help='comma-separated extra frame screenshots')
     a = p.parse_args()
     a.out = a.out.resolve()
     a.out.mkdir(parents=True, exist_ok=True)
@@ -47,6 +48,8 @@ def main():
         actions.setdefault(frame, []).append(f'DUMP_RAM {a.out}/ram-{frame}.ram')
     for frame in range(a.start, a.start + 6):
         actions.setdefault(frame, []).append(f'SCREENSHOT {a.out}/frame-{frame}.png')
+    for frame in [int(x) for x in a.shots.split(',') if x.strip()]:
+        actions.setdefault(frame, []).append(f'SCREENSHOT {a.out}/shot-{frame}.png')
     script = []
     # input_script_tick first runs at wall frame 1.
     previous = 1
