@@ -1,0 +1,23 @@
+name: rom-access
+# Smoke test: CI can fetch the private ROM and it matches the expected dump.
+# The ROM is never uploaded as an artifact or cached.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/rom-access.yml']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch private ROM
+        uses: actions/checkout@v4
+        with:
+          repository: vittau/top-gear-2-private-inputs
+          ssh-key: ${{ secrets.TG2_ROM_DEPLOY_KEY }}
+          path: private-inputs
+          persist-credentials: false
+      - name: Verify ROM identity
+        run: |
+          echo "b41909d53090e28c1d1e50941dad01676dd3d19caf26c75f66aac6a3ad689ba6  private-inputs/rom/tg2.bin" | sha256sum -c -
