@@ -50,7 +50,7 @@ file(RELATIVE_PATH TG2_ROM_REL "${CMAKE_SOURCE_DIR}/game" "${TG2_ROM}")
 genesisrecomp_add_generated_sources(GENERATED tg2 "${CMAKE_SOURCE_DIR}/game" "${TG2_ROM_REL}"
     REVERSE_DEBUG "${SONIC_REVERSE_DEBUG}")
 genesisrecomp_runner_sources(RUNNER TRACE "${GEN_ENABLE_TRACE}" REVERSE_DEBUG "${SONIC_REVERSE_DEBUG}")
-add_executable(TG2Recomp ${RUNNER} ${GENERATED} game/tg2_spec.c)
+add_executable(TG2Recomp ${RUNNER} ${GENERATED} game/tg2_spec.c game/tg2_video.c game/tg2_options.c)
 add_dependencies(TG2Recomp ${GENERATED_TARGET})
 target_include_directories(TG2Recomp PRIVATE
     "${RUNNER_ROOT}" "${RUNNER_ROOT}/include" "${RUNNER_ROOT}/video"
@@ -73,5 +73,7 @@ if(WIN32)
     endif()
 endif()
 genesisrecomp_runner_target(TG2Recomp)
+# This game ships the built-in widescreen package in the launcher's Mods page.
+set(RECOMP_UI_ENABLE_MODS ON)
 include("${CMAKE_SOURCE_DIR}/recomp-ui/recomp_ui.cmake")
 recomp_target_launcher_ui(TG2Recomp CONSOLE genesis)
