@@ -1,38 +1,59 @@
+diff --git a/runner/audio.c b/runner/audio.c
+index ef618a4..b9a2f9d 100644
 --- a/runner/audio.c
 +++ b/runner/audio.c
-@@ -191,6 +191,31 @@
-      * pitch-preserving loop of recent audio instead of fading to silence. */
-     cfg.preroll_ms     = 200.0;
+@@ -185,12 +185,45 @@ int audio_init(int psg_sample_rate)
+     cfg.channels    = 2;
+     cfg.source_rate = (double)psg_sample_rate; /* internal FM+PSG mix rate */
+     cfg.host_rate   = (double)got.freq;         /* device rate (48 kHz) */
+-    /* Phase-1 stall concealment: a ~200 ms boot pre-roll hides the cold-start
+-     * hitch for free (the servo drains the excess down to target over time),
+-     * and stretch_enable (default 1) conceals brief producer stalls by a
+-     * pitch-preserving loop of recent audio instead of fading to silence. */
+-    cfg.preroll_ms     = 200.0;
++    /* Phase-1 stall concealment: boot pre-roll hides the cold-start hitch for
++     * free (it is discarded at prime, not resampled away), and stretch_enable
++     * (default 1) conceals a brief producer stall by a pitch-preserving loop of
++     * recent audio instead of fading to silence. */
++    cfg.preroll_ms     = 250.0;
      cfg.stretch_enable = 1;     /* conceal on (defaults to 1; pinned explicit) */
-+    /* Steady-state pitch/tempo bound. The shared default (+/-0.5 %, 8.6
-+     * cents) is wide enough to mask a real frame-rate shortfall as an audible
-+     * tempo sag. This runner keeps the guest clock exact (frame_pacer.h) and
-+     * snaps the boot pre-roll at prime (recomp_audio_drc.h), so the servo only
-+     * has to absorb the host audio crystal and display-quantisation drift,
-+     * both far below 0.02 %. +/-0.2 % (3.4 cents) is inaudible, still covers
-+     * 10x the worst measured drift, and cannot hide a sustained deficit:
-+     * beyond it the ring's conceal/overflow paths take over instead of
-+     * stretching the music. */
 +    /* Steady-state ring target. Production arrives one video frame at a time
 +     * (~16.7 ms of audio per push) while the device consumes continuously, so
 +     * the instantaneous fill is a sawtooth of that amplitude. A 50 ms target
 +     * made that sawtooth +/-33 % of the target and the servo chased it (the
-+     * correction oscillated over its whole range at the beat frequency
-+     * between the push rate and the callback rate) - audible as tempo/pitch
-+     * wobble. 80 ms keeps the sawtooth at +/-21 %, leaves real headroom for a
-+     * stalled frame, and is still far below the ~200 ms pre-roll. */
-+    cfg.target_ms      = 80.0;
-+    cfg.ring_ms        = 200.0;
++     * correction oscillated over its whole range at the beat frequency between
++     * the push rate and the callback rate) - audible as tempo/pitch wobble.
++     * 80 ms then kept the sawtooth at +/-21 %, but real-device measurement
++     * showed one 30 ms host hitch still took the cushion from ~60 ms down to
++     * 23 ms, so the target is 100 ms: two 50 ms hitches are absorbed without
++     * the ring ever running dry, and the added latency stays around 100 ms. */
++    cfg.target_ms      = 100.0;
++    cfg.ring_ms        = 250.0;
 +    /* Smooth the fill measurement well past the ~76 ms beat between a 16.7 ms
 +     * push cadence and a 21.3 ms callback cadence. */
 +    cfg.err_lp_ms      = 300.0;
 +    cfg.deadband_ms    = 2.0;
 +    cfg.slew_pp_per_s  = 0.5;
-+    cfg.max_correction = 0.002;
++    /* Sustained pitch/tempo bound: +/-0.5 % = 8.6 cents, the width a real
++     * device crystal needs. The runner keeps the guest clock exact (no display
++     * quantisation, frame_pacer.h) and discards the boot pre-roll at prime, so
++     * the servo has nothing else to absorb; measured device/guest offsets on
++     * real hardware reach ~0.1 % and the loop is inaudible. A *transient* swing
++     * to this bound after a host hitch is what lets the servo refill the ring
++     * quickly; a *sustained* one cannot happen because the ring's latency
++     * bound would splice the surplus out first. */
++    cfg.max_correction = 0.005;
++    /* Hard latency bound: the fill is never allowed to stand more than
++     * target+60 ms above the read cursor. Under a host that really cannot keep
++     * up (a stall longer than the cushion, repeated), the surplus is spliced
++     * out behind a 4 ms gain dip once per episode instead of accumulating
++     * until the ring caps and drops samples one by one - the old behaviour was
++     * a growing delay that ended in a burst of clicks. */
++    cfg.overfull_ms    = 60.0;
      if (rab_init(&s_bridge, &cfg) != 0) {
          fprintf(stderr, "audio: rab_init (DRC bridge) failed\n");
          SDL_CloseAudioDevice(s_dev); s_dev = 0;
-@@ -205,12 +230,15 @@
+@@ -205,12 +238,15 @@ int audio_init(int psg_sample_rate)
      s_stats.min_queued_bytes = UINT32_MAX;  /* low-water: nothing sampled yet */
  
      /* No manual silence prime: the bridge holds output muted until its ring
@@ -45,14 +66,34 @@
 -            psg_sample_rate, got.freq, cfg.preroll_ms,
 -            cfg.stretch_enable ? "on" : "off");
 +            "(preroll %.0f ms -> target %.0f ms, conceal %s, max correction %.2f%%, "
-+            "ring %.0f ms)\n",
++            "ring %.0f ms, latency bound %.0f ms)\n",
 +            psg_sample_rate, got.freq, cfg.preroll_ms, cfg.target_ms,
 +            cfg.stretch_enable ? "on" : "off", cfg.max_correction * 100.0,
-+            cfg.ring_ms);
++            cfg.ring_ms, cfg.target_ms + cfg.overfull_ms);
      return 0;
  }
  
-@@ -388,7 +416,11 @@
+@@ -244,7 +280,8 @@ void audio_close(void)
+                 1e6 * (double)s_publish_max_ticks / s_perf_freq,
+                 blocks ? 1e6 * (double)s_exclusion_ticks / s_perf_freq / blocks : 0);
+         fprintf(stderr, "[audio callback ownership] callbacks=%llu callback_peak_us=%llu "
+-                "wait_peak_us=%llu conceals=%llu repeated=%llu underruns=%llu overflows=%llu fill_us=%llu\n",
++                "wait_peak_us=%llu conceals=%llu repeated=%llu underruns=%llu overflows=%llu "
++                "drains=%llu drained_frames=%llu prime_skipped=%llu fill_us=%llu\n",
+                 (unsigned long long)s_trace_callbacks,
+                 (unsigned long long)s_trace_callback_peak_us,
+                 (unsigned long long)s_trace_wait_peak_us,
+@@ -252,6 +289,9 @@ void audio_close(void)
+                 (unsigned long long)s_trace_repeated,
+                 (unsigned long long)s_trace_underruns,
+                 (unsigned long long)s_trace_overflows,
++                (unsigned long long)s_bridge.stats.drain_events,
++                (unsigned long long)s_bridge.stats.drain_skipped_frames,
++                (unsigned long long)s_bridge.stats.prime_skipped_frames,
+                 (unsigned long long)s_trace_final_fill_us);
+     }
+ }
+@@ -388,7 +428,11 @@ void audio_flush(uint32_t wall_frame, int realtime,
          s_callback_peak_us = 0;
          s_host_timing.conceal_events = s_bridge.stats.stretch_events;
          s_host_timing.concealed_frames = s_bridge.stats.stretch_frames;
@@ -64,9 +105,11 @@
          if (s_playback_enabled) {
              Uint64 publish_begin = s_buffer_trace ? SDL_GetPerformanceCounter() : 0;
              int prepared = rab_try_push_prepared(&s_bridge, s_prepared, (int)psg_frames);
+diff --git a/runner/audio.h b/runner/audio.h
+index 2b364c8..649812d 100644
 --- a/runner/audio.h
 +++ b/runner/audio.h
-@@ -88,9 +88,16 @@
+@@ -88,9 +88,16 @@ void audio_get_bridge_counts(uint64_t *pushed, uint64_t *overflow_drops);
  typedef struct {
      uint64_t conceal_events;
      uint64_t concealed_frames;
@@ -83,17 +126,64 @@
  } AudioHostTiming;
  void audio_get_host_timing(AudioHostTiming *out);
  uint32_t audio_queued_bytes(void);
+diff --git a/runner/recomp_audio_drc.h b/runner/recomp_audio_drc.h
+index 0340757..f38a484 100644
 --- a/runner/recomp_audio_drc.h
 +++ b/runner/recomp_audio_drc.h
-@@ -67,6 +67,7 @@
+@@ -48,6 +48,12 @@ typedef struct {
+     double deadband_ms;     /* +/- band around target with no correction (1.0)  */
+     double em_low_ms;       /* below this = underrun emergency (default 12)     */
+     double em_high_ms;      /* above this = overflow emergency (default 105)    */
++    /* Latency bound. The fill may sit `target_ms` above the read cursor in
++     * steady state, but never more than `overfull_ms` above target: beyond that
++     * the bridge splices the surplus out behind a 4 ms gain dip instead of
++     * letting the ring overflow (a hard drop is a click, and the ring silently
++     * hitting its cap is what turns one long frame into permanent latency). */
++    double overfull_ms;     /* surplus above target allowed before a drain (60) */
+     /* --- Phase-1 stall concealment (brief transition/startup producer stalls) --- */
+     double preroll_ms;      /* initial prime cushion; 0 => prime at target_ms.      *
+                              * A boot pre-roll hides the cold-start hitch for free   *
+@@ -67,6 +73,9 @@ typedef struct {
      uint64_t overflow_drops;    /* source frames dropped on ring overflow     */
      uint64_t stretch_frames;    /* output frames synthesized by stall conceal */
      uint64_t stretch_events;    /* distinct stall episodes concealed          */
 +    uint64_t prime_skipped_frames; /* pre-roll excess discarded at prime      */
++    uint64_t drain_events;      /* latency-bound splices                      */
++    uint64_t drain_skipped_frames; /* source frames spliced out                */
      double   last_fill_ms;
      double   last_correction;   /* applied ratio correction (signed)          */
  } rab_stats;
-@@ -321,7 +322,29 @@
+@@ -99,6 +108,11 @@ typedef struct rab_bridge {
+     double loop_len;        /* looped region length in source frames           */
+     double loop_pos;        /* fractional read cursor within the looped region */
+ 
++    /* latency bound: splice the surplus out behind a short gain dip */
++    int      drain_state;   /* 0 idle, 1 fading out, 2 fading in                */
++    uint32_t drain_left;    /* output frames left in the current fade half      */
++    double   drain_skip;    /* source frames to skip at the dip                 */
++
+     rab_stats stats;
+ } rab_bridge;
+ 
+@@ -176,6 +190,7 @@ void rab_config_defaults(rab_config *c) {
+     c->deadband_ms    = 1.0;
+     c->em_low_ms      = 12.0;
+     c->em_high_ms     = 105.0;
++    c->overfull_ms    = 60.0;
+     c->preroll_ms       = 0.0;    /* 0 => prime at target_ms (no extra boot cushion) */
+     c->stretch_enable   = 1;
+     c->stretch_min_ms   = 5.0;
+@@ -254,6 +269,9 @@ void rab_reset(rab_bridge *b) {
+                     ? b->cfg.preroll_ms : b->cfg.target_ms;
+     b->concealing = 0;
+     b->loop_start = b->loop_len = b->loop_pos = 0.0;
++    b->drain_state = 0;
++    b->drain_left = 0;
++    b->drain_skip = 0.0;
+     memset(b->last_out, 0, sizeof(b->last_out));
+     memset(&b->stats, 0, sizeof(b->stats));
+ }
+@@ -321,7 +339,29 @@ static void rab__update_controller(rab_bridge *b) {
      double fill_ms = rab_fill_ms(b);
      b->stats.last_fill_ms = fill_ms;
  
@@ -124,3 +214,83 @@
  
      /* one control update per pull; low-pass the normalized error. Use the pull
       * block duration as dt (approx via host_rate is unnecessary here -- we fold
+@@ -426,13 +466,27 @@ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
+     double step  = b->cur_step;
+     double xf    = b->cfg.stretch_xfade_ms * b->cfg.source_rate / 1000.0;
+     if (xf < 1.0) xf = 1.0;
+-    /* A single new video frame is not a recovered queue. Resuming immediately
+-     * drains that chunk and restarts concealment on subsequent callbacks;
+-     * the small ratio servo can take seconds to rebuild the target cushion.
+-     * Hold the read cursor through one refill instead. This changes device
+-     * recovery only: no generated samples or guest frames are skipped. */
++    /* A single new video frame is not a recovered queue, so do not resume live
++     * play on the first sample that arrives: the next pull would starve again
++     * and restart concealment. One pull block of cushion is enough for that,
++     * and -- unlike the old rule, which waited for the *target* fill -- it does
++     * not turn every stall into `target_ms` of permanent latency that only the
++     * 0.5 % servo could ever drain. Latency the stall really added is drained
++     * by the ratio servo; the surplus is spliced out by the drain below. */
++    double resume_frames = 0.050 * b->cfg.source_rate;   /* ~50 ms cushion */
+     int recovering = b->concealing &&
+-        (double)b->in_count - b->out_pos < b->cfg.target_ms * b->cfg.source_rate / 1000.0;
++        ((double)b->in_count - b->out_pos) < resume_frames;
++
++    /* Latency bound. Every source frame that arrives while the device is behind
++     * is a millisecond of latency the speaker will still be hearing later, so
++     * the ring must never be allowed to fill up: a full ring drops samples in
++     * rab_push, one per frame, which is a hard cut (a click) repeated until the
++     * backlog is gone, and the leftover backlog is permanent delay. Instead the
++     * surplus above target+overfull_ms is spliced out here behind a 4 ms gain
++     * dip, so the latency comes back down and the seam is a soft notch. */
++    double drain_limit_ms = b->cfg.target_ms + b->cfg.overfull_ms;
++    uint32_t drain_half = (uint32_t)(b->cfg.host_rate * 0.004);  /* 4 ms per half */
++    if (drain_half < 1) drain_half = 1;
+ 
+     for (int f = 0; f < frames; ++f) {
+         int64_t i   = (int64_t)floor(b->out_pos);
+@@ -443,6 +497,36 @@ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
+         float s[2] = {0.0f, 0.0f};
+         int   delivering = 0;
+ 
++        if (b->drain_state == 0 && b->primed && !b->concealing && have) {
++            double surplus = rab_fill_ms(b) - drain_limit_ms;
++            if (surplus > 0.0) {
++                b->drain_state = 1;
++                b->drain_left  = drain_half;
++                b->drain_skip  = surplus * b->cfg.source_rate / 1000.0;
++            }
++        }
++        /* 1 -> 0 -> (skip) -> 1. Applied on top of the normal output gate, so
++         * prime/underrun fades are unaffected. */
++        double dg = 1.0;
++        if (b->drain_state == 1) {
++            dg = (double)b->drain_left / (double)drain_half;
++            if (--b->drain_left == 0) {
++                double limit = (double)b->in_count - (double)b->half - 2.0;
++                double skip  = b->drain_skip;
++                if (b->out_pos + skip > limit) skip = limit - b->out_pos;
++                if (skip < 0.0) skip = 0.0;
++                b->out_pos += skip;
++                b->stats.drain_skipped_frames += (uint64_t)skip;
++                b->stats.drain_events++;
++                b->concealing = 0;
++                b->drain_state = 2;
++                b->drain_left  = drain_half;
++            }
++        } else if (b->drain_state == 2) {
++            dg = 1.0 - (double)b->drain_left / (double)drain_half;
++            if (--b->drain_left == 0) b->drain_state = 0;
++        }
++
+         if (have) {
+             /* live forward play; caught up to real audio, so leave conceal mode */
+             b->concealing = 0;
+@@ -510,7 +594,7 @@ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
+         }
+ 
+         for (int c = 0; c < ch; ++c) {
+-            double v = (double)s[c] * b->gain * 32768.0;
++            double v = (double)s[c] * b->gain * dg * 32768.0;
+             if (v >  32767.0) v =  32767.0;
+             if (v < -32768.0) v = -32768.0;
+             out[f * ch + c] = (int16_t)lrint(v);
