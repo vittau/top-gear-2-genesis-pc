@@ -7,6 +7,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Assemble the draft-release payload but do not create the release"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -94,6 +99,13 @@ jobs:
             --rom "$TG2_ROM_PATH" \
             --frames 600
 
+      - name: AppImage smoke run (ROM beside the single file)
+        run: |
+          python3 tools/release/smoke_run.py \
+            --appimage build-release/dist/linux/TG2Recomp-x86_64.AppImage \
+            --rom "$TG2_ROM_PATH" \
+            --frames 600
+
       - name: Upload Linux artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -171,6 +183,29 @@ jobs:
           python3 tools/release/smoke_run.py \
             --dir downloaded/TG2Recomp-linux-x86_64 \
             --exe TG2Recomp \
+            --rom "$TG2_ROM_PATH" \
+            --frames 600
+
+      - name: Verify the downloaded AppImage
+        run: |
+          (cd downloaded && sha256sum -c TG2Recomp-x86_64.AppImage.sha256)
+          chmod +x downloaded/TG2Recomp-x86_64.AppImage
+          mkdir -p appimage-extract
+          (cd appimage-extract && ../downloaded/TG2Recomp-x86_64.AppImage --appimage-extract >/dev/null)
+          python3 tools/release/verify_artifact.py \
+            --dir appimage-extract/squashfs-root \
+            --require usr/bin/TG2Recomp --require usr/bin/assets \
+            --require usr/bin/licenses --require usr/bin/README.txt
+          python3 tools/release/verify_glibc.py \
+            --binary appimage-extract/squashfs-root/usr/bin/TG2Recomp --max 2.35 --show-ldd
+
+      - name: AppImage smoke run (ROM beside the single file)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          python3 tools/release/smoke_run.py \
+            --appimage downloaded/TG2Recomp-x86_64.AppImage \
             --rom "$TG2_ROM_PATH" \
             --frames 600
 
@@ -308,13 +343,37 @@ jobs:
         run: |
           python3 tools/release/verify_artifact.py \
             --dir build-release/dist/macos/TG2Recomp-macos \
-            --require TG2Recomp --require assets --require licenses --require README.txt
+            --require README.txt \
+            --require TG2Recomp.app/Contents/Info.plist \
+            --require TG2Recomp.app/Contents/MacOS/TG2Recomp \
+            --require TG2Recomp.app/Contents/Resources/assets \
+            --require TG2Recomp.app/Contents/Resources/licenses
 
-      - name: Headless smoke run
+      - name: Validate the .app bundle
+        run: |
+          app=build-release/dist/macos/TG2Recomp-macos/TG2Recomp.app
+          plutil -lint "$app/Contents/Info.plist"
+          plist=$app/Contents/Info.plist
+          get() { /usr/libexec/PlistBuddy -c "Print :$1" "$plist"; }
+          test "$(get CFBundleIdentifier)" = "io.github.vittau.tg2recomp"
+          test "$(get LSMinimumSystemVersion)" = "11.0"
+          test "$(get NSHighResolutionCapable)" = "true"
+          test "$(get CFBundleExecutable)" = "TG2Recomp"
+          lipo -info "$app/Contents/MacOS/TG2Recomp"
+          lipo -archs "$app/Contents/MacOS/TG2Recomp" | tr ' ' '\n' | sort > /tmp/tg2-archs
+          grep -qx arm64 /tmp/tg2-archs
+          grep -qx x86_64 /tmp/tg2-archs
+          if otool -L "$app/Contents/MacOS/TG2Recomp" \
+              | tail -n +2 | grep -Ev '/System/Library/|/usr/lib/|:$'; then
+            echo "non-system library in the macOS payload" >&2
+            exit 1
+          fi
+
+      - name: Headless smoke run (ROM beside the .app)
         run: |
           python3 tools/release/smoke_run.py \
             --dir build-release/dist/macos/TG2Recomp-macos \
-            --exe TG2Recomp \
+            --exe TG2Recomp.app/Contents/MacOS/TG2Recomp \
             --rom "$TG2_ROM_PATH" \
             --frames 600
 
@@ -325,3 +384,56 @@ jobs:
           path: build-release/dist/macos
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Draft release payload
+    # Tag pushes create a draft release; a manual dispatch with dry_run=true
+    # assembles and verifies the exact payload but stops before the API call.
+    needs: [linux, linux-verify, windows, macos]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    permissions:
+      contents: write
+    steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout (release script and optional notes)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the three platform artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+
+      - name: Assemble and gate the release payload
+        run: |
+          python3 tools/release/assemble_release.py \
+            --artifacts artifacts \
+            --out release-payload \
+            --tag "${GITHUB_REF_NAME}"
+
+      - name: Show payload listing
+        run: |
+          ls -l release-payload
+          cat release-payload/SHA256SUMS
+
+      - name: Create draft GitHub release
+        # Draft only, never published. Tag pushes only.
+        if: ${{ !inputs.dry_run && startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "release/${GITHUB_REF_NAME}.md" ]; then
+            notes=(--notes-file "release/${GITHUB_REF_NAME}.md")
+          else
+            notes=(--generate-notes)
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft --verify-tag \
+            --title "Top Gear 2 Recomp ${GITHUB_REF_NAME}" \
+            "${notes[@]}" \
+            release-payload/*

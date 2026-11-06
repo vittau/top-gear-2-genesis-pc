@@ -5,15 +5,16 @@ push, pull request and manual dispatch, and publishes downloadable artifacts:
 
 | Artifact | Runner | Payload |
 |---|---|---|
-| `TG2Recomp-linux-x86_64` | `ubuntu-22.04` (glibc 2.35) | folder + `TG2Recomp-linux-x86_64.tar.gz` + `.sha256` |
+| `TG2Recomp-linux-x86_64` | `ubuntu-22.04` (glibc 2.35) | folder + `TG2Recomp-linux-x86_64.tar.gz` + `TG2Recomp-x86_64.AppImage` + `.sha256` for both |
 | `TG2Recomp-windows-x64` | `windows-latest` (MSVC, default VS generator, static CRT) | `TG2Recomp.exe`, `assets/`, `licenses/`, `README.txt` |
-| `TG2Recomp-macos` | `macos-latest` (universal2: arm64 + x86_64) | folder + `TG2Recomp-macos.tar.gz` + `.sha256` |
+| `TG2Recomp-macos` | `macos-latest` (universal2: arm64 + x86_64) | staged folder + `TG2Recomp-macos.zip` (contains `TG2Recomp.app` and `README.txt`) + `.sha256` |
 
-Linux and macOS artifacts contain both the staged folder (convenient for
-inspection) and a tarball, because GitHub artifact ZIPs do not preserve the
-executable bit. Publish or distribute the `.tar.gz`: extracting it keeps
-`TG2Recomp` executable. Windows has no such bit, so the artifact is the folder
-itself.
+Linux ships both a tarball and a single-file AppImage; the tarball remains the
+simple folder layout, the AppImage is the one-file download for Steam Deck and
+desktop integration. Windows has no executable bit, so the artifact is the
+folder itself (the release job zips it). macOS ships a proper `.app` bundle
+inside a zip: GitHub artifact ZIPs do not preserve the executable bit, so
+publish the `.zip`, which keeps `TG2Recomp.app` runnable.
 
 ## Runtime requirements
 
@@ -21,13 +22,15 @@ itself.
   SteamOS 3.x or desktop image ships — OpenGL (GLVND), X11 or Wayland,
   FreeType and HarfBuzz. SDL2 and libstdc++ are linked statically; `ldd`
   shows only those system libraries and the binary carries a `$ORIGIN`
-  RUNPATH for any future bundled library.
+  RUNPATH for any future bundled library. The AppImage contains the same
+  binary and adds no bundled host libraries, so its floor is identical.
 - **Windows:** one executable, static MSVC runtime and static SDL2. No DLLs
   and no Visual C++ redistributable.
-- **macOS:** only system frameworks. The universal2 payload deliberately
-  skips Homebrew FreeType/HarfBuzz (arm64-only dylibs would break the x86_64
-  slice and add host-specific dependencies), so the launcher uses outline
-  emoji instead of colour emoji.
+- **macOS:** a standard universal2 `.app` with only system frameworks. The
+  payload deliberately skips Homebrew FreeType/HarfBuzz (arm64-only dylibs
+  would break the x86_64 slice and add host-specific dependencies), so the
+  launcher uses outline emoji instead of colour emoji. The bundle declares
+  high-DPI (`NSHighResolutionCapable`) and a minimum of macOS 11.0.
 
 
 ## What the build does
@@ -49,11 +52,20 @@ itself.
    `tools/release/verify_artifact.py`, and does a 600-frame headless smoke run
    with dummy video/audio drivers and the ROM dropped next to the executable
    under an unrelated filename (`tools/release/smoke_run.py`).
-7. Uploads the artifact. A separate `linux-verify` job downloads the uploaded
-   Linux artifact, checks the tarball hash, extracts it, proves the highest
-   required glibc symbol version is ≤ 2.35 (`objdump -T`,
+7. On Linux, builds `TG2Recomp-x86_64.AppImage` from the staged payload with
+   the pinned `appimagetool` (`tools/release/build-appimage.sh`), extracts the
+   finished file again and gates its contents and glibc floor. Its smoke run
+   drops the ROM beside the `.AppImage` and uses `--appimage-extract-and-run`
+   when the runner has no usable FUSE.
+8. On macOS, builds `TG2Recomp.app` (`Contents/MacOS/TG2Recomp`,
+   `Contents/Info.plist`, `Contents/Resources/assets`, `licenses`, icon),
+   checks the bundle metadata and universal2 slices, and runs the smoke test
+   with the ROM beside the `.app`.
+9. Uploads the artifact. A separate `linux-verify` job downloads the uploaded
+   Linux artifact, checks the tarball and AppImage hashes, extracts both, proves
+   the highest required glibc symbol version is ≤ 2.35 (`objdump -T`,
    `tools/release/verify_glibc.py`, plus a clean `ldd` after installing the
-   desktop runtime libraries), and repeats the smoke run on the downloaded
+   desktop runtime libraries), and repeats both smoke runs on the downloaded
    payload.
 
 Pull requests from forks are skipped: GitHub does not expose repository
@@ -64,14 +76,29 @@ available. Branch PRs in this repository build normally.
 
 1. Confirm `git status` is clean, submodules are at their committed pins, and
    the branch is green in `build`.
-2. Download all three artifacts from the latest green run, or cut a tag first
-   and download from that run. Release payloads contain `BUILD-INFO.txt` with
-   the game and engine revisions and `README.txt` with end-user instructions.
-3. Verify the Linux and macOS tarballs against their `.sha256` files, and
-   publish those files (or the extracted folders) to the GitHub release
-   together with the Windows folder zipped by GitHub.
-4. Record the source revision: the `build` run URL and `BUILD-INFO.txt`
-   identify the exact commit each payload came from.
+2. Write optional hand-written notes in `release/<tag>.md` (for example
+   `release/v0.1.0.md`). If the file is absent the release body is generated
+   from the commits.
+3. Push the tag (`git tag v0.1.0 && git push origin v0.1.0`). The `build`
+   workflow builds all three platforms and the `release` job then:
+   - downloads the three artifacts,
+   - assembles the payload with `tools/release/assemble_release.py`, which
+     re-verifies the tarball, the extracted AppImage, the macOS zip and the
+     Windows folder with the same artifact gate,
+   - creates **only a draft** GitHub release with
+     `TG2Recomp-linux-x86_64.tar.gz`, `TG2Recomp-x86_64.AppImage`,
+     `TG2Recomp-windows-x64.zip`, `TG2Recomp-macos.zip` and `SHA256SUMS`.
+
+   The job never publishes the release; the owner reviews the drafts and
+   publishes manually. Nothing in CI pushes a tag.
+4. Validate the packaging without tagging: run `build` with
+   `workflow_dispatch` and `dry_run=true`. That assembles and prints the exact
+   payload listing (and the build artifacts remain downloadable) but skips the
+   GitHub release call.
+
+Release payloads contain `BUILD-INFO.txt` with the game and engine revisions
+and `README.txt` with end-user instructions. The `build` run URL identifies the
+exact commit each payload came from.
 
 The artifacts are release candidates until the owner validates on real
 hardware (Steam Deck/SteamOS with a controller, Windows, and both macOS
@@ -80,21 +107,68 @@ three platforms; it does not prove audio, input or rendering on a device.
 
 ## End-user instructions (English)
 
-1. Put your Top Gear 2 (USA) ROM next to the executable. Any filename and any
-   extension work: the game identifies the cartridge by its content (CRC32
-   `BD3074D2`, 1,048,576 bytes), not by its name.
-2. Run the executable (`TG2Recomp` / `TG2Recomp.exe`). No installation, no
-   setup, no emulator.
-3. If no matching ROM is present, the launcher/picker opens instead.
+You need a Top Gear 2 (USA) ROM. The game identifies it by content (CRC32
+`BD3074D2`, 1,048,576 bytes), so any filename and extension work.
+
+**Windows, Linux tarball and macOS**
+
+1. Unpack the release: the Windows folder as-is, `TG2Recomp-linux-x86_64.tar.gz`
+   on Linux, or `TG2Recomp-macos.zip` on macOS.
+2. Put your ROM in the same folder as `TG2Recomp` / `TG2Recomp.exe`. On macOS
+   put it next to `TG2Recomp.app` (the folder containing the app bundle), not
+   inside the bundle.
+3. Run `TG2Recomp`, `TG2Recomp.exe`, or double-click `TG2Recomp.app`.
+4. Done: no installation, setup, or emulator. If no matching ROM is found the
+   launcher/picker opens instead.
+
+**Linux AppImage (single file)**
+
+1. Put `TG2Recomp-x86_64.AppImage` and your ROM in the same folder.
+2. Make the file executable once, then run it (double-click, or
+   `./TG2Recomp-x86_64.AppImage`). If your file manager offers an "integrate"
+   option it also adds a menu entry.
+3. If the system has no FUSE, run it once as
+   `./TG2Recomp-x86_64.AppImage --appimage-extract-and-run`; SteamOS normally
+   has FUSE and the plain launch works.
+
+`settings.ini`, logs and saves are written next to the executable (Linux,
+Windows) or next to `TG2Recomp.app` on macOS. If that folder is read-only
+(for example `/Applications`), macOS uses
+`~/Library/Application Support/TG2Recomp/` instead.
 
 ## Instruções para o usuário (Português)
 
-1. Coloque a ROM de Top Gear 2 (USA) ao lado do executável. Qualquer nome e
-   qualquer extensão funcionam: o jogo identifica o cartucho pelo conteúdo
-   (CRC32 `BD3074D2`, 1.048.576 bytes), não pelo nome do arquivo.
-2. Execute o programa (`TG2Recomp` / `TG2Recomp.exe`). Não precisa instalar,
-   configurar nem usar emulador.
-3. Se nenhuma ROM compatível for encontrada, o seletor de arquivos abre.
+Você precisa da ROM de Top Gear 2 (USA). O jogo identifica o cartucho pelo
+conteúdo (CRC32 `BD3074D2`, 1.048.576 bytes), então qualquer nome e extensão
+funcionam.
+
+**Windows, tarball do Linux e macOS**
+
+1. Descompacte a versão: a pasta do Windows, o
+   `TG2Recomp-linux-x86_64.tar.gz` no Linux, ou o `TG2Recomp-macos.zip` no
+   macOS.
+2. Coloque a ROM na mesma pasta de `TG2Recomp` / `TG2Recomp.exe`. No macOS,
+   coloque ao lado de `TG2Recomp.app` (na pasta que contém o aplicativo), não
+   dentro do pacote.
+3. Execute `TG2Recomp`, `TG2Recomp.exe`, ou dê um duplo clique em
+   `TG2Recomp.app`.
+4. Pronto: não precisa instalar, configurar nem usar emulador. Se nenhuma ROM
+   compatível for encontrada, o seletor de arquivos abre.
+
+**AppImage do Linux (arquivo único)**
+
+1. Coloque `TG2Recomp-x86_64.AppImage` e a ROM na mesma pasta.
+2. Torne o arquivo executável uma vez e execute (duplo clique ou
+   `./TG2Recomp-x86_64.AppImage`). Se o gerenciador de arquivos oferecer
+   "integrar", ele também cria um atalho no menu.
+3. Se o sistema não tiver FUSE, execute uma vez como
+   `./TG2Recomp-x86_64.AppImage --appimage-extract-and-run`; o SteamOS
+   normalmente tem FUSE e a execução normal funciona.
+
+`settings.ini`, logs e saves são gravados ao lado do executável (Linux,
+Windows) ou ao lado de `TG2Recomp.app` no macOS. Se essa pasta for somente
+leitura (por exemplo `/Applications`), o macOS usa
+`~/Library/Application Support/TG2Recomp/`.
 
 ## Options (English)
 
@@ -152,12 +226,28 @@ ao lado do executável (`TG2Recomp` / `TG2Recomp.exe`).
 
 ## Steam Deck / SteamOS
 
-1. Copy the extracted `TG2Recomp-linux-x86_64` folder and your ROM to the Deck
-   (for example `~/Games/TopGear2`). The ROM must sit in the same folder as
+**AppImage (recommended, one file)**
+
+1. Copy `TG2Recomp-x86_64.AppImage` and your ROM to the Deck, in the same
+   folder (for example `~/Games/TopGear2`). The ROM must sit next to the
+   `.AppImage` file.
+2. Desktop Mode: right-click the AppImage > Properties > Permissions > "Is
+   executable" (or `chmod +x TG2Recomp-x86_64.AppImage` once). SteamOS ships
+   FUSE, so a normal double-click works; `--appimage-extract-and-run` is only
+   a fallback for systems without FUSE.
+3. Steam > Games > "Add a Non-Steam Game" > Browse > select the `.AppImage` >
+   "Add Selected Programs". Optionally rename it. Switch to Game Mode: the
+   game appears in the library and starts with the controller.
+4. Settings, logs and saves appear next to the AppImage in `~/Games/TopGear2`;
+   keep that folder writable.
+
+**Tarball (folder layout)**
+
+1. Extract `TG2Recomp-linux-x86_64.tar.gz` and your ROM to the Deck (for
+   example `~/Games/TopGear2`). The ROM must sit in the same folder as
    `TG2Recomp`.
-2. In Desktop Mode, make the binary executable: right-click `TG2Recomp` >
-   Properties > Permissions > check "Is executable", or run
-   `chmod +x TG2Recomp` once.
+2. Desktop Mode: right-click `TG2Recomp` > Properties > Permissions > check
+   "Is executable", or run `chmod +x TG2Recomp` once.
 3. Desktop Mode: Steam > Games > "Add a Non-Steam Game" > Browse > select
    `TG2Recomp` > "Add Selected Programs". Switch to Game Mode; the game appears
    in the library and starts with the controller. No terminal commands are
@@ -169,21 +259,35 @@ ao lado do executável (`TG2Recomp` / `TG2Recomp.exe`).
 
 ## macOS notes
 
-The macOS payload is a folder, not a `.app` bundle: engine patch 0002 searches
-for a cartridge (content CRC32 + size) next to the executable, and inside a
-bundle that directory would be `Foo.app/Contents/MacOS`, not the folder the
-user sees. A plain folder keeps "drop the ROM next to the binary" literally
-true.
+The macOS artifact is `TG2Recomp.app` (universal2) plus `README.txt`, zipped as
+`TG2Recomp-macos.zip`:
 
-The build is unsigned and not notarized, so macOS quarantines downloaded
-copies. Either right-click the executable > Open > Open the first time, or run
+```
+TG2Recomp.app/Contents/Info.plist          bundle id io.github.vittau.tg2recomp,
+                                           version, LSMinimumSystemVersion 11.0,
+                                           NSHighResolutionCapable
+TG2Recomp.app/Contents/MacOS/TG2Recomp      universal2 executable, static SDL2
+TG2Recomp.app/Contents/Resources/assets/    launcher fonts and images
+TG2Recomp.app/Contents/Resources/licenses/  bundled/open-source licences
+TG2Recomp.app/Contents/Resources/TG2Recomp.icns
+```
+
+The `.app` is unsigned and not notarized, so macOS quarantines downloaded
+copies. Either right-click the app > Open > Open the first time, or run once:
 
 ```sh
-xattr -dr com.apple.quarantine TG2Recomp-macos
+xattr -dr com.apple.quarantine TG2Recomp.app
 ```
 
 Gatekeeper does not affect a build produced locally by CI's checkout, only
 downloaded archives.
+
+**Where files go.** The player drops the ROM beside `TG2Recomp.app`; engine
+patch 0007 also searches the folder containing the bundle, not just
+`Contents/MacOS`. Settings, logs and saves are written beside the `.app` when
+that folder is writable; when it is read-only (for example in `/Applications`)
+they go to `~/Library/Application Support/TG2Recomp/`. Read-only assets stay
+inside the bundle, where SDL reports `Contents/Resources`.
 
 ## Windows notes
 
@@ -197,6 +301,12 @@ certificate is available.
 - SDL2 `2.28.5`, tarball SHA-256
   `332cb37d0be20cb9541739c61f79bae5a477427d79ae85e352089afdaf6666e4`
   (`tools/release/fetch-sdl.py`; the only cached download).
+- `appimagetool` `1.9.1`, SHA-256
+  `ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0`
+  (`tools/release/build-appimage.sh`). Its embedded runtime is reused instead
+  of downloading the floating `continuous` runtime.
+- The release icon is `tools/release/tg2recomp.png`, generated reproducibly by
+  `tools/release/make_icon.py` with the Python standard library only.
 - Workflow actions are pinned to full commit SHAs with the matching release
   tag in a comment.
 - Caches hold only the SDL2 tarball. Generated C, build trees, the ROM, save
