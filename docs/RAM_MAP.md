@@ -106,6 +106,32 @@ VRAM layout in the race mode (VDP registers 2/4/5/13 = `$30`/`$07`/`$5F`/`$2E`):
 sprite attribute table `$BE00` (640 bytes), H-scroll table `$B800` (896
 bytes), plane A `$C000`, plane B `$E000`.
 
+## Password screen and nitro (all-track coverage task)
+
+Verified against the ROM and against a live run (see `docs/PASSWORDS.md` for
+the full encoding).
+
+| Address | Size | Meaning | Evidence |
+|---|---|---|---|
+| `$FF2570` | 0x60 | Password work struct: symbols at `+0`, packed 80-bit block at `+$10`, plaintext record at `+$1A`, demanded picker index at `+$24`, decoded fields at `+$26..$54` | breakpoint on `$023594` shows `A0 = $FF2570`; RDB writes from `$02396A`/`$0238D2`/`$02371A` |
+| `$FF2570+$24` | word | Country index the screen demands; `-1` from the CONTINUE → PASSWORDS row, the picker index from CONTINUE → COUNTRY SELECT | `cmp.w $28(a0),$24(a0)` at `$0235B6` |
+| `$FF2570+$26` | word | Password checksum (8 bits used), compared as a word against the field sum | `cmp.w $26(a0),d7` at `$0235A4` |
+| `$FF2570+$28` | word | Password country/track index (4 bits) | loaded intro panel changes with it |
+| `$FF2570+$2C` | word | Password stage (2 bits), validator rejects `> 2` | `cmpi.w #2,$2c(a0)` at `$0235AA` |
+| `$FF2570+$2E` | word | Money in thousands (10 bits) | `Money $255000` for field 255 |
+| `$FF18CA+$2D4` | word | **Nitro tank**: 1536 at the race start, decrements while the nitro button is held | see below |
+| `$FF18CA+$2D8` | word | Nitro/boost active flag tested by the speed model | `tst.w $38(a4)` at `$00CF7A`, `$00D126` |
+| `$FF18CA+$34/$36` | words | Boost speed accumulator / decay set by the boost branch | `$00CF80..$00CFAE` |
+| `$FF18FA` | byte | Remapped controls: bit0 LEFT, bit1 RIGHT, bit2 BRAKE, bit3 ACCEL, bit4 **NITRO**, bit5 UP, bit6 DOWN, bit7 START | `$00D80A..$00D872`; measured per button over TCP |
+| `$FF19AE..$FF19BA` | 7 words | Raw-pad bit index per control: `[UP DOWN LEFT RIGHT B A C]` → output bit | default TYPE 1 is `[5,6,0,1,3,2,4]` |
+
+**Nitro input.** Canonical bit 4, which the default CONTROL TYPE 1 maps from
+the raw `C` button. Holding `C` with throttle on an unmodified car drains the
+tank (1536 → 1280 → 1024 over ~2 s) and raises the speed from ~3 800 to
+6 544 raw units (+73 %); the same run's peak with the button released is
+~4 000. The nitro does not need to be bought: every race starts with the
+1536-unit tank. `docs/VALIDATION.md` section 3 records the measurement.
+
 
 ## Closed-loop driving fields (qualification driver)
 

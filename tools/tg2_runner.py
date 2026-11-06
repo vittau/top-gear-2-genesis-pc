@@ -265,11 +265,15 @@ class Runner:
     def registers(self) -> dict:
         return self.command('get_registers')
 
+    def dump_ram(self) -> bytes:
+        """Full 64 KB WRAM in 4096-byte chunks (the TCP limit per read)."""
+        return b''.join(self.ram(off, 0x1000) for off in range(0, 0x10000, 0x1000))
+
     def dump_ram_file(self, path: str | Path):
         path = Path(path)
         if not path.is_absolute():
             path = self.out / path
-        path.write_bytes(self.ram(0x0000, 0x10000))
+        path.write_bytes(self.dump_ram())
         return path
 
 
