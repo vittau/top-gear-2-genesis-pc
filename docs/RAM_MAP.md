@@ -54,3 +54,20 @@ Controller evidence from ROM `$00D7A6..00D872`:
 
 The HUD proves that vehicle speed changes (97 MPH at frame 3300), but its
 canonical RAM speed field is not yet identified; no guessed address is set.
+
+## Sound driver and SOUND menu (see docs/AUDIO.md)
+
+| Address | Size | Meaning | Evidence |
+|---|---|---|---|
+| `$FF240E` | word | Race sound mode; `0`=SOUND EFFECTS, `1`=MUSIC; A3-relative `-$5FFA` | Readers `$0048E2`, `$006530`, `$023062`, `$0251F4`; writers `$01ED60`, `$002104` |
+| `$FF2554` | struct | Menu controller object; RACE SOUND page uses `A4+$0C` | Handler `$01F0D4`, enter/leave `$01ED3A/$01ED60` |
+| `$FF2560` | word | RACE SOUND page value word (`A4+$0C`): 0=SFX, 1=MUSIC | `$01F0D4`; runtime diff at the page |
+| `$FF8622` | struct | 68k PSG SFX engine state base | `$0253EE` loads A4 here; `$070008/$070014` |
+| `$FF862E` | struct | 68k FM SFX engine state base | `$0253EE` loads A4 here; `$070018/$07001C` |
+| `$FF16BE` | word | Race/attract index used to pick music track `{1,2,3,6}` | `$0251F4` masks `&3`, table `$02522A` |
+| `$A00080` | byte | Music driver A command mailbox (Z80 RAM) | Writers `$024CD4/$024D04` |
+| `$A00081` | byte | Music driver A status | `$024D22` |
+| `$A00084` | byte | Music driver A pause/stop flag | `$024D50/$024D64` |
+| `$A00087` | long | Music driver A work pointer, initialised `$0F0000` | `$024C96..$024CB4` |
+| `$A0025E` | byte | Race SFX Z80 image command byte (vestigial; writer `$07018A` has no callers) | `$07018A`, `$0701D4` |
+| `$A00260` | byte | Race SFX Z80 image command queue counter | `$070160`, `$0701AA/$0701CA` |

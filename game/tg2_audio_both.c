@@ -83,7 +83,7 @@ static int menu_value_handler(void)
 
     s_page_seen = 1;
 
-    if (d0 == 0) { g_cpu.D[0] = 0; return 1; }
+    if (d0 == 0) { g_cpu.D[0] = 0; g_cpu.SR = (uint16_t)((g_cpu.SR & ~(SR_N|SR_Z|SR_V|SR_C)) | SR_Z); return 1; }
 
     ram_write16(a4 + 0x14u, (uint16_t)d0);
 
@@ -111,6 +111,7 @@ static int menu_value_handler(void)
         ram_write16(a4 + 0x02u, 3);
         s_page_seen = 0;
         g_cpu.D[0] = 0;
+        g_cpu.SR = (uint16_t)((g_cpu.SR & ~(SR_N|SR_Z|SR_V|SR_C)) | SR_Z);
         return 1;
     }
 
@@ -120,6 +121,7 @@ static int menu_value_handler(void)
         ram_write16(a4 + 0x18u, 2);
     }
     g_cpu.D[0] = 0;
+    g_cpu.SR = (uint16_t)((g_cpu.SR & ~(SR_N|SR_Z|SR_V|SR_C)) | SR_Z);
     return 1;
 }
 
