@@ -28,7 +28,7 @@ Every tree has a snapshot at `refs/keep/<worktree>-pause`, pushed to origin.
 | 11 Hill margins (owner bug) | `tg2-hill-margins` | Black bands on downhills fixed (0 violations, 8 combos). Follow-up running: a one-line artefact on native line 0 in the margins. Merge when done. |
 | 12 Performance + audio pacing (owner bug) | `tg2-performance` | Music tempo wobbles under CPU load; release build is better than dev. Also asked: decouple music from frame pacing, and fix the feedback replay being written to `~/.local/bin/logs`. Nothing pushed yet. |
 | 10 All-track coverage | `tg2-track-coverage` | Reversing the password system to reach all 16 tracks, rain and nitro. Uncommitted password tools only. |
-| 05 Music + SFX "BOTH" | `tg2-audio-both` | One commit (BOTH option) plus uncommitted `docs/AUDIO.md` and `game/tg2_audio_both.c`. **Stalled since 2026-11-05 18:48** after a provider overload; two resume messages didn't restart it. On resume, restart this worker (or a fresh one from the snapshot). |
+| 05 Music + SFX "BOTH" | `tg2-audio-both` | Stalled 2026-11-05 18:48: the session died after a provider overload. Restarted 2026-11-06 with a fresh OpenCode worker, continuing from commit 144132c and the uncommitted draft. |
 
 ## Owner feedback (first playtest)
 
