@@ -66,9 +66,21 @@ finish claim.
 
 ## 2. Further tracks
 
-Progression is the only reliable route to other countries in this build: the
-password screen is reachable (main menu → CONTINUE) but the password encoding is
-not reversed, so tracks are reached by racing the championship.
+Two routes to other countries exist; neither was usable for coverage in this
+build:
+
+* **Championship progression** — needs a top-ten finish (below).
+* **CONTINUE → COUNTRY SELECTION** — a direct country picker (main menu:
+  `START`, `DOWN`×3, `START`, `DOWN`, `RIGHT`, `START`; the picker lives behind
+  the same `CONTINUE` row as `PASSWORD`). Picking a country then opens
+  **ENTER PASSWORD** for that level, and the pre-filled string is rejected
+  ("INVALID PASSWORD", `build/qual/password-accept2/pw-C.png`). The password
+  encoding is not reversed, so the picker cannot start a race yet.
+
+Evidence for the navigation and the gate: `build/qual/country-nav3/`
+(`after-start.png` is the picker), `build/qual/country-britain/`
+(`country-1-selected.png` selects Britain), `build/qual/password-accept2/`
+(`pw-C.png`, invalid password).
 
 | Track | How reached | Evidence |
 |---|---|---|
@@ -85,11 +97,12 @@ qualification, which is also what makes a 30-minute continuous session possible.
 track intro panel (sun icon on Auckland and Ayers Rock); only those two tracks
 were reached before the championship ended, so rain remains untested.
 
-Two attempts to widen coverage failed: the main menu's DIFFICULTY row was
-stepped left (`--difficulty-steps -3`,
-`build/qual/progress-easy/race2-post-02.png`) and the Ayers Rock result got
-worse (17th), so the row's value direction is not established and it was left at
-its default afterwards.
+Attempts to widen coverage failed: the main menu's DIFFICULTY row was stepped
+three clicks left (`--difficulty-steps -3`,
+`build/qual/progress-easy/race2-post-02.png`) and three clicks right
+(`build/qual/progress-easy2/race2-post-02.png`); both Ayers Rock races finished
+17th, so either the row was not actually changed or it does not affect the AI,
+and it was left at its default.
 
 ## 3. Rain, night, nitro, crash, pit
 

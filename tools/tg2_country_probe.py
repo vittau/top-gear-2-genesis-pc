@@ -64,8 +64,10 @@ def main():
         d.tap('DOWN', 8)                  # PASSWORD -> COUNTRY SELECTION
         r.wait_frame(2000)
         d.shot('submenu')
-        d.tap('START', 8)                 # -> country list
-        r.wait_frame(2300)
+        d.tap('RIGHT', 8)                 # enter the country picker
+        r.wait_frame(r.frame() + 200)
+        d.tap('START', 8)
+        r.wait_frame(2500)
         for i in range(a.country):
             d.tap('DOWN', 8)
             r.wait_frame(r.frame() + 140)
