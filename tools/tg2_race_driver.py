@@ -89,8 +89,12 @@ class Driver:
             self.route.append(dict(frame=st.frame, keys=f'{pad:02X}'))
 
     # -- menus ---------------------------------------------------------
-    def boot_to_setup(self, down_rows=4):
-        """Title -> main menu -> 1P game setup screen."""
+    def boot_to_setup(self, down_rows=4, two_player=False):
+        """Title -> main menu -> game setup screen.
+
+        The menu's first row toggles between 1P GAME and 2P GAME with START;
+        `two_player` flips it before selecting the START row.
+        """
         r = self.r
         r.wait_frame(600)
         self.shot('title')
@@ -98,6 +102,10 @@ class Driver:
         self.tap('START', 8)               # title -> main menu
         r.wait_frame(950)
         self.shot('main-menu')
+        if two_player:
+            self.tap('START', 8)           # 1P GAME -> 2P GAME
+            r.wait_frame(1150)
+            self.shot('main-menu-2p')
         for i in range(down_rows):      # 1P GAME -> START
             self.tap('DOWN', 8)
             r.wait_frame(1000 + i * 55)
@@ -108,17 +116,6 @@ class Driver:
         r.wait_frame(1650)
         self.shot('setup')
 
-    def choose_two_player(self):
-        r = self.r
-        r.wait_frame(1700)
-        self.tap('DOWN', 8)                # RACE -> PLAYER
-        r.wait_frame(1800)
-        self.shot('setup-player')
-        self.tap('RIGHT', 8)               # 1P -> 2P
-        r.wait_frame(1900)
-        self.shot('setup-player-2p')
-        self.tap('UP', 8)                  # back to RACE
-        r.wait_frame(2000)
 
     def press_start_until_race(self, limit=2400, label='pre', max_taps=12):
         """Advance intro/shop/result screens until the race clock is running.
@@ -368,9 +365,7 @@ def main():
     try:
         r.start()
         d = Driver(r, a)
-        d.boot_to_setup()
-        if a.two_player:
-            d.choose_two_player()
+        d.boot_to_setup(two_player=a.two_player)
         shots = {int(x) for x in a.shots.split(',') if x.strip()}
         for i in range(a.races):
             st = d.press_start_until_race(label=f'race{i + 1}')

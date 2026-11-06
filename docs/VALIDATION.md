@@ -72,35 +72,101 @@ not reversed, so tracks are reached by racing the championship.
 
 | Track | How reached | Evidence |
 |---|---|---|
-| Auckland, Australasia (1.6 mi, 4 laps, 5:43) | race 1 | `build/qual/progress1/after-start-1800.png` |
-| Ayers Rock, Australasia (1.2 mi, 5 laps, 9:15) | race 2 | `build/qual/progress1/race1-post-05.png`, racing: `race-26090.png` |
-| Track 3+ | see soak run (`build/qual/soak-60/`) | intro screenshots `raceN-tap-*.png` |
+| Auckland, Australasia (1.6 mi, 4 laps, 5:43 AM) | race 1 | `build/qual/progress1/after-start-1800.png` |
+| Ayers Rock, Australasia (1.2 mi, 5 laps, 9:15 PM) | race 2, **night race** | intro `build/qual/progress1/race1-post-05.png`; the finished night race: `build/qual/soak-60/race2-post-01.png` (dark palette, LAP 5/5) and `build/qual/soak-60/race-3060.png` |
+| championship track 3+ | soak run restart cycle | `build/qual/soak-32/raceN-start.png`, `race-*.png` |
+
+A race must be **qualified** (roughly top ten) to advance; finishing 14th on
+Ayers Rock ended the championship and returned the game to the main menu. The
+soak tool therefore restarts the championship from the menu after a failed
+qualification, which is also what makes a 30-minute continuous session possible.
+
+**Rain**: no rain race was reached. Weather is a per-track property shown on the
+track intro panel (sun icon on Auckland and Ayers Rock); only those two tracks
+were reached before the championship ended, so rain remains untested.
 
 ## 3. Rain, night, nitro, crash, pit
 
 | Scenario | Status | Evidence |
 |---|---|---|
-| Night race | see soak run intro screens | track intro shows the in-game TIME/WEATHER panel with AM/PM |
-| Rain race | see soak run intro screens | weather icon in the same panel |
-| Nitro | `tools/tg2_controls_probe.py` | A button probe: speed and the speed-model timers are logged; see probe output |
-| Collision / off-road | `tools/tg2_controls_probe.py` | steer-off phase drops the car into the grass and the speed collapses; screenshots `throttle+LEFT-*.png` |
-| Pit stop | not present | no pit lane art, no pit prompt, no tyre/fuel state in the HUD or in the player record; TG2 has no pit mechanic |
+| Night race | **passed** | Ayers Rock runs at 9:15 PM with the night palette: `build/qual/soak-60/race2-post-01.png`, `build/qual/soak-60/race-3060.png` |
+| Rain race | **untested** | not reached |
+| Nitro | **not found** | `build/qual/controls2/phases.json`: A is the brake (speed 4387 -> 945 in 2 s, median 1000 while every other window accelerates), C produced no boost outside the normal acceleration curve (median 6400 vs 5999 in the following window) and no nitro gauge/timer exists in the player record or HUD. No nitro input was identified. |
+| Collision / off-road | **passed (off-road), partial (contact)** | `tools/tg2_controls_probe.py` off-road phase: lateral hits the -287 clamp and speed collapses 5615 -> 3571 (`build/qual/controls2/throttle+LEFT-*.png`). On-road instantaneous drops in the same log (e.g. 5544 -> 3475 at frame 4410, lateral -11.7) are consistent with car contact but no contact frame was isolated |
+| Pit stop | **not present** | no pit lane, pit prompt, tyre or fuel state in the HUD or in the player record |
+
+## Physics: Off vs 16:9 vs 60 fps at matched frames
+
+From the closed-loop traces (`build/qual/rt-off-1/trace.csv` vs
+`build/qual/rt-fps60/trace.csv`), matched within 3 wall frames:
+
+| Frame | Race clock Off = 60 fps | pos Off | pos 60 fps | Δpos | speed Off / 60 |
+|---:|---|---:|---:|---:|---|
+| 3600 | identical | 8 674 894 | 8 674 894 | 0 (0.0000 %) | 4230 / 4230 |
+| 4400 | identical | 12 104 164 | 12 103 253 | −911 (0.0075 %) | 5334 / 5334 |
+| 6000 | identical | 18 123 682 | 18 122 618 | −1064 (0.0059 %) | 4650 / 4649 |
+| 6800 | identical | 21 048 159 | 21 042 344 | −5815 (0.0276 %) | 4530 / 4421 |
+| 8000 | identical | 25 924 043 | 25 770 773 | −153 270 (0.59 %) | 5204 / 4242 |
+
+The race clock is identical at **every** sample (the clock is IRQ-driven and the
+60 fps option does not touch it). Position tracks the stock port to 0.03 % for
+the first ~55 s and then separates because the car meets traffic/grass at
+different points; that is the documented view-schedule difference plus a
+reactive driver, not a clock or rule change.
 
 ## 4. Two-player split-screen
 
-**Untested.** The split-screen path needs a second controller: the game only
-offers the 2P selection when pad port 1 reports a device, and this headless
-runner drives port 0 over TCP (no gamepad is attached; the SDL dummy/offscreen
-drivers have none). Selecting the PLAYER row and pressing RIGHT changes the
-screen's state byte but every started race kept `$FF189E == 0` (single player),
-and the launcher auto-detect path has no virtual-pad support. The renderer's
-split-screen gate (4:3, 60 fps disengaged) is implemented in `game/tg2_video.c`
-and described in `docs/WIDESCREEN.md`, but is **not exercised** by this
-qualification.
+**Passed** with `tools/tg2_split_screen.py` (`build/qual/split-2p-race/`),
+run in 16:9 with `TG2_RACE_60FPS=1`.
+
+How it is reached: the main menu's first row is a mode toggle ("1P GAME" ->
+"2P GAME") driven by START; the 2P setup then shows **two** panels and waits for
+pad port 1. The TCP `set_input` command only drives port 0, so this run uses the
+runner's input script with `PLAYER 2` directives for the menu, the second panel
+and player 2's throttle, and monitors the result over TCP.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Two-player race flag | `$FF189E` = 1 for 1287 sampled race frames | `build/qual/split-2p-race/summary.json` |
+| Split-screen renders | live race, player 1 98 MPH, player 2 88 MPH, both LAP 1/4 | `build/qual/split-2p-race/shot-6499.png` |
+| Stays 4:3 | split-screen content occupies **x 71..326 = 256 px** centred in the 398-px 16:9 frame; a 1P 16:9 race frame spans the full 0..397 | pixel-column measure of `shot-6499.png` vs `build/qual/rt-ws169/finish.png` |
+| 60 fps does not engage | 258/360 and 245/360 distinct framebuffers in two 6-s moving windows (~42/s, i.e. two stock-rate panels) versus 360/360 for 1P with the option on | `build/qual/split-2p-race/stderr.log` |
+
+A stray START during the countdown pauses the game (the 2P countdown is reached
+after the menu presses), so the tool exposes `--unpause-at`; the exported frame
+in the screenshots above is unpaused.
 
 ## 5. Long-run soak
 
 See the final section after the run.
+
+## Reproduce
+
+```sh
+JOBS=8 tools/build-linux.sh ~/roms/genesis/tg2.bin build
+
+# full race, one presentation mode per run (real-time, deterministic control)
+python3 tools/tg2_race_driver.py --port 4470 --out build/qual/rt-off     --skip-post --launch-delay 300 --widescreen off
+python3 tools/tg2_race_driver.py --port 4470 --out build/qual/rt-ws169     --skip-post --launch-delay 300 --widescreen 16:9
+python3 tools/tg2_race_driver.py --port 4470 --out build/qual/rt-fps60     --skip-post --launch-delay 300 --widescreen 16:9 --60fps
+
+# post-race flow (results, table, setup, next intro, shop, next race)
+python3 tools/tg2_race_driver.py --port 4470 --out build/qual/progress1 \
+    --races 2 --periodic-shots --post-frames 3000
+
+# same-route replay, any mode
+python3 tools/tg2_replay_route.py --route build/qual/rt-off/route-race.json \
+    --out build/qual/replay-ws169 --widescreen 16:9
+
+# controls / off-road probe and split-screen
+python3 tools/tg2_controls_probe.py --port 4470 --out build/qual/controls2 --turbo
+python3 tools/tg2_split_screen.py --port 4470 --out build/qual/split-2p-race \
+    --widescreen 16:9 --60fps --press-count 4 --unpause-at 3700
+
+# 30-minute soak
+python3 tools/tg2_soak.py --port 4470 --out build/qual/soak-32 \
+    --widescreen 16:9 --60fps --minutes 32 --launch-delay 300 --periodic-shots
+```
 
 ## Manifests
 
