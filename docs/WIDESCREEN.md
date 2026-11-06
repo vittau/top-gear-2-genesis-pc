@@ -12,7 +12,9 @@ and object activation are never changed. A fresh installation selects
 `video_default = "fit"` (Adaptive); the shared launcher Mods page supplies the
 Off / Adaptive / fixed 16:9, 21:9, 32:9 choices and persists them in
 `settings.ini` next to the executable as `[mods.widescreen] enabled` and
-`aspect`. The in-game recomp-ui overlay edits the same values. `--widescreen
+`aspect`. The same pages offer **HUD** placement and **Hide overscan**
+(default On); both persist as `[mods.hud] placement` and `[mods.overscan]
+hidden`. The in-game recomp-ui overlay edits the same values. `--widescreen
 off` always selects the stock renderer.
 
 ## Why a game-owned renderer
@@ -55,14 +57,21 @@ ground/separator rows 432..447, and the authored skyline panorama in rows
   output lines between the water and the road. Each margin continues its
   native edge sample on these rows, so it cannot wrap from grass into the
   transparent half and expose the black backdrop. Colours still come from
-  that exact output line's CRAM, preserving the raster grass shades.
+  that exact output line's CRAM, preserving the raster grass shades. On a
+  synthesized 60 fps picture these rows take their scroll from the same
+  discrete source picture as their atlas Y, for the reason described under
+  [Motion-only synthesized black lines](#motion-only-synthesized-black-lines).
 - Each row uses its own H-scroll (plane B register / VSRAM) and V-scroll, so
   the margin continues that exact scanline's perspective.
 
 **Plane A — HUD, player car, special effects.** Plane A is `$C000` and holds
-the HUD, the player car art and raster-positioned special effects. With HUD: Centered it is
-carried through the exact native centre. HUD: Edges relocates only the HUD
-cells and map markers; car art and effects keep their native positions.
+the HUD, the player car art and raster-positioned special effects, including
+the Auckland tunnel wall. With HUD: Centered it is carried through the exact
+native centre. HUD: Edges relocates only the HUD cells and map markers; car
+art and effects keep their native positions. When an opaque high-priority
+plane-A texel is the displayed native edge pixel, its colour continues through
+that margin row to the screen edge, so a tunnel wall never exposes the
+plane-B scenery it hides (see below).
 
 **Sprites — opponent cars and roadside objects.** The game's mapper at
 `$00B584` projects each object and then performs the native horizontal cull at
@@ -168,12 +177,51 @@ cluster, sampling the displayed SAT and current patterns on every scanline.
 There are no guest RAM/VRAM writes, new function seeds or engine changes.
 `tg2_video` reports `hud_edges`, `hud_plane_pixels` and `hud_marker_pixels`.
 
+## Hide overscan
+
+The stock top eight rows are the VDP window plane: solid black except for the
+red/orange pattern-0 marks at native x=16..31 (see
+[Native red/orange top band](#native-redorange-top-band)). A CRT hid that band
+in overscan; on a modern display it is visible above the HUD.
+
+**Hide overscan** (default **On**) blanks the active top window band rows in
+every mode, including widescreen Off. It is a presentation option only: guest
+RAM, VRAM, CRAM and simulation are untouched, and an inactive window (menus)
+keeps its rows. With it Off the image is byte-identical to before the option
+existed.
+
+The option is a normal `[mods.*]` boolean, offered by the launcher's Mods page
+and the in-game recomp-ui overlay and persisted next to the executable
+(`build/task13/options/`: launcher detail, overlay row, and the overlay after
+toggling it Off, which writes `hidden = 0`):
+
+```ini
+[mods.overscan]
+hidden = 1
+```
+
+`TG2_HIDE_OVERSCAN=0|1` is a probe-only override and is never persisted.
+`tg2_video` reports `hide_overscan` in its status JSON.
+
+Measured at race frame 3300: with Hide overscan Off the 4:3 image shows the
+stock red marks at x=16..31, rows 0..7; with it On those 56 pixels are black.
+The 16:9 image is identical at x=87..102 (the 71-pixel origin) and shows the
+same result. **No other pixel changes**; the difference bounding box is exactly
+the mark area. Crops: `build/task13/overscan/crop-{4-3,16-9}.png`, full frames
+alongside them. With all options off (widescreen Off, 60 fps Off, Hide overscan
+Off) the stock hashes still pass: frame 60 `2A0B972960C5E325`, frame 300
+`1131D937D70234FD` (`build/task13/hashes.txt`).
+
 ## Off-mode guarantees
 
-With `--widescreen off` (or the mod turned off) the provider's width and row
+With `--widescreen off` and Hide overscan Off, the provider's width and row
 callbacks are never entered: `game_video_prepare_frame` leaves the frame
-unowned and the runner presents the native image. The measured stock hashes
-are unchanged (frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`).
+unowned and the runner presents the native image. With Hide overscan On the
+provider owns the rows only to blank the active top window band; every other
+row is the native one, and the width stays native. The measured stock hashes
+are unchanged (frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`) both
+with Hide overscan Off and On, because those boot/menu frames have no active
+top window.
 
 For the widened modes with HUD: Centered the native centre is copied from
 the original row after the margins are filled, so the canonical RAM, VRAM and native-centre pixels are
@@ -334,6 +382,37 @@ All eight top margin rows are black. See `build/hills/window-before-5135-2x.png`
 `window-source-lines-5135.json` and `window-pixel-checks.json`. These are separate
 from the earlier hill-fix PNG pair, which is retained as historical evidence.
 
+### Plane-A tunnel walls
+
+Auckland's tunnel is **plane A**, not plane B: an opaque high-priority
+raster-positioned overlay whose opening moves and grows over roughly
+30 presented pictures (`~8112..8156` at 60 fps). Before this fix the native
+centre showed the black wall and its bright opening while the margins kept
+drawing plane B's sky, skyline, water and grass, so one screen looked like two
+pictures (`build/user-reports/tunnel-margins.png`).
+
+`plane_a_margins()` now tests the *displayed* native edge pixel: it samples
+the same plane-A texel the native compositor uses (`pixel()` at
+`edge - ha, line + va`), requires it to be opaque, high priority and equal to
+the native edge colour, and then continues that colour through the margin row
+to the screen edge. Plane B scenery, a low-priority texel, or a sprite over the
+edge never qualifies, so ordinary margins are untouched. The native 256-pixel
+centre is still copied verbatim afterwards.
+
+The edge colour, rather than a plane-A texel farther out, is deliberate: the
+overlay silhouette can end exactly at the native edge (the tunnel mouth) and
+continuing a neighbouring texel would leave a visible seam. Entry and exit
+transitions therefore follow each line's own edge automatically; the mouth
+grows and shrinks per line without a scene flag or a fixed screen rectangle.
+
+Before/after stills at entry, inside and exit, in 16:9 and 21:9:
+`build/task13/tunnel/{before,after}-{16-9,21-9}-{entry,inside,exit}.png`, plus
+full ten-picture strips ending in `-sheet.png`. With Hide overscan held Off for
+the comparison, all three frames in both widths change only margin pixels
+(13,806 / 22,326 / 19,436 in 16:9; 25,844 / 42,031 / 36,547 in 21:9) and the
+native 256-pixel centre keeps **0** changed pixels. With the shipping default
+Hide overscan On the top-band marks are additionally blanked, as expected.
+
 ## Hill margin regression check
 
 `TG2_MARGIN_AUDIT=<private.csv>` records both adjacent margin pixels on every
@@ -405,12 +484,62 @@ With both options Off, frame 60 remains **`2A0B972960C5E325`** and frame 300
 VRAM and native-centre comparisons pass at all five baseline capture frames
 in both widths (`after-centered-0/summary.json`).
 
+### Motion-only synthesized black lines
+
+The second playtest still showed brief one-pixel black lines in the margins on
+hills, but only in motion. The audit streams every presented picture, including
+synthesized ones, so the residual was in the interpolation policy rather than
+an unaudited frame.
+
+Ground/separator rows (atlas Y **432..447**) have one opaque and one transparent
+half. When both endpoints are non-road on such a row, the road-envelope clamp
+does not constrain H-scroll, and the row used interpolated translation. That
+could move the transparent half onto the native edge, leaving a one-line black
+backdrop gap. Example: frames 12329..12336, native line 107, right side —
+`atlas_y=441`, `margin_bp=0`, both endpoints' rows opaque. The line appeared for
+one or two synthesized pictures and vanished on the neighbouring ones, matching
+the reported flicker.
+
+Synthesized ground/separator rows now keep **their discrete source scroll**,
+exactly like their atlas Y, VRAM, patterns and palette; panorama rows 448..511
+remain horizontally interpolated. The road artefact check still passes because
+a snapped row is exactly its nearest source row.
+
+`tools/check_margin_artifacts.py` also counts **brief backdrop lines**: a
+backdrop row that appears for at most three consecutive presented pictures and
+then disappears. Runs touching the first or last captured picture are excluded
+as capture boundaries, because the pre-race/countdown transition would
+otherwise be counted once per line.
+
+| Run (16:9, Auckland full route) | Frames | Samples | Brief backdrop lines | Other violations |
+|---|---:|---:|---:|---:|
+| Before, 60 fps On | 10139 | 4,542,272 | **1019** | 0 / 0 / 0 |
+| After, 60 fps On | 10139 | 4,542,272 | **0** | 0 / 0 / 0 |
+| Before, 60 fps Off | 10574 | 4,737,152 | **0** | 0 / 0 / 0 |
+| After, 60 fps Off | 10574 | 4,737,152 | **0** | 0 / 0 / 0 |
+
+Machine-readable results are `build/task13/margins/{before,after}-{60,off}.json`
+(the 60 fps On before run exits 1 on the 1019 flicker lines; the other three
+exit 0). The real-picture scan is the 60 fps Off rows: **0** single-frame black
+lines in 10,574 presented pictures, so the defect was specific to synthesized
+frames.
+
+The same-input physics replay still matches: Off and 16:9 + Edges + 60 fps
+produce identical complete-player-record and 64 KiB WRAM hashes on
+**16000/16000** frames, with identical lap splits and finish clock
+(`build/evidence/replay16-comparison.json`). The road artefact check passes
+with **2503** frames, **1511** synthesized frames, **83,732** tested rows and
+**0** violations (`build/fps/task13-road/road-artifacts.json`). The changes are
+host-only; no guest write or new hook was added.
+
 ## Known artefacts and limitations
 
-- **Plane-A special effects are not extended.** Objects the game rasterises
-  through plane A (rather than the sprite mapper) are visible only where they
-  fall inside the native centre. Ordinary actors and roadside objects are
-  covered by the sprite capture; plane-A scenery is not.
+- **Plane-A effects extend by their native edge, not by reprojection.** A
+  plane-A texel that is the visible native edge is continued through the
+  margin as its edge colour (the tunnel wall). Plane-A detail wholly inside the
+  native centre, or a textured edge that changes across the margin, is not
+  re-projected; ordinary actors and roadside objects still come from the
+  sprite capture.
 - **Actors that never reach the mapper are not recovered.** An object culled
   by game logic before `$00B5FA` has no captured mapping. This was not
   observed for opponents on the baseline route, but it is the capture's

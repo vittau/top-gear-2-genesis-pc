@@ -47,8 +47,9 @@ typedef struct Tg2Option {
     void      (*apply)(int value); /* live renderer/config update, optional */
 } Tg2Option;
 
-static int s_race60 = 1;      /* task default: 60 fps races On */
-static int s_hud_edges = 0;   /* task default: HUD Centered */
+static int s_race60 = 1;        /* task default: 60 fps races On */
+static int s_hud_edges = 0;     /* task default: HUD Centered */
+static int s_hide_overscan = 1; /* task default: Hide overscan On */
 
 static const char *const s_hud_choices[] = { "centered", "edges" };
 static const char *const s_hud_labels[]  = { "Centered", "Edges" };
@@ -70,6 +71,14 @@ static const Tg2Option s_options[] = {
       "Edges", "Centered",
       0, &s_hud_edges, TG2_OPT_CHOICE, s_hud_choices, s_hud_labels, 2,
       tg2_video_set_hud_mode },
+    { "overscan", "mods.overscan", "hidden",
+      "Hide overscan", "Hide overscan", "Presentation",
+      "Blanks the eight-row window band at the top of the race screen, the "
+      "area a CRT hid in overscan. Presentation only; the simulation and "
+      "every other scanline are unchanged. Off shows the stock band.",
+      "Hidden", "Shown",
+      1, &s_hide_overscan, TG2_OPT_BOOL, NULL, NULL, 0,
+      tg2_video_set_hide_overscan },
 };
 #define TG2_OPTION_COUNT ((int)(sizeof s_options / sizeof s_options[0]))
 
@@ -256,6 +265,12 @@ void tg2_options_apply_env(void)
             s_hud_edges = 0;
         tg2_video_set_hud_mode(s_hud_edges);
     }
+    const char *overscan = getenv("TG2_HIDE_OVERSCAN");
+    if (overscan)
+        s_hide_overscan = !(overscan[0] == '0' || overscan[0] == 'n' ||
+                            overscan[0] == 'N' || overscan[0] == 'f' ||
+                            overscan[0] == 'F');
+    tg2_video_set_hide_overscan(s_hide_overscan);
 }
 
 /* ── In-game overlay rows ─────────────────────────────────────────────────── */
@@ -272,6 +287,11 @@ static const RecompRuntimeUiItem s_runtime_items[] = {
       "anchors the instruments and track map to the left and right margins. "
       "Only meaningful while widescreen is on.",
       RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, s_hud_labels, 2, NULL },
+    { "mods.overscan.hidden", "Mods", "Hide overscan",
+      "Blanks the eight-row window band at the top of the race screen, the "
+      "area a CRT hid in overscan. Presentation only; the simulation and "
+      "every other scanline are unchanged. Off shows the stock band.",
+      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
 };
 #endif
 
@@ -368,9 +388,9 @@ void tg2_options_ui_command(int id, const char *json)
     char out[192];
     snprintf(out, sizeof out,
              "{\"id\":%d,\"ok\":%s,\"action\":\"%s\",\"race60\":%d,"
-             "\"hud_edges\":%d,\"menu_open\":%d}",
+             "\"hud_edges\":%d,\"hide_overscan\":%d,\"menu_open\":%d}",
              id, key != SDLK_UNKNOWN ? "true" : "false", action, s_race60,
-             s_hud_edges, runner_runtime_ui_open());
+             s_hud_edges, s_hide_overscan, runner_runtime_ui_open());
     cmd_send_response(out);
 }
 
