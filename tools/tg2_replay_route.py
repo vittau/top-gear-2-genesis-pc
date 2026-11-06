@@ -18,6 +18,7 @@ import argparse
 import csv
 import hashlib
 import json
+import socket
 from pathlib import Path
 import sys
 import time
@@ -37,22 +38,72 @@ def route_to_input_script(route, path: Path, shift: int = 0, trace_end: int = 0)
                               if mask & (1 << bit)]
         actions.setdefault(frame, []).extend(body)
     last = max(actions, default=1)
-    if trace_end:
-        dump_dir = path.parent / 'state-ram'
-        dump_dir.mkdir(exist_ok=True)
-        for frame in range(1, trace_end + 1):
-            actions.setdefault(frame, []).append(f'DUMP_RAM {dump_dir}/frame-{frame:06d}.ram')
     lines, previous = [], 1
     for frame, body in sorted(actions.items()):
         lines.extend([f'WAIT {frame - previous}', *body])
         previous = frame
-    lines.append('WAIT 600')
+    lines.append(f'WAIT {max(600, trace_end - previous + 600)}')
+    # runner/input_script.c has a fixed MAX_OPS, and the runner can otherwise
+    # continue without inputs when parsing fails. Reject an oversized route.
+    if len(lines) > 4096:
+        raise ValueError(f'route exceeds the runner limit of 4096 directives: {len(lines)}')
     path.write_text('\n'.join(lines) + '\n')
     return last
 
 
+def capture_exact_trace(r, out, end, timeout):
+    """Read the always-on frame ring before eviction; never pause the guest.
+
+    A persistent connection avoids a frame of reconnect overhead per request.
+    Four 64KiB snapshots per batch fit the runner's nonblocking reply socket.
+    Missing/evicted records are fatal; there is no sparse-sample success path.
+    """
+    dump_dir = out / 'state-ram'
+    dump_dir.mkdir(exist_ok=True)
+    next_frame, request_id = 1, 0
+    deadline = time.monotonic() + timeout
+    timings, next_timing = [], 3300
+    with socket.create_connection(('127.0.0.1', r.port), timeout=10) as sock:
+        sock.settimeout(10)
+        reader = sock.makefile()
+        def batch(commands):
+            nonlocal request_id
+            payload = []
+            for cmd, args in commands:
+                request_id += 1
+                payload.append(json.dumps(dict(args, id=request_id, cmd=cmd)) + '\n')
+            sock.sendall(''.join(payload).encode())
+            result = [json.loads(reader.readline()) for _ in commands]
+            for row in result:
+                if not row.get('ok'):
+                    raise RuntimeError(f'frame history query failed: {row}')
+            return result
+        while next_frame <= end:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f'exact trace stopped at frame {next_frame - 1}')
+            info = batch([('frame_info', {})])[0]
+            if info['oldest_frame'] > next_frame:
+                raise RuntimeError(f'frame {next_frame} evicted before capture: {info}')
+            available = min(end + 1, info['current_frame'])
+            while next_frame < available:
+                frames = list(range(next_frame, min(available, next_frame + 4)))
+                rows = batch([('get_frame', dict(frame=f, include='wram')) for f in frames])
+                for frame, row in zip(frames, rows):
+                    if row['frame'] != frame:
+                        raise RuntimeError('incorrect frame returned from history')
+                    ram = bytes.fromhex(row['wram'])
+                    if len(ram) != 65536:
+                        raise RuntimeError('incomplete WRAM snapshot')
+                    (dump_dir / f'frame-{frame:06d}.ram').write_bytes(ram)
+                next_frame = frames[-1] + 1
+            if next_frame >= next_timing and next_timing <= 5300:
+                timings.append(batch([('tg2_video', {})])[0])
+                next_timing += 100
+    (out / 'presentation-timing.json').write_text(json.dumps(timings, indent=2) + '\n')
+
+
 def write_exact_trace(out, expected):
-    """Input-script snapshots have an exact V-int label; TCP sampling can skip.
+    """History snapshots have an exact V-int label; live TCP sampling can skip.
 
     Hash all WRAM and the entire player record as well as decoding known fields:
     this covers gear/RPM and every other player field without guessing offsets.
@@ -77,11 +128,29 @@ def write_exact_trace(out, expected):
                              hashlib.sha256(ram).hexdigest()])
 
 
+def apply_exact_summary(out, summary):
+    from compare_race_replay import read, laps
+    exact = read(out)
+    lap_times = laps(exact)
+    race = summary.setdefault('races', [{}])[0]
+    race['lap_times'] = lap_times
+    race['start_frame'] = next((f for f, row in sorted(exact.items())
+                                if int(row['clock']) > 0), None)
+    race['lap_boundaries'] = [dict(lap=x['lap'], frame=x['frame'],
+                                  clock=int(exact[x['frame']]['clock']))
+                              for x in lap_times if not x['finish']]
+    if lap_times and lap_times[-1]['finish']:
+        frame = lap_times[-1]['frame']
+        race['finish_frame'] = frame
+        race['finish_clock'] = int(exact[frame]['clock'])
+    return lap_times
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--trace-frames', type=int, default=0,
-                   help='dump exact input-script WRAM every V-int 1..N and write state-trace.csv')
+                   help='fetch exact WRAM from the always-on frame ring at every V-int 1..N')
     p.add_argument('--route', type=Path, required=True)
     p.add_argument('--port', type=int, default=4470)
     p.add_argument('--out', type=Path, required=True)
@@ -124,6 +193,8 @@ def main():
     shot_frames = {int(x) for x in a.screenshot_frames.split(',') if x.strip()}
     try:
         r.start()
+        if a.trace_frames:
+            capture_exact_trace(r, out, a.trace_frames, a.timeout)
         deadline = time.monotonic() + a.timeout
         prev_clock = None
         prev_lap = None
@@ -199,7 +270,8 @@ def main():
                        widescreen=a.widescreen, race_60fps=bool(a.fps60),
                        turbo=a.turbo, input_script=str(out / 'route.input'))
         (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-        print(json.dumps(lap_times, indent=2))
+        if not a.trace_frames:
+            print(json.dumps(lap_times, indent=2))
         print('result', result)
     finally:
         code = r.stop()
@@ -209,6 +281,9 @@ def main():
         m = manifests(out)
         path = out / 'summary.json'
         summary = json.loads(path.read_text()) if path.exists() else {}
+        if a.trace_frames:
+            lap_times = apply_exact_summary(out, summary)
+            print('exact lap times', json.dumps(lap_times))
         summary.update(exit_code=code, manifests=m)
         path.write_text(json.dumps(summary, indent=2) + '\n')
         print('exit', code, 'manifests', m)

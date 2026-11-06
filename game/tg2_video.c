@@ -531,13 +531,16 @@ static void presentation_begin(const GVDP *v) {
 }
 static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                      uint32_t *out, int w) {
-    if (!race60 || line >= PRESENT_ROWS || nw != 256 || !race(v)) {
-        draw_scanline(v, line, native, nw, out, w);
-        return;
+    if (!line) {
+        capture_picture = 0;
+        from_picture = to_picture = NULL;
+        if (race60 && nw == 256 && race(v)) presentation_begin(v);
     }
-    if (!line) presentation_begin(v);
-    if (capture_picture && pictures) pictures[picture_index].row[line] = *v;
-    if (!from_picture) {
+    /* Capture every row of an eligible picture, including transient raster
+     * bands that use the original row producer below. */
+    if (capture_picture && pictures && line < PRESENT_ROWS)
+        pictures[picture_index].row[line] = *v;
+    if (!race60 || line >= PRESENT_ROWS || nw != 256 || !race(v) || !from_picture) {
         draw_scanline(v, line, native, nw, out, w);
         return;
     }

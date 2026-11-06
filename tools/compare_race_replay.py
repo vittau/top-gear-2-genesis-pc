@@ -26,13 +26,13 @@ def laps(trace):
             previous_lap = lap
             continue
         if previous_lap is not None and lap != previous_lap:
-            result.append(dict(lap=lap, frame=frame, ticks=clock - split_clock,
+            result.append(dict(lap=lap, frame=frame, finish=False, ticks=clock - split_clock,
                                seconds=round((clock - split_clock) / 65536 / 50, 4)))
             split_clock = clock
         stall = stall + 1 if clock == previous_clock else 0
         if stall == 12 and int(row['speed']) == 0:
             if clock > split_clock:
-                result.append(dict(lap=lap + 1, frame=frame, ticks=clock - split_clock,
+                result.append(dict(lap=lap + 1, frame=frame, finish=True, ticks=clock - split_clock,
                                    seconds=round((clock - split_clock) / 65536 / 50, 4)))
             break
         previous_clock, previous_lap = clock, lap
