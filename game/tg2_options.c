@@ -57,8 +57,8 @@ static const Tg2Option s_options[] = {
     /* Another option is one more row here. */
     { "race60", "mods.race60", "enabled",
       "60 fps races", "60 fps races", "Presentation",
-      "Present races at 60 pictures per second while the game clock, lap "
-      "counter and AI cadence stay native. Off restores the stock rate. "
+      "Interpolate race pictures at 60 fps with 50 ms of added display delay. "
+      "Physics and sound keep stock timing. Off restores the stock rate. "
       "Changes take effect from the next race.",
       "Enabled (60 pictures/s)", "Disabled (stock rate)",
       1, &s_race60, TG2_OPT_BOOL, NULL, NULL, 0, NULL },
@@ -263,8 +263,8 @@ void tg2_options_apply_env(void)
 #if RECOMP_LAUNCHER
 static const RecompRuntimeUiItem s_runtime_items[] = {
     { "mods.race60.enabled", "Mods", "60 fps races",
-      "Present races at 60 pictures per second while the game clock, lap "
-      "counter and AI cadence stay native. Off restores the stock rate. "
+      "Interpolate race pictures at 60 fps with 50 ms of added display delay. "
+      "Physics and sound keep stock timing. Off restores the stock rate. "
       "Changes take effect from the next race.",
       RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
     { "mods.hud.placement", "Mods", "HUD",

@@ -372,7 +372,7 @@ def main():
     p.add_argument('--turbo', action='store_true',
                    help='uncapped guest (offscreen video) for fast closed-loop runs')
     a = p.parse_args()
-    env = {'TG2_RACE_60FPS': '1'} if a.fps60 else {}
+    env = {'TG2_RACE_60FPS': '1' if a.fps60 else '0'}
     extra = ['--turbo'] if a.turbo else []
     if a.hash_every:
         extra += ['--hash-frames', str(a.hash_every)]
