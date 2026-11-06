@@ -552,120 +552,319 @@ python3 tools/tg2_audio_compare.py --music .../route-music/race.wav \
 * A second virtual YM2612+PSG (clean layered mix) remains the next step if
   the shared-chip mix is not acceptable by ear.
 
-## 11. Tempo fidelity (task 18)
+## 11. Tempo fidelity: the timer-B grid, the owner's VGM rips, and the music logic (tasks 18-19)
 
-The owner's report after the real-device fix was: no pops any more, but the
-music still changes speed sometimes, and it sounds slightly slower than
-normal. This section measures the music's tempo and pitch against an
-independent reference instead of trusting the ear or the engine's counters.
+The owner's report was "the music still changes speed sometimes, and it sounds
+slightly slower than normal", and then, after the task-15 fix, "especially in
+the menu, I still feel the music oscillating in speed". This section answers it
+at register level instead of by ear or by envelope: the music clock is the
+YM2612 timer B overflow, so a timestamped log of the driver's register writes
+contains the tempo exactly.
 
-### 9.1 Reference: an accurate emulator, rendered offline
+### 11.1 The reference: the owner's VGM rips
 
-`tools/gpgx_render.c` is a headless libretro frontend (about 400 lines) used
-only for this measurement. It loads a core (`genesis_plus_gx_libretro.so`,
-installed under `~/tools/retroarch`, never committed), drives the pad from the
-same exact-wall-frame JSON route the port uses, steps the core one frame at a
-time, and writes the core's own audio callback stream to a WAV (native 44100
-Hz, no host resampling) plus PPM screenshots at the route's shot frames. It
-opens no window and never touches the host mixer, so a 93 s reference render
-takes 2.7 s and is bit-reproducible.
+Four VGM v1.5 files (`~/roms/genesis/tg2-vgm/`, read-only, **never** copied
+into the repository; only the numbers below are):
 
-Provenance: Genesis Plus GX (libretro nightly, 2025-11-05 build) on the
-owner's cartridge dump, NTSC, region autodetect, no filters, no overclock.
-The reference is a *record*, not a claim about the emulator's own accuracy:
-GPGX is cycle-accurate for the Z80/YM2612 timing this measurement depends on.
+| File | Length | Loop | YM2612 clock | GD3 |
+|---|---|---|---|---|
+| `01 - Title Theme.vgm` | 51.84 s | 44.37 s | 7,670,453 Hz | `Top Gear 2` / `Sega Mega Drive` / `1994-05-24` / ripper `2ch-N` |
+| `02 - Canterbury Plains.vgm` | 125.23 s | 118.92 s | 7,670,453 Hz | same |
+| `03 - Ayers Rock.vgm` | 154.48 s | 151.42 s | 7,670,453 Hz | same |
+| `04 - Auckland.vgm` | 197.91 s | none | 7,670,453 Hz | same |
 
-The route reaches the same game state in both: title screen (frame 600), main
-menu (1350), and - with the extra SOUND page steps described below - a race
-with RACE SOUND = MUSIC at frame ~3900. Screenshots from both sides are in
-`build/ref/`.
+They are a register-level record of the *same driver on the same cartridge*:
+73,779 YM2612 writes for the title theme, 2,665 timer-B reloads, 1,970 key-on
+writes. That is the ground truth for two things no audio comparison can settle
+cleanly: the exact tick grid, and the exact ordered event sequence (the
+soundtrack's own loop defeats envelope alignment - a 7 % warp aliases onto
+exactly one loop, which is what produced the false "-7 %" in task 18).
 
-### 9.2 `tools/audio_tempo_compare.py`
+The rips are not perfect records of the machine: their wait commands are a
+44,100 Hz sample grid (22.7 us), and 130 `0xE0` "seek PCM bank" commands plus
+350 reserved `0x00` no-op bytes appear around the DAC bursts. `tools/vgm_compare.py`
+counts those and reports them instead of silently skipping them, so the
+provenance stays visible in every run.
 
-Both recordings are turned into a 100 Hz envelope on log-spaced bands (each
-band z-scored, so a level or mix difference between the port and the emulator
-does not bias the comparison). The measured envelope is then warped over a
-tempo-ratio grid and correlated against the reference, with a lag search, which
-gives
+### 11.2 `tools/vgm_compare.py`
 
-* the **global tempo ratio** (measured/reference), in % and in BPM (the
-  reference BPM comes from the envelope's autocorrelation, not from a guess);
-* the **local tempo ratio** in 1 s steps from sliding 8 s windows, with the
-  weighted standard deviation and the largest deviation;
-* the **pitch offset in cents**, from the maximum of the long-term log-spectrum
-  cross-correlation over a cents-shift grid.
+Both sides become a timestamped `(t, port, value)` bus-write stream and then a
+`(t, bank, register, value)` stream with the YM2612 address latch resolved:
 
-`--selftest` synthesises a melody with known note times and pitches and then
-three tempo variants (+1.5 %, -1.0 %, +0.1 %) and two pitch variants (+25 c,
--40 c, event times unchanged). All five are recovered within 0.02 % tempo and
-1 cent pitch, and each variant is reported in its own dimension only, so the
-tool is qualified rather than trusted.
+* **VGM side:** commands `0x52/0x53` (addr+data), `0x50/0x51` (data), waits
+  `0x61/0x62/0x63/0x70-0x8F`, data blocks `0x67`, DAC-stream control
+  `0x90-0x95`, `0x68`, `0xE0`.
+* **Port side:** `GENESIS_AUDIO_WRITEDUMP`, whose `f=` (sound frame) and `mc=`
+  (master cycles inside the frame) give **exact guest time**:
+  `t = (frame * 262 * 3420 + mc) / 53,693,175`. Host time never enters.
 
-### 9.3 What the Z80 actually does (ROM evidence)
+From that it reports:
 
-Disassembling the resident driver (`tools/z80_disasm.py`, a 200-line
-bring-up disassembler; the image is ROM `$02589A..$027899` copied to
-`$A00000`) shows the music clock is **not** the 68k and **not** the Z80's
-vblank IRQ:
+| Measurement | How |
+|---|---|
+| timer-B tick train | every `$27` write with the load bit set (bit 1); mean, median, p05/p95, ticks/s |
+| global tempo, method A | ratio of mean tick intervals (reference / port) |
+| global tempo, method B | linear regression of matched key-on times (`t_port = a + b t_ref`, ratio `1/b`), with outliers dropped at 4 MADs |
+| global tempo, method C | loop period: the rip's own loop length against the port's, found by self-matching the port's key-on train |
+| local drift | the same regression in 1 s windows, reported as mean/std/p05/p95/max deviation |
+| logic | the ordered event sequence with timing ignored: key on/off per channel, the 11-bit block+fnum per channel, `$B0-$B6`, `$30-$9F`, `$2A/$2B`; a bounded-lookahead diff gives the match ratio per class and the first divergences |
+| Z80 accounting | optional `GENESIS_YM_TICKLOG`: Z80 cycles executed between two timer reloads versus the wall time between them, plus BUSREQ-held scanlines |
 
-```
-A00042  call $0D30        ; init
-A00045  call $0BE1        ; stop timer B, write reg $26=$BE, start timer B
-A00048  ld a,($8006)
-A0004B  ld ($0080),a      ; publish the mailbox status byte ($A00080)
-A0004E  ei
-A0004F  call $0BFC        ; wait for YM2612 status bit 1 (timer B), reload
-A00052  call $0627        ; process one music tick
-A00055  jr   $0A4F
-...
-A00038  push af / push hl / inc ($008C) / pop hl / pop af / ei / ret   ; vblank
-```
+`--selftest` synthesises a driver-like stream, writes it as a VGM and as a
+write dump warped by +1.5 %, -1.0 % and 0 %, and corrupts one event. The tool
+recovers every ratio to 0.02 % with a 100 % logic match, and reports the
+corrupted event as a divergence, so the measurement is qualified rather than
+trusted.
 
-The vblank handler only bumps a counter at `$008C`; the sequencer tick is
-`call $0BFC` waiting for `ld a,($4000) / and $02` - the YM2612 **timer B
-overflow flag** - and then restarting the timer. So the music tempo is the
-timer B period, which the engine models synchronously for CPU-visible status
-reads (`runner/video/genesis_bus.c`, `ym_timer_update`).
+### 11.3 What the driver really does, and what the timer must do
 
-Measured from the chip-write stream (`GENESIS_AUDIO_WRITEDUMP`, tick = the
-`$27=$2E` reload written at Z80 PC `$0C4F`): 452 ticks over 9.41 s = 48.0
-ticks/s, median interval 19.87 ms, against the modelled timer B period
-`(256-$BE) * 16 * 144 * 7` master cycles = 19.83 ms. The guest-side clock is
-therefore within 0.2 % of the model, and scaling the modelled period by 2 or
-0.5 scales the tick rate by exactly 2 or 0.5 (`GENESIS_YM_TIMER_SCALE`, a
-measurement-only knob, not committed): the driver is timer-bound, not
-processing-bound.
-
-### 9.4 H1 audit: is the Z80 starved?
-
-The candidate H1 mechanisms were BUSREQ held longer than hardware, a wrong Z80
-cycle budget per line, a wrong timer rate, and bank/wait-state accounting. A
-temporary instrument in `step_z80` counted every slice (removed before commit;
-the numbers are reproduced here):
+Disassembling the resident 8 KB driver (ROM `$02589A..$027899` -> Z80
+`$A00000`) shows the main loop is the **DAC sample loop**, and the music tick
+is inside it:
 
 ```
-[Z80-STATS] steps=183400 cycles=33898128 skipped_reset=34349 skipped_busreq=375
+0CA8  ld a,($4000) / rla / jr c,$0CA8   ; wait for YM BUSY
+0CAC  ld a,$2A / ld (de),a              ; DAC data register
+0CB0  ld a,(hl) / ld (de),a / inc l     ; next sample byte
+0CCB  ld a,$20 / dec a / jr nz          ; per-sample delay (~500 T)
+0CD0  ld a,($0096) / or a / jr nz,$0D2B ; pending command?
+0CDB  ld a,($4000) / and 2 / jr z,$0CB0 ; <<< timer B flag, checked per sample
+0CE4  call $0D2B                        ; program the Z80 bank register
+0CE7  call $0627                        ; the music tick
+0CEA  call $0D4D / call $0C0D           ; bank again, then $27=$2E (reload)
+0CF5  jp $0CA8                          ; back to streaming
 ```
 
-Over 700 wall frames that is 262 slices per frame (228 Z80 cycles each =
-59,736 cycles/frame = 3.579545 MHz exactly). 34,349 slices were skipped
-because the Z80 is held in reset before the driver upload (frames 0-131) and
-**375 because the 68k held BUSREQ**, i.e. 0.66 lines per frame = **0.25 % of
-the Z80's cycles**, and those are the frames where the 68k really requests the
-bus. `Z80_PER_LINE 228` and `MASTER_PER_LINE 3420` are the exact hardware
-ratio (53.693175/3.579545 = 15.0). No cycle budget is lost: the debt carries
-across slices, so whole-instruction overshoot is repaid rather than dropped.
+So the tempo is the **timer B period**, and the driver polls its overflow flag
+between DAC samples. `$26=$BE` gives
 
-So the guest side had one genuine clock defect, and it is in the **audio
-sample clock**, not the CPU budget: the mixer was drained with
-`895780` master cycles per frame while the machine runs `262 * 3420 = 896040`,
-and the PSG's sub-sample divider remainder was discarded at every frame
-boundary. That is `3732` samples per frame instead of `3733.5`: the whole
-stream ran **-402 ppm** (0.04 %, 0.7 cents) against hardware, and the DRC had
-to absorb it as a permanent correction. Patch `0008` fixes both (exact frame
-length, remainder carried); the offline tap is now exactly `3733.5`
-samples/frame and the framebuffer hashes are unchanged (frame 60
-`2A0B972960C5E325`, frame 300 `1131D937D70234FD`).
+```
+period = 16 * (256 - $BE) * 144 YM clocks = 152,064 clocks = 19.825 ms
+```
+
+which is exactly what ymfm computes (`fm_engine_base::update_timer`:
+`16*(256-value) * OPERATORS * clock_prescale` = `1056 * 24 * 6`). The port's
+CPU-visible model used the same number (`(256-$BE) * 16*144*7` master cycles =
+1,064,448 = 19.8247 ms), so the *period* was never wrong.
+
+What was wrong is the **phase rule**. In ymfm (and on the chip) the `$27` load
+bit starts a stopped timer and does **not** re-phase one that is already
+running; the overflow flag is a *level* on a free-running grid. A driver that
+reloads the timer on every tick therefore has its polling lateness repaid by
+the following shorter tick. The port re-armed the deadline on every `$27`
+write, so no tick could ever be shorter than the period and every late tick
+became permanent tempo loss.
+
+The rips prove hardware behaves the phase-locked way: the title theme has 124
+ticks at 23.8-24.4 ms and 188 at 14.8-17.9 ms - the long ones are paid back by
+the short ones - and the tick *median* sits on the 19.84 ms grid. The port,
+before the fix, had **not one** interval below 19.87 ms in 3,034 ticks.
+
+### 11.4 Root cause of "slower than normal" and of the wobble
+
+One defect explains both halves of the report. Measured on the same route
+(cold boot -> title screen -> SOUND -> MUSIC TEST -> play), title theme,
+`tools/vgm_compare.py`, 66.8 s of port capture against the rip:
+
+| Quantity | Before patch 0010 | After patch 0010 |
+|---|---|---|
+| timer-B ticks | 3,034 | 3,253 |
+| mean tick interval | **21.252 ms** (47.06/s) | **19.825 ms** (50.44/s) |
+| median tick interval | 19.875 ms | 19.823 ms |
+| intervals > 22 ms | 31 % | 4.7 % (the rip: 4.8 %) |
+| intervals < 19.8 ms | **0** (one 0.1 ms artifact) | 141 at 14.8-15.6 ms + 150 at 17.7-19.4 ms |
+| global tempo, key-on regression | **-6.991 %** | **+0.194 %** |
+| global tempo, mean tick rate | -6.517 % | +0.212 % |
+| global tempo, median tick | -0.172 % | +0.094 % |
+| local 1 s windows: mean / std | -6.613 % / **2.224 %** | +0.073 % / 0.827 % |
+| local 1 s windows: p05 .. p95 | -10.118 % .. -3.789 % | +0.184 % .. +0.198 % |
+| key-on regression residual (rms) | 49.6 ms | **0.0 ms** |
+
+Read it as: the *period* was right (median -0.17 %), but every hesitation was
+banked instead of repaid, so the music ran 7 % slow on average and its speed
+wandered by +-2 % (the worst 1 s windows 10 % slow). That is exactly the two
+things the owner described, and it is worst in the menus because the title
+theme is the song that plays there.
+
+**It is not Z80 starvation.** `GENESIS_YM_TICKLOG` (a temporary instrument,
+not committed) records the Z80's executed cycle counter at every timer reload.
+Between two reloads the Z80 executed *exactly* the wall time (mean 21.252 ms of
+Z80 cycles for a 21.252 ms interval, and 19.825 for 19.825 after the fix), so
+no cycles are lost; BUSREQ cost 367 scanlines in 4,000 frames (1,048,000
+scanlines = **0.035 %**). Task 18's 99.75 % figure was measured in a race; in
+the menus the Z80 loses 0.03 %. The music driver's own clock, not its cycle
+budget, was the bug - which is also why the task-18 "design C" decoupled clock
+domain would not have fixed it.
+
+**Fix:** engine patch
+`patches/segagenesisrecomp/0010-ym-timer-b-free-running-phase.patch` - arm the
+deadline only on the 0 -> 1 transition of the load bit. Three lines.
+
+The fix deliberately changes the offline WAV: the music is 7 % faster in the
+menus, which is what the owner asked for. Video is untouched - frame 60
+`2A0B972960C5E325`, frame 300 `1131D937D70234FD`, and the miss/floor manifests
+(`dispatch_misses.toml`, `floor_coverage.toml`,
+`interior_label_misses.toml`, `floor_unsafe.toml`) are empty after the run.
+Nothing else in the guest is affected: the patch only changes when the
+CPU-visible timer-B overflow flag is raised, and this game is the only software
+reading it.
+
+**The residual +0.19 %.** It is constant in time (all 1 s windows between
++0.18 % and +0.20 %, rms residual 0.0 ms), so it is a scale, not a wobble.
+The rip's own steady-state grid is 19.867 ms (its sections 10-51 s average
+19.855-19.871 ms) against the hardware formula's 19.825 ms, i.e. the rip runs
+0.21 % slower than the documented timer; the port's grid matches the formula to
+0.01 %. Matching the rip exactly would mean slowing the port by 0.2 % against
+the chip's own arithmetic, so the port is left on the formula and the residual
+is attributed to the rip's time base (its waits are a 44.1 kHz sample grid and
+the GD3 gives no clock provenance beyond the YM2612 frequency).
+
+### 11.5 All four tracks
+
+Route: SOUND -> MUSIC TEST -> value -> START (controller input only,
+`tools/tg2_music_route.py` emits the same timeline for the port and for the
+reference renderer). 9,600 frames (160 s) per track, i.e. about 137 s of each
+song after the menu route - longer than the title theme's and Canterbury's
+loops, and 137 of Auckland's 198 s. `MUSIC TEST` value 1 is the title theme;
+the other three were identified by the logic match, not by the menu label.
+
+| Port capture | Rip it matches | Logic match | Key-on | Tempo: key-on regression | Tempo: mean tick | Tempo: median tick | Local 1 s p05 .. p95 | Local std |
+|---|---|---|---|---|---|---|---|---|
+| MUSIC TEST 1 | `01 - Title Theme` | 51.6 % (98.6 % key-on) | 98.58 % | +0.194 % | +0.212 % | +0.094 % | +0.184 .. +0.198 % | 0.83 % |
+| MUSIC TEST 2 | `02 - Canterbury Plains` | 99.5 % | 97.10 % | +0.194 % | +0.204 % | +0.080 % | +0.186 .. +0.203 % | 0.54 % |
+| MUSIC TEST 3 | `03 - Ayers Rock` | 99.2 % | 99.76 % | +0.194 % | +0.200 % | +0.070 % | +0.186 .. +0.199 % | 0.41 % |
+| MUSIC TEST 4 | `04 - Auckland` | 89.7 % | 69.19 % | +0.194 % | +0.197 % | +0.083 % | +0.186 .. +0.197 % | 0.31 % |
+
+Every track lands on the same **+0.194 %** by key-on regression, to three
+decimals, over spans of 52-140 s - the residual is a property of the reference
+set's time base, not of any song or of the port's clock. The `local std`
+column is dominated by the first window (the song's own intro, where the
+regression has few pairs); from 5 s on, every 1 s window sits between +0.18 %
+and +0.20 % on all four tracks, i.e. the wobble is gone.
+
+**Cross-check against a third reference.** The rips are one reference; the
+cycle-accurate emulator of task 18 is another. `tools/audio_tempo_compare.py`
+(envelope tempo, which aliases on this soundtrack's loop but not on a 40 s
+window of one song) compares the port's after-fix render with a Genesis Plus GX
+render of the identical route:
+
+| Track | Global tempo | Local mean | Local std | Max deviation | Pitch |
+|---|---|---|---|---|---|
+| Title Theme | -0.020 % | +0.032 % | 0.048 % | 0.152 % | +0.5 c |
+| Canterbury Plains | 0.000 % | -0.020 % | 0.024 % | 0.030 % | +0.5 c |
+| Ayers Rock | -0.020 % | -0.070 % | 0.000 % | 0.000 % | +0.5 c |
+| Auckland | -0.020 % | -0.070 % | 0.000 % | 0.000 % | +0.5 c |
+
+So the port agrees with an independent cycle-accurate emulator to **0.02 %** on
+every track, while the four VGM rips sit 0.19 % away from the port *and from
+each other's own tick grid by less than 0.02 %*. The residual in the table
+above is therefore the rip set's time base, not the port: its waits are a
+44.1 kHz sample grid and the GD3 gives no clock provenance beyond the YM2612
+frequency. Slowing the port by 0.2 % to match the rips would move it away from
+the chip's documented timer arithmetic and away from the emulator.
+
+**Loop period.** `tools/vgm_compare.py` also reports the tempo from the loop
+period, but only when the key-on train really repeats (>= 97 % of a 200-event
+probe). On this soundtrack it does not: the title theme's phrases repeat 95 %
+at 43.8 s while the true loop is 44.37 s (the same aliasing that produced task
+18's false "-7 %"), and the melody's pitch train self-matches at only 52 %. The
+tool therefore reports "not resolvable" here rather than a number, and the
+tempo comes from the two measures that cannot alias: the tick rate and the
+key-on regression. Both agree to 0.02 % on all four tracks (the key-on
+regression is the stricter one: rms residual 0.03 ms over 140 s).
+
+### 11.6 Music logic: what the port plays against what the rip recorded
+
+The logic comparison ignores time and compares the ordered musical events, so a
+wrong note, a wrong patch or a missing channel shows up even when the tempo is
+right. Title theme, over the same musical span:
+
+| Class | Title | Canterbury | Ayers Rock | Auckland |
+|---|---|---|---|---|
+| overall (DAC excluded) | 51.6 % | **99.5 %** | **99.2 %** | 89.7 % |
+| key-on (`$28`, per channel) | 98.58 % | 97.10 % | **99.76 %** | 69.19 % |
+| key-off | 98.49 % | **99.78 %** | **99.64 %** | **99.77 %** |
+| block+fnum (`$A0-$A6`, per channel) | 98.25 % | **99.09 %** | **99.50 %** | 98.36 % |
+| algorithm/feedback (`$B0-$B2`) | 96.77 % | 95.75 % | 98.51 % | **99.09 %** |
+| stereo/AMS/PMS (`$B4-$B6`) | 98.20 % | **99.19 %** | **99.19 %** | **99.22 %** |
+| operator loads (`$30-$9F`) | 65.31 % | 78.98 % | **99.14 %** | 88.65 % |
+| DAC data (`$2A`) | 0.02 % | 0.01 % | 0.00 % | 0.02 % |
+| DAC enable (`$2B`) | 98.78 % | 95.86 % | 98.36 % | **99.77 %** |
+| other | 95.17 % | 96.68 % | 93.69 % | 94.21 % |
+| events compared (rip) | 72.6 k | 180.3 k | 193.6 k | 192.2 k |
+
+The audible content matches: every note starts and stops in the same order, on
+the same channel, at the same pitch, with the same algorithm and stereo
+setting. The two classes that diverge are driver *state* for channels that are
+never keyed:
+
+* **`$30-$9F` (65 %).** The driver writes all 24 operator slots every tick, but
+  this song only ever keys channels 1-4 (`$28` key-ons: ch1 288, ch2 304,
+  ch3 77, ch4 60, ch5 0, ch6 0). Channels 5-6 therefore carry idle envelope
+  state, and the port's idle values differ from the rip's (`TL=$7F` on two
+  carrier slots instead of the rip's 8-20). No key-on ever reaches them, so
+  they are silent on both sides; the divergence is the driver's own idle state,
+  not a wrong patch on a sounding note.
+* **`$2A` (the DAC channel).** The rip contains 359 DAC writes in one burst
+  near 8.4 s; the port streams ~4,600 DAC writes/s for the whole song
+  (`Z80 $0CB2`, the sample loop above). Channel 6 is never keyed on either
+  side, so the streamed sample is inaudible, but the driver spends its time in
+  the DAC loop, which is where the 4.7 % of 24 ms ticks come from. It is a
+  genuine behavioural difference from the rip and the next thing to pin down;
+  it no longer costs tempo because patch 0010 repays the lateness.
+
+The `$28`/`$A0` divergences on the title theme (about 1.4 %) are single events
+at the song's start and at the loop seam, where the port's capture begins a few
+ticks before the rip's recording does.
+
+**Auckland is the one real logic divergence.** Its key-off, block+fnum,
+algorithm, stereo and DAC-enable classes all match at 98-99.8 %, but only
+69.19 % of its key-ons do, with the same total count (3,053 rip / 3,066 port
+over the compared span): the port *re-attacks* channels 1-2 more often than the
+rip in the first ticks of the song (rip: `ch0 ch1 ch3` at 48/49/50 ms; port:
+`ch0 ch1 ch0 ch1 ch0 ch1 ch3` at the same tick). The DAC loop is the prime
+suspect - the driver enters its event parser from the sample loop, and the port
+is in that loop ~4,600 times a second where the rip is not - and it is the next
+thing to pin down. Nothing else on that track diverges.
+
+### 11.7 Listening files
+
+`~/Music/tg2-ab/` (outside the repository, contains game music on purpose) is
+described by its own `README.txt`; task 19 added one reference render and one
+after-fix port render per track plus the menu before/after pair, all at
+44.1 kHz/16-bit stereo. The port's offline tap writes at the PSG's native
+223,721 Hz, so `tools/audio_wav_convert.py` converts it (box pre-filter plus
+linear interpolation, streamed in blocks).
+
+### 11.8 Reproduce
+
+```sh
+JOBS=3 tools/build-linux.sh ~/roms/genesis/tg2.bin build
+
+# the route for both back ends (controller input only)
+python3 tools/tg2_music_route.py --song 0 --frames 9600 \
+    --port-script build/music0/route.txt --gpgx-script build/music0/route.json
+
+# port capture: exact guest-timed register stream + offline WAV
+GENESIS_AUDIO_WRITEDUMP=build/music0/writes.txt \
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy build/TG2Recomp ~/roms/genesis/tg2.bin \
+    --no-launcher --widescreen off --max-frames 9600 --turbo \
+    --input-script build/music0/route.txt --wav build/music0/port.wav
+
+# comparison against a rip (also --selftest)
+python3 tools/vgm_compare.py --vgm "$HOME/roms/genesis/tg2-vgm/01 - Title Theme.vgm" \
+    --dump build/music0/writes.txt --json build/music0/compare.json
+
+# reference render of the same route (no window, no host mixer)
+cc -O2 -o build/gpgx_render tools/gpgx_render.c -ldl -lm
+build/gpgx_render --core ~/tools/retroarch/cores/genesis_plus_gx_libretro.so \
+    --rom ~/roms/genesis/tg2.bin --frames 4000 --script build/music0/route.json \
+    --wav build/music0/ref.wav
+
+# 223,721 Hz tap -> 44.1 kHz for listening
+python3 tools/audio_wav_convert.py build/music0/port.wav ~/Music/tg2-ab/t19-port-title.wav \
+    --rate 44100 --tail 60
+```
 
 ## 12. Feasibility map: a decoupled Z80 + YM2612 + PSG clock domain
 
