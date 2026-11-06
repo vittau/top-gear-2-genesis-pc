@@ -365,3 +365,17 @@ discovery seeds were needed, so `game/game.toml` is unchanged by this task.
   grass; the deterministic comparison that is valid today is same-mode
   repeatability (exact) and same-script Off/16:9 (exact). A tuned feed-forward
   route would make the 60 fps same-script comparison exact as well.
+
+## All-options soak (main c13967c+, 2026-11-06 overnight)
+
+`TG2_HUD_MODE=edges TG2_HIDE_OVERSCAN=1 tools/tg2_soak.py --minutes 40 --widescreen 16:9 --60fps --periodic-shots`
+on the dev build of main, with every overnight fix merged: renderer fixes,
+Hide overscan, BOTH audio code present but not selected, exact guest clock.
+
+| Metric | Result |
+|---|---|
+| Wall time | 2621.6 s (43.7 min), `result: finished`, exit 0 |
+| Races started | 13 (Auckland / Ayers Rock alternating; 4- and 5-lap races completed) |
+| Stack pointer | 199 samples, min `$FFFFA4`, max `$FFFFFA` (no drift) |
+| Manifests | dispatch 0 / floor 0 / interior 0 / unsafe 0 |
+| Evidence | `build-main/soak-all-on/` (private) |
