@@ -1,10 +1,9 @@
 name: rom-access
 # Smoke test: CI can fetch the private ROM and it matches the expected dump.
 # The ROM is never uploaded as an artifact or cached.
+# Manual only (CI budget policy, see AGENTS.md).
 on:
   workflow_dispatch:
-  push:
-    paths: ['.github/workflows/rom-access.yml']
 permissions:
   contents: read
 jobs:

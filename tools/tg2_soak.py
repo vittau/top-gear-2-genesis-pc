@@ -47,6 +47,8 @@ def main():
     p.add_argument('--kc', type=float, default=0.0)
     p.add_argument('--deadband', type=float, default=9.0)
     p.add_argument('--max-frames', type=int, default=400000)
+    p.add_argument('--difficulty-steps', type=int, default=0,
+                   help='Main-menu DIFFICULTY presses before START (see tg2_race_driver.py)')
     a = p.parse_args()
     a.stage_dumps = False
     env = {'TG2_RACE_60FPS': '1'} if a.fps60 else {}

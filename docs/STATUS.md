@@ -9,7 +9,7 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 
 | Area | State | Docs |
 |---|---|---|
-| Native 4:3 baseline | Boot → menus → full 4-lap race → results/shop/next race; 2P split-screen; 33.7-min soak. 0 dispatch misses. | `BRINGUP.md`, `VALIDATION.md` |
+| Native 4:3 baseline | Boot → menus → full 4-lap race → results/shop/next race; 2P split-screen; 33.7-min soak, plus a 43.7-min soak with all options on (16:9 + Edges + 60 fps + Hide overscan, 13 races, SP stable). 0 dispatch misses. | `BRINGUP.md`, `VALIDATION.md` |
 | All 16 tracks | Password codec reversed (`PASSWORDS.md`, `tools/tg2_password.py`). All 16 countries raced for 62 s in Off and 16:9+Edges, 0 manifest entries; rain, night, fog and snow covered. Nitro = C button. | `VALIDATION.md` |
 | Widescreen | Adaptive / 16:9 / 21:9 race renderer: road, background, sprites in the margins. HUD Centered or Edges. Off is byte-identical to stock. | `WIDESCREEN.md` |
 | Widescreen fixes from playtests | Black bands on downhills, the top-window line, tunnel margins (now follow the walls), and the motion-only flicker in 60 fps synthesized frames. Full-presented-frame margin audit: 1019 → 0. | `WIDESCREEN.md` |
@@ -26,9 +26,15 @@ submodule pin is upstream `dd520f1`.
 
 ## Still in progress
 
-Nothing. All dispatched tasks are merged; no worktrees remain.
+| Task | Worktree | State |
+|---|---|---|
+| 14 Release packaging polish | branch `vittau/tg2-release-polish` (8380998), worktree removed | **Implemented, NOT merged; waiting for CI.** macOS `.app` with ROM beside the bundle (engine patch 0007), single-file AppImage (verified locally: ROM beside it, 600 frames, exit 0), draft release job on `v*` tags, CI cost control (non-main branches build Linux only). When minutes are available: rebase on main **keeping main's manual/tag-only triggers** (the branch's own cost-control edit to `build.yml` is superseded), dispatch once with platforms=all and dry_run=true, and merge if green. |
+
+CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platforms.
 
 ## Questions for the owner (queued for 09:00)
+
+0. **CI minutes exhausted** for this month (GitHub Free private repo; macOS 10×, Windows 2×). The owner doesn't pay for GitHub. Resolved by policy, not billing: since 6884a90, CI runs only manually (Linux by default) or on `v*` tags (AGENTS.md "CI budget"). Cross-platform CI resumes when the monthly quota resets.
 
 1. Is the 50 ms display latency of 60 fps acceptable on the controller?
 2. Does BOTH sound acceptable on real speakers? Music notes can be stolen

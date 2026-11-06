@@ -4,26 +4,27 @@ name: build
 # fetches the private ROM with the same deploy key rom-access.yml uses, uses it
 # only to generate C, and never uploads, caches or logs it.
 #
-# Cost control: private-repo macOS minutes bill at 10x. Branch pushes other
-# than main only build Linux (plus the glibc/smoke verifier); main, v* tags,
-# pull requests to main and manual dispatches build the full matrix. A manual
-# dispatch can still restrict the run to Linux for a quick check.
+# CI BUDGET POLICY (see AGENTS.md "CI budget"): this private repo runs on the
+# GitHub Free plan, 2000 min/month, where macOS minutes count 10x and Windows
+# 2x. CI NEVER runs on ordinary pushes or pull requests. It runs only:
+#   * manually (workflow_dispatch). Default is Linux only; "all" adds Windows
+#     and macOS and costs ~15x more.
+#   * on release tags v*, full matrix.
+# Validate locally (tools/build-linux.sh, probes) before spending CI minutes.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
     inputs:
       platforms:
-        description: "Platforms to build"
+        description: "linux (cheap) or all (adds Windows 2x + macOS 10x minutes)"
         type: choice
-        options:
-          - all
-          - linux
-        default: all
+        options: [linux, all]
+        default: linux
       dry_run:
         description: "Assemble the draft-release payload but do not create the release"
         type: boolean
         default: false
+  push:
+    tags: ['v*']
 
 permissions:
   contents: read
@@ -44,9 +45,7 @@ jobs:
     timeout-minutes: 90
     # Fork pull requests never receive repository secrets, so they cannot fetch
     # the ROM the C generator needs. Same-repository branches and PRs can.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Disable CRLF conversion
         run: git config --global core.autocrlf false
@@ -225,14 +224,9 @@ jobs:
     name: Windows x64 (MSVC)
     runs-on: windows-latest
     timeout-minutes: 90
-    # Full matrix only for main, v* tags, same-repo PRs to main, and a manual
-    # dispatch that asks for all platforms. Other branch pushes build Linux only.
+    # Costly runner: only for release tags or an explicit platforms=all dispatch.
     if: >-
-      (github.event_name == 'push' &&
-       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
-      (github.event_name == 'pull_request' &&
-       github.base_ref == 'main' &&
-       github.event.pull_request.head.repo.full_name == github.repository) ||
+      github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.platforms == 'all')
     steps:
       - name: Disable CRLF conversion
@@ -315,14 +309,9 @@ jobs:
     name: macOS (universal2)
     runs-on: macos-latest
     timeout-minutes: 90
-    # Full matrix only for main, v* tags, same-repo PRs to main, and a manual
-    # dispatch that asks for all platforms. Other branch pushes build Linux only.
+    # Costly runner: only for release tags or an explicit platforms=all dispatch.
     if: >-
-      (github.event_name == 'push' &&
-       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
-      (github.event_name == 'pull_request' &&
-       github.base_ref == 'main' &&
-       github.event.pull_request.head.repo.full_name == github.repository) ||
+      github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.platforms == 'all')
     steps:
       - name: Disable CRLF conversion
