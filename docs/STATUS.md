@@ -46,7 +46,10 @@ Every tree has a snapshot at `refs/keep/<worktree>-pause`, pushed to origin.
    whatever covers plane B in the native edge columns (tunnel walls).
 2. **Music still slow during races.** Forwarded to task 12.
 3. **Brief black margin lines still flicker on road tilts** (smaller than
-   before). It's a residual of the hill fix, probably on lines or frames
+   before). **Not visible while paused**, so it only appears in motion;
+   paused shows only repeated real pictures. Strong suspect: the 60 fps
+   synthesized frames. Repro: run the margin audit on every presented
+   frame, including the synthesized ones, and compare with 60 fps off. It's a residual of the hill fix, probably on lines or frames
    the audit doesn't cover (interpolated 60 fps frames?).
 4. **Red marks in the black top band.** This is stock window-plane
    pattern 0 at native x=16–31, normally hidden by CRT overscan. Proposal:
