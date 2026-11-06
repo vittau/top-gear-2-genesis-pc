@@ -407,8 +407,11 @@ grows and shrinks per line without a scene flag or a fixed screen rectangle.
 
 Before/after stills at entry, inside and exit, in 16:9 and 21:9:
 `build/task13/tunnel/{before,after}-{16-9,21-9}-{entry,inside,exit}.png`, plus
-full ten-picture strips ending in `-sheet.png`. Only margin pixels change at
-the tunnel; the native centre and HUD are unchanged.
+full ten-picture strips ending in `-sheet.png`. With Hide overscan held Off for
+the comparison, all three frames in both widths change only margin pixels
+(13,806 / 22,326 / 19,436 in 16:9; 25,844 / 42,031 / 36,547 in 21:9) and the
+native 256-pixel centre keeps **0** changed pixels. With the shipping default
+Hide overscan On the top-band marks are additionally blanked, as expected.
 
 ## Hill margin regression check
 
