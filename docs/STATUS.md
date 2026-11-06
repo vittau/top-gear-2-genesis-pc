@@ -27,7 +27,10 @@ submodule pin is upstream `dd520f1`.
 
 ## Still in progress
 
-Nothing. All tasks are merged.
+| Task | Worktree | State |
+|---|---|---|
+| 15 Real-device audio regression (owner bug) | `tg2-audio-device` | Third playtest on c27839b: music full of pops, dropouts and delays, worse than before task 12. Reproducing on a silent null sink, bisecting the task-12 pacing changes, then fixing. |
+| 16 BOTH in real play (owner bug) | `tg2-both-fix` | The owner selected BOTH and heard only music; the "BOTH" text looks off. Reproducing the real menu flow; rendering BOTH with the game's own font. |
 
 ## Questions for the owner (queued for 09:00)
 
@@ -37,7 +40,8 @@ Nothing. All tasks are merged.
 2. Does BOTH sound acceptable on real speakers? Music notes can be stolen
    by SFX. If not, the next step is a second virtual sound chip just for
    SFX.
-3. Is the music tempo steady now? Play `~/Games/TG2-play-c27839b/TG2Recomp`, a release-config build of main with every overnight fix.
+3. ~~Is the music tempo steady now?~~ Answered 2026-11-06: no, it's broken (pops, dropouts). See task 15.
+4. Previously: Play `~/Games/TG2-play-c27839b/TG2Recomp`, a release-config build of main with every overnight fix.
 
 ## Open items
 
