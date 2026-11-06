@@ -34,6 +34,8 @@ CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platf
 
 ## Questions for the owner (queued for 09:00)
 
+0. **BLOCKER: GitHub Actions billing.** Since ~04:00 every CI job is refused: "recent account payments have failed or your spending limit needs to be increased" (run 42177794812). Fix the payment method or raise the Actions spending limit under Settings → Billing & plans. Cause: private-repo minutes, with macOS billed at 10×. CI is being changed so that non-main branch pushes build only Linux.
+
 1. Is the 50 ms display latency of 60 fps acceptable on the controller?
 2. Does BOTH sound acceptable on real speakers? Music notes can be stolen
    by SFX. If not, the next step is a second virtual sound chip just for
