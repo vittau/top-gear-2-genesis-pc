@@ -72,6 +72,41 @@ Pull requests from forks are skipped: GitHub does not expose repository
 secrets to fork PRs, so the private ROM (and therefore C generation) is not
 available. Branch PRs in this repository build normally.
 
+## CI cost control
+
+Private-repo macOS runner minutes bill at 10x, so the matrix is event-aware:
+
+| Event | Jobs |
+|---|---|
+| Push to a branch other than `main` | Linux + `linux-verify` only |
+| Push to `main` | full matrix (Linux, Windows, macOS, release job only for tags) |
+| Push of a `v*` tag | full matrix + draft release job |
+| Pull request to `main` (same repo) | full matrix |
+| `workflow_dispatch`, `platforms=all` (default) | full matrix |
+| `workflow_dispatch`, `platforms=linux` | Linux + `linux-verify` only |
+
+Dispatch also accepts `dry_run=true` to validate the release payload without
+creating a release. Concurrency keeps `cancel-in-progress`, so a superseded
+run stops instead of billing twice.
+
+## Packaging verification status
+
+Before the first tagged draft release, these points need a green CI run:
+
+- macOS job log showing the `.app` smoke run found a ROM placed beside
+  `TG2Recomp.app` under a decoy filename (engine patch 0007).
+- Linux job log showing the AppImage found a ROM beside the `.AppImage` and,
+  when FUSE is unavailable, ran with `--appimage-extract-and-run`.
+- A `workflow_dispatch` run with `dry_run=true` printing the real assembled
+  payload (four deliverables plus `SHA256SUMS`).
+- The full green run containing all three platform artifacts.
+
+Verified locally on the development host instead: the Linux tarball and
+AppImage build and boot with the ROM detected by content, the Off-mode frame
+hashes are unchanged, the macOS bundle layout and path rules are unit-tested,
+and `assemble_release.py` gates a synthetic artifact set. The macOS binary
+itself and the GitHub release API call cannot be exercised on Linux.
+
 ## Cutting a release
 
 1. Confirm `git status` is clean, submodules are at their committed pins, and
@@ -92,9 +127,9 @@ available. Branch PRs in this repository build normally.
    The job never publishes the release; the owner reviews the drafts and
    publishes manually. Nothing in CI pushes a tag.
 4. Validate the packaging without tagging: run `build` with
-   `workflow_dispatch` and `dry_run=true`. That assembles and prints the exact
-   payload listing (and the build artifacts remain downloadable) but skips the
-   GitHub release call.
+   `workflow_dispatch`, `platforms=all` (the default) and `dry_run=true`. That
+   assembles and prints the exact payload listing (and the build artifacts
+   remain downloadable) but skips the GitHub release call.
 
 Release payloads contain `BUILD-INFO.txt` with the game and engine revisions
 and `README.txt` with end-user instructions. The `build` run URL identifies the
