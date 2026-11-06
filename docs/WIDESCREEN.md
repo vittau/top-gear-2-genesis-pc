@@ -38,7 +38,7 @@ hills and banked curves keep their per-line perspective in the margins.
 ## What each layer does
 
 **Plane B — road and skyline.** Plane B is `$E000`, a 64×64 (512×512) name
-table. Its atlas holds four perspective road sections in rows 0..431, a
+table. Its atlas holds four perspective road sections in rows 0..431,
 ground/separator rows 432..447, and the authored skyline panorama in rows
 448..511.
 
@@ -313,6 +313,51 @@ TG2_RACE_60FPS=1 TG2_HUD_MODE=edges python3 tools/verify_widescreen.py \
   --margin-audit --turbo --shots 2685,5135,5140
 # Repeat with TG2_RACE_60FPS=0 and TG2_HUD_MODE=centered as needed.
 ```
+
+### Qualified Auckland hill evidence
+
+The baseline controller route covers flat ground and both slope signs
+(`$FF18E0` ranges **−190..128**), with moving horizon/ground separator rows.
+At wall frame **5135** (audit frame 5134), native line **125** samples plane-B
+atlas Y=441, tile attribute `$0273`, index **15** on both edges. Plane A is
+transparent there. The previous margin sampler reaches index **0** and exposes
+the black backdrop; the corrected sampler keeps index 15 and that line's
+CRAM colour **RGB (87,119,49)**.
+
+Before/after 2× PNGs: `build/hills/before-5135-2x.png` and
+`build/hills/after-5135-2x.png`. Only margin pixels on native lines **123..133**
+change; **1556** black margin pixels recover scenery, and the entire native
+256×224 centre is byte-identical. `build/hills/reproduction.json` and
+`before-source-lines-5135.json` retain the pixel/source evidence.
+
+All eight combinations below cover **2933 complete race frames**, every line
+**0..223**, both edges: **1,313,984** samples per combination, with no missing
+frames or incomplete rows. Reports and commands are under `build/hills/`;
+`matrix.json` links the four paired aspect runs. Every final runtime manifest
+has zero entries.
+
+| HUD | 60 fps | 16:9 black / ground-colour violations | 21:9 black / ground-colour violations |
+|---|---|---:|---:|
+| Centered | Off | 0 / 0 | 0 / 0 |
+| Edges | Off | 0 / 0 | 0 / 0 |
+| Centered | On | 0 / 0 | 0 / 0 |
+| Edges | On | 0 / 0 | 0 / 0 |
+
+The old renderer, rebuilt with the identical complete audit, fails with
+**11,100 black-backdrop gaps and 11,100 ground-colour violations in each
+aspect** (`before-complete/summary.json`, expected exit 1). It has the same
+2933 frames and complete row coverage; the fixed renderer returns exit 0.
+
+The existing 60 fps road artefact check also passes unchanged:
+**2503** audit frames, **1511** synthesized frames and **83,732** tested road
+lines, with every edge/stripe/discrete-row/translation/snapshot violation
+counter **0** (`road-after/road-artifacts.json`, exit 0). The two 12-frame
+visual strips remain under `road-after/road-strip-{3600,4500}-2x.png`.
+
+With both options Off, frame 60 remains **`2A0B972960C5E325`** and frame 300
+**`1131D937D70234FD`**. With 60 fps Off and Centered HUD, the canonical RAM,
+VRAM and native-centre comparisons pass at all five baseline capture frames
+in both widths (`after-centered-0/summary.json`).
 
 ## Known artefacts and limitations
 
