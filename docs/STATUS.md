@@ -49,6 +49,9 @@ submodule pin is upstream `dd520f1`.
 
 - **Final phase (deferred by the owner):** widescreen for *every* extendable non-race screen (track intro with scrolling scenery, menus, shop, results...). Spec: `docs/tasks/17-widescreen-menu-screens.md`.
 
+- HUD Edges glitch (found 2026-11-06 while taking README screenshots): in 16:9 + Edges, on the
+  baseline route at frame 3480, the track map is drawn apart from its position markers
+  (1ST / 1P dots). At frames 3840 and 3900 they line up. Not yet investigated.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
 - Each country's second championship race is still unvisited (it needs

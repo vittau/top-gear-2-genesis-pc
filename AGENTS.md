@@ -55,6 +55,8 @@ renderer) and adapt it. Don't copy its game-specific addresses.
 - Tools live in `~/tools` (cmake 4.1.2, ninja), linked into `~/.local/bin`.
   There is no passwordless sudo. Ask before anything that needs it.
 - Commit often in small, described commits and push your branch to origin. Never commit ROM-derived artifacts.
+  The one exception (owner-approved): a few curated screenshots for the README and docs, as PNGs in
+  `docs/images/`. Never add bulk captures, frame dumps or audio rips.
 - Commit identity: `Vitor Machado <2932830+vittau@users.noreply.github.com>`. It's set in this repo's git config, so don't override it. Never put a personal e-mail in commits, patches (`git format-patch` `From:` headers) or docs.
 
 ## Machine resources (5.7 GiB RAM, 8 threads)

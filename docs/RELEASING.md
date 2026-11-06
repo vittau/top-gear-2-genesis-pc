@@ -1,7 +1,8 @@
 # Releasing Top Gear 2 Recomp
 
-`.github/workflows/build.yml` builds the three distribution targets on every
-push, pull request and manual dispatch, and publishes downloadable artifacts:
+`.github/workflows/build.yml` builds the three distribution targets and
+publishes downloadable artifacts. It runs only on a manual dispatch or a `v*`
+release tag (see [CI cost control](#ci-cost-control)):
 
 | Artifact | Runner | Payload |
 |---|---|---|
@@ -74,20 +75,19 @@ available. Branch PRs in this repository build normally.
 
 ## CI cost control
 
-Private-repo macOS runner minutes bill at 10x, so the matrix is event-aware:
+The owner does not pay for GitHub Actions, so CI never runs on ordinary pushes
+or pull requests (AGENTS.md, "CI budget"):
 
 | Event | Jobs |
 |---|---|
-| Push to a branch other than `main` | Linux + `linux-verify` only |
-| Push to `main` | full matrix (Linux, Windows, macOS, release job only for tags) |
+| `workflow_dispatch`, `platforms=linux` (default) | Linux + `linux-verify` only |
+| `workflow_dispatch`, `platforms=all` | full matrix (Linux, Windows, macOS) |
+| `workflow_dispatch`, `platforms=all`, `dry_run=true` | full matrix + release assembly, no GitHub release |
 | Push of a `v*` tag | full matrix + draft release job |
-| Pull request to `main` (same repo) | full matrix |
-| `workflow_dispatch`, `platforms=all` (default) | full matrix |
-| `workflow_dispatch`, `platforms=linux` | Linux + `linux-verify` only |
 
-Dispatch also accepts `dry_run=true` to validate the release payload without
-creating a release. Concurrency keeps `cancel-in-progress`, so a superseded
-run stops instead of billing twice.
+Validate locally first. Use `platforms=all` only for a release candidate or a
+change to platform-specific code. Concurrency keeps `cancel-in-progress`, so a
+superseded run stops instead of billing twice.
 
 ## Packaging verification status
 
@@ -110,7 +110,7 @@ itself and the GitHub release API call cannot be exercised on Linux.
 ## Cutting a release
 
 1. Confirm `git status` is clean, submodules are at their committed pins, and
-   the branch is green in `build`.
+   a manual `build` run with `platforms=all` is green.
 2. Write optional hand-written notes in `release/<tag>.md` (for example
    `release/v0.1.0.md`). If the file is absent the release body is generated
    from the commits.
@@ -127,7 +127,7 @@ itself and the GitHub release API call cannot be exercised on Linux.
    The job never publishes the release; the owner reviews the drafts and
    publishes manually. Nothing in CI pushes a tag.
 4. Validate the packaging without tagging: run `build` with
-   `workflow_dispatch`, `platforms=all` (the default) and `dry_run=true`. That
+   `workflow_dispatch`, `platforms=all` and `dry_run=true`. That
    assembles and prints the exact payload listing (and the build artifacts
    remain downloadable) but skips the GitHub release call.
 
