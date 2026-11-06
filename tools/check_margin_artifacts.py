@@ -23,9 +23,9 @@ def check(path):
             totals['rows'] += 1
             # Opaque black panorama art and native plane-A effects are not
             # the backdrop gap: require visible scenery at the native edge.
-            black = (row['margin'] & 0xffffff == 0 and row['native'] & 0xffffff
+            black = (not row['window_band'] and row['margin'] & 0xffffff == 0 and row['native'] & 0xffffff
                      and row['native_b'] & 0xffffff and not row['margin_bp'])
-            ground = (row['native'] & 0xffffff and row['bp'] in (5, 15, 21, 31)
+            ground = (not row['window_band'] and row['native'] & 0xffffff and row['bp'] in (5, 15, 21, 31)
                       and (432 <= row['atlas_y'] < 448
                            or row['margin_bp'] in (5, 15, 21, 31))
                       and row['margin'] != row['native_b'])

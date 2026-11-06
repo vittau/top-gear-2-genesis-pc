@@ -288,6 +288,52 @@ The before/after crops are identical because this follow-up adds diagnostics
 and evidence, without changing rendering. The route capture command and its
 logs are retained alongside those artifacts in `capture.py`/`capture.log`.
 
+### Solid window and backdrop margin bands
+
+The top window spans native rows 0..7, but the earlier margin compositor
+sampled plane B on row 0 and exposed grey/green scenery beside the black
+native window. Solid, opaque high-priority window edges now continue their
+native colour through the margins. The native centre, including its existing
+red/orange window pixels, is preserved. Low-priority margin sprites respect
+the window priority; high-priority sprites retain the native compositor order.
+
+Classification uses each row's live window registers and unscrolled H32
+window name table. All eight native edge pixels must have one colour, and
+all eight window texels must be opaque, high priority, and match that displayed
+colour. Transparent windows and nonuniform panorama detail retain ordinary
+scenery continuation. There is no hard-coded row-0 colour or fixed black fill.
+
+The margin CSV also exports `edge_solid`, `window_band` and `backdrop_band`.
+The checker counts `band_colour_violations` whenever an adjacent margin differs
+from the native edge of a qualified solid window/backdrop band, including the
+reverse of a black gap: coloured pixels leaking beside a black native band.
+Qualified window edges are excluded from the ground/black-gap rules, whose
+plane-B samples are hidden behind the window.
+Backdrop qualification requires a uniform eight-column edge matching the
+backdrop colour with transparent underlying planes (or disabled display).
+Scenery pixels are still checked before sprite/HUD occlusion, so legitimate
+actors and panorama details are not treated as band errors.
+
+The extended check fails the pre-window-fix 16:9 / Edges / 60 fps On route
+with **5838 band-colour violations**, while the existing black-gap and ground
+counters stay 0 (`build/hills/window-before-check.json`, expected exit 1).
+After correction, all **eight** 16:9/21:9 × Centered/Edges × 60 fps Off/On
+combinations pass with **0 band-colour, 0 black-gap and 0 ground-colour
+violations**. Each covers 2933 complete frames and 1,313,984 edge samples;
+the total is **10,511,872**, including **989,012 qualified solid-band
+samples** (123,600 per Off combination, 123,653 per On combination).
+`build/hills/window-matrix.json` and `window-results.json` retain the counts;
+all **40** manifests in the nine passing runs plus the pre-fix countercheck
+have zero entries. The stock Off hashes and all five Centered/Off native
+centre/RAM/VRAM comparisons still pass.
+
+At frame 5135, every combination changes only margin pixels on native line 0;
+the 16:9 pair changes **142 pixels**, and the native centre remains identical.
+All eight top margin rows are black. See `build/hills/window-before-5135-2x.png`,
+`window-after-5135-2x.png`, `window-reproduction.json`,
+`window-source-lines-5135.json` and `window-pixel-checks.json`. These are separate
+from the earlier hill-fix PNG pair, which is retained as historical evidence.
+
 ## Hill margin regression check
 
 `TG2_MARGIN_AUDIT=<private.csv>` records both adjacent margin pixels on every
