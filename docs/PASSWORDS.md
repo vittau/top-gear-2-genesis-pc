@@ -98,15 +98,28 @@ upgrade (sum 162) is fine.
 
 ## Countries / tracks
 
-`country` 0..15 selects the championship country, and the country picker lists
-them in the same order:
+`country` 0..15 selects the championship country; the COUNTRY SELECT list shows
+the same 16 entries in this order. The intro panel after loading names the
+country and its single track:
 
-| Value | Country | Track (from the intro panel) |
+| Value | Country | Track |
 |---:|---|---|
 | 0 | Australasia | Auckland |
 | 1 | Britain | Loch Ness |
-| 2 | Canada | (see `build/qual/cov/c02-*/intro-*.png`) |
-| 3..15 | — | see the per-run `intro-*.png` in the coverage ledger |
+| 2 | Canada | Banff |
+| 3 | Egypt | Abu Simbel |
+| 4 | France | Bordeaux |
+| 5 | Germany | Bavaria (rain) |
+| 6 | Greece | Athens |
+| 7 | India | Amber Port |
+| 8 | Ireland | Dublin |
+| 9 | Italy | Florence |
+| 10 | Japan | Hiroshima |
+| 11 | Scandinavia | Copenhagen |
+| 12 | South America | Chile |
+| 13 | Spain | Andalucia |
+| 14 | Switzerland | Geneva |
+| 15 | U.S.A. (intro: America) | Las Vegas (night) |
 
 The prefilled password on a fresh boot —
 `KUC2 2HQG CJL2 Y4%T` — decodes to country 0, money 0, `u54 = 1`, checksum 1,

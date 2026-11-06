@@ -2,8 +2,9 @@
 
 Scope: does the native port play the real game, and do the presentation options
 change what the game does? Every entry below was produced headlessly (SDL dummy
-or offscreen video, dummy audio, TCP port 4470, one runtime at a time) by
-controller input only: no RAM writes, no save states, no generated-code edits.
+or offscreen video, dummy audio, TCP port 4470 for sections 1/4/5 and 4490 for
+the all-track coverage, one runtime at a time) by controller input only: no RAM
+writes, no save states, no generated-code edits.
 
 | Artifact | What |
 |---|---|
@@ -11,6 +12,12 @@ controller input only: no RAM writes, no save states, no generated-code edits.
 | `tools/tg2_race_driver.py` | closed-loop driver: boot, race, finish, post-race, next race; writes `trace.csv`, `route.json`, `laps.json`, `summary.json` |
 | `tools/tg2_replay_route.py` | exact-wall-frame replay of a recorded route in any presentation mode |
 | `tools/tg2_controls_probe.py` | in-race A/C/off-road probe with screenshots |
+| `tools/tg2_password.py` | password codec reverse-engineered from the ROM (see `docs/PASSWORDS.md`) |
+| `tools/tg2_password_ui.py` | types a password through the game's ENTER PASSWORD screen, verifying each symbol in WRAM |
+| `tools/tg2_coverage.py` | one coverage cell: password → track → 62 s of driving → evidence |
+| `tools/tg2_coverage_batch.py` | the 16-track × 2-mode matrix, one process per cell |
+| `tools/tg2_margin_audit.py` | widescreen seam statistics + per-run contact sheets |
+| `tools/tg2_nitro_compare.py` | same-route nitro A/B speed measurement |
 
 Driver mechanics (why the comparison is trustworthy):
 
@@ -64,55 +71,152 @@ traffic. The race clock itself is IRQ-driven and identical in both modes.
 lap 4 cleanly), so it is used only as a same-input physics comparison, not as a
 finish claim.
 
-## 2. Further tracks
+## 2. All 16 tracks (password route)
 
-Two routes to other countries exist; neither was usable for coverage in this
-build:
+Every track is reached through the game's own **ENTER PASSWORD** screen. The
+encoding was reversed from the ROM (`docs/PASSWORDS.md`); the generator is
+`tools/tg2_password.py` and the UI driver `tools/tg2_password_ui.py`. Nothing
+writes guest RAM: the tools only type symbols, verify them against the live
+buffer at `$FF2570`, and then drive with controller input.
 
-* **Championship progression** — needs a top-ten finish (below).
-* **CONTINUE → COUNTRY SELECTION** — a direct country picker (main menu:
-  `START`, `DOWN`×3, `START`, `DOWN`, `RIGHT`, `START`; the picker lives behind
-  the same `CONTINUE` row as `PASSWORD`). Picking a country then opens
-  **ENTER PASSWORD** for that level, and the pre-filled string is rejected
-  ("INVALID PASSWORD", `build/qual/password-accept2/pw-C.png`). The password
-  encoding is not reversed, so the picker cannot start a race yet.
+Per-track run (`tools/tg2_coverage.py`, `tools/tg2_coverage_batch.py`):
 
-Evidence for the navigation and the gate: `build/qual/country-nav3/`
-(`after-start.png` is the picker), `build/qual/country-britain/`
-(`country-1-selected.png` selects Britain), `build/qual/password-accept2/`
-(`pw-C.png`, invalid password).
+1. boot → main menu → `DOWN`×3 → `CONTINUE` → `PASSWORDS`;
+2. type the 16-symbol password for the country (each symbol checked in RAM);
+3. `END` → game-setup screen → `RACE` → intro panel (country, track, length,
+   laps, weather icon, clock) → pre-race shop → race;
+4. drive **62 s of race time** with the closed-loop controller (throttle `B`,
+   steering from `$FF18CE`), a screenshot every 600 frames.
 
-| Track | How reached | Evidence |
-|---|---|---|
-| Auckland, Australasia (1.6 mi, 4 laps, 5:43 AM) | race 1 | `build/qual/progress1/after-start-1800.png` |
-| Ayers Rock, Australasia (1.2 mi, 5 laps, 9:15 PM) | race 2, **night race** | intro `build/qual/progress1/race1-post-05.png`; the finished night race: `build/qual/soak-60/race2-post-01.png` (dark palette, LAP 5/5) and `build/qual/soak-60/race-3060.png` |
-| championship track 3+ | not reached | every attempt ended on the Ayers Rock qualification gate; the soak restarts the championship from the menu (evidence: `build/qual/soak-33/raceN-start.png`) |
+"Pass" below means: the password was accepted by the game, the intro panel
+named a track, the race clock ran for >= 62 s of driving (race clock delta =
+wall-frame delta), the car reached racing speed, and all four runtime
+manifests stayed empty.
 
-A race must be **qualified** (roughly top ten) to advance; finishing 14th on
-Ayers Rock ended the championship and returned the game to the main menu. The
-soak tool therefore restarts the championship from the menu after a failed
-qualification, which is also what makes a 30-minute continuous session possible.
+| # | Country / track | Weather / lighting | Laps | Off | 16:9 + HUD Edges | Manifests (both modes) |
+|---:|---|---|---:|---|---|---|
+| 0 | Australasia / Auckland | sun, 5:43 AM | 4 | pass, 62.18 s | pass, 62.20 s | 0/0/0/0 |
+| 1 | Britain / Loch Ness | overcast (grey sky) | 5 | pass, 62.15 s | pass, 62.13 s | 0/0/0/0 |
+| 2 | Canada / Banff | sun + cloud, 7:30 AM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 3 | Egypt / Abu Simbel | sun, 4:43 AM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 4 | France / Bordeaux | sun, 3:30 AM | 5 | pass, 62.17 s | pass, 62.13 s | 0/0/0/0 |
+| 5 | Germany / Bavaria | **rain** (visible streaks) | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 6 | Greece / Athens | **night** (dark palette, lamps) | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 7 | India / Amber Port | sun, 9:43 AM | 5 | pass, 62.15 s | pass, 62.13 s | 0/0/0/0 |
+| 8 | Ireland / Dublin | overcast, 1:10 PM | 5 | pass, 62.20 s | pass, 62.20 s | 0/0/0/0 |
+| 9 | Italy / Florence | sun, 11:30 AM | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 10 | Japan / Hiroshima | sun, 2:43 PM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 11 | Scandinavia / Copenhagen | dusk, 5:40 PM | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 12 | South America / Chile | dusk, 9:30 PM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 13 | Spain / Andalucia | overcast, 3:30 PM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 14 | Switzerland / Geneva | bright, snow | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 15 | America (picker: U.S.A.) / Las Vegas | **night** (dark palette, city lights) | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 
-**Rain**: no rain race was reached. Weather is a per-track property shown on the
-track intro panel (sun icon on Auckland and Ayers Rock); only those two tracks
-were reached before the championship ended, so rain remains untested.
+Evidence per cell, `build/qual/cov/cNN-<mode>/`:
 
-Attempts to widen coverage failed: the main menu's DIFFICULTY row was stepped
-three clicks left (`--difficulty-steps -3`,
-`build/qual/progress-easy/race2-post-02.png`) and three clicks right
-(`build/qual/progress-easy2/race2-post-02.png`); both Ayers Rock races finished
-17th, so either the row was not actually changed or it does not affect the AI,
-and it was left at its default.
+| Artifact | What |
+|---|---|
+| `intro-0/1/2.png` | the intro panel (country, track, length, laps, weather icon, clock) |
+| `race-start.png`, `race-<frame>.png` (×6), `race-end.png` | live race, 398×224 in widescreen, 256×224 Off |
+| `trace.csv` | per-sample frame, race clock, lap, speed, lateral position, pad |
+| `summary.json` | result, 62 s timings, manifests, password record, shot list |
+| `dispatch_misses.toml`, `floor_coverage.toml`, `interior_label_misses.toml`, `floor_unsafe.toml` | runtime manifests, all **0 entries** |
+
+Fastest sample speeds per track (raw player speed, ~5000 is ~120 MPH) ranged
+from 4 962 to 6 665; every run crossed the start line and drove at racing
+speed for the whole window.
+
+### Widescreen margin audit
+
+`tools/tg2_margin_audit.py --cov build/qual/cov --out build/qual/margin-audit`
+measures the step between the last native column and the first generated
+margin column against the frame's own column-step distribution, and writes a
+4-frame contact sheet per run.
+
+* 64 widescreen frames audited (4 per track), **0 seam outliers**; no seam
+  step exceeded `max(3 × the frame's p99 column step, 8 × its median)`, and
+  the few high ratios are HUD cells or scenery legitimately starting in the
+  margin (e.g. the minimap at the right edge and roadside objects).
+* Visual review of all 16 sheets (`build/qual/margin-audit/cNN-ws169-edges-sheet.png`):
+  no wrapped road (the road never reappears as a second band in a margin), no
+  missing scenery (roadside objects, skylines, rain and city lights continue
+  into both margins), no seam at the native/margin boundary. HUD Edges places
+  the speed/speedometer gauge at the left edge and the lap counter + minimap
+  at the right edge, as designed.
+* The centre banners (`16TH`, `NOW`, `LOSER`, `LAP 1 LEFT`) come from the game
+  itself: the same strings appear in Off mode (e.g.
+  `build/qual/cov/c02-off/race-9267.png` shows `LOSER`), so they are not a HUD
+  duplication.
+* Not checked here: sprite pop-in/out at the margin edges from one frame to
+  the next (the coverage runs take screenshots every 600 frames, not dense
+  sequences).
+
+### Notes on the weather / lighting column
+
+The intro panel's clock is flavour text, not the lighting source: Athens shows
+a sun icon and 10:43 AM yet renders as a night race, and Bordeaux shows
+3:30 AM yet renders in daylight. Weather (rain) and lighting (night palette)
+are separate per-track properties; the column above records what the race
+frame actually shows. Rain was confirmed by the persistent streak overlay on
+Bavaria (`build/qual/cov/c05-off/race-11110.png`).
+
+### Old route (kept for history)
+
+The championship still needs a top-ten finish to advance, and the COUNTRY
+SELECTION picker requires the password for the selected index (the screen's
+demand value at `$FF2570+$24` must be <= the password's country). Both routes
+work now that the codec is known; the PASSWORD row is simpler because it
+passes `-1` and accepts any country. The pre-filled string that the old entry
+below reports as rejected is the fresh-game password (`country = 0`), so it is
+rejected for any picker index above 0 — that is the gate, not a broken string.
+
+* Championship progression: `build/qual/progress1/`, `build/qual/soak-60/`
+  (Auckland then Ayers Rock, the latter a night race).
+* COUNTRY SELECTION navigation: `build/qual/country-nav3/`,
+  `build/qual/country-britain/`.
 
 ## 3. Rain, night, nitro, crash, pit
 
 | Scenario | Status | Evidence |
 |---|---|---|
-| Night race | **passed** | Ayers Rock runs at 9:15 PM with the night palette: `build/qual/soak-60/race2-post-01.png`, `build/qual/soak-60/race-3060.png` |
-| Rain race | **untested** | not reached |
-| Nitro | **not found** | `build/qual/controls2/phases.json`: A is the brake (speed 4387 -> 945 in 2 s, median 1000 while every other window accelerates), C produced no boost outside the normal acceleration curve (median 6400 vs 5999 in the following window) and no nitro gauge/timer exists in the player record or HUD. No nitro input was identified. |
+| Night race | **passed** | Athens (`build/qual/cov/c06-off/race-*.png`) and Las Vegas (`build/qual/cov/c15-*/race-*.png`) render with the night palette (dark sky, street lights, lit city). Ayers Rock from the championship route is also a night race (`build/qual/soak-60/race2-post-01.png`). |
+| Rain race | **passed** | Germany / Bavaria is a rain race: a persistent streak overlay covers the whole frame in every captured shot, e.g. `build/qual/cov/c05-off/race-11110.png` and `build/qual/cov/c05-ws169-edges/race-*.png`. |
+| Nitro | **passed (input, tank and speed)** | Input is the `C` button; see the measurement below |
 | Collision / off-road | **passed (off-road), partial (contact)** | `tools/tg2_controls_probe.py` off-road phase: lateral hits the -287 clamp and speed collapses 5615 -> 3571 (`build/qual/controls2/throttle+LEFT-*.png`). On-road instantaneous drops in the same log (e.g. 5544 -> 3475 at frame 4410, lateral -11.7) are consistent with car contact but no contact frame was isolated |
 | Pit stop | **not present** | no pit lane, pit prompt, tyre or fuel state in the HUD or in the player record |
+
+### Nitro
+
+* **Input.** `C`. The remapped-control byte `$FF18FA` sets bit 4 for raw pad
+  bit 5 (`$00D80A..$00D872`); the CONTROL screen's TYPE 1 preset labels that
+  button NITRO (`build/qual/shop-255/shop.png`). `A` and `C` are *not*
+  interchangeable: `A` is the brake (bit 2, `$00D320` subtracts 0x30 from the
+  target speed) and `C` is the nitro (bit 4, `$00E0BA`).
+* **Tank.** Byte counter at `$FF18CA+$2D4` (read as the word 0x0600 = 1536 at
+  the race start). Each activation decrements the high byte by one, i.e. six
+  charges per race: 1536 -> 1280 -> 1024 ... (`0x0600`, `0x0500`, `0x0400`).
+  No purchase is needed.
+* **Controlled speed measurement** (`tools/tg2_nitro_compare.py`,
+  `build/qual/nitro/compare/nitro-compare.json`): one closed-loop route is
+  recorded, then replayed twice from the race start with exactly the same pad
+  sequence; the second replay ORs `C` into the pads of a 90-frame window.
+  Both replays report the same race clock at every marker, so the difference
+  is the button alone:
+
+  | Frames after GO | speed, no nitro | speed, nitro | tank |
+  |---:|---:|---:|---|
+  | 899 (press) | 3180 | 3216 | 1536 -> 1280 |
+  | 915 | 3334 | 3532 | 1280 |
+  | 930 | 3406 | 3696 | 1280 |
+  | 959 | 3727 | 4509 | 1280 |
+  | 990 | 4009 | **5207** | 1280 |
+  | 1050 | 4199 | 3263 (crashed at the higher speed) | 1280 |
+
+  +1 198 raw speed units (+30 %) at the same clock; the nitro replay then
+  meets traffic the plain replay has not reached yet.
+* Coverage runs with `--nitro` (`build/qual/cov/c08-off`, `c08-ws169-edges`,
+  `c00-ws169-edges`) record the same tank drop and speed rise in
+  `summary.json` under `nitro`.
 
 ## Physics: Off vs 16:9 vs 60 fps at matched frames
 
@@ -210,6 +314,20 @@ python3 tools/tg2_split_screen.py --port 4470 --out build/qual/split-2p-race \
 # 30-minute soak
 python3 tools/tg2_soak.py --port 4470 --out build/qual/soak-32 \
     --widescreen 16:9 --60fps --minutes 32 --launch-delay 300 --periodic-shots
+
+# all 16 tracks by password, both presentation modes (this task)
+python3 tools/tg2_coverage_batch.py --port 4490 --out build/qual/cov \
+    --modes off,ws169-edges --seconds 62
+# one cell on its own: country 5 = Germany / Bavaria (rain)
+python3 tools/tg2_coverage.py --port 4490 --out build/qual/cov/c05-off \
+    --country 5 --mode off --seconds 62
+# widescreen seam audit + contact sheets
+python3 tools/tg2_margin_audit.py --cov build/qual/cov --out build/qual/margin-audit
+# nitro controlled comparison
+python3 tools/tg2_nitro_compare.py --port 4490 --out build/qual/nitro/compare \
+    --country 0 --window-at 900 --window 90
+# password round-trip
+python3 tools/tg2_password.py decode "KUC2 2HQG CJL2 Y4%T"
 ```
 
 ## Manifests
@@ -221,14 +339,19 @@ discovery seeds were needed, so `game/game.toml` is unchanged by this task.
 
 ## Gaps / follow-ups
 
-* Only two of the sixteen championship tracks were reached (Auckland and Ayers
-  Rock), not the three further tracks the task asked for. Advancing needs a
-  top-ten finish; the reactive driver is not fast enough on Ayers Rock's tighter
-  layout (~52-56 s laps, 14th-17th) even though it qualifies on Auckland
-  (3rd-4th). A faster lane-keeping controller, a working difficulty setting, or
-  reversing the password encoding is the way to the rest.
-* Rain remains untested for the same reason (weather is per track).
-* No nitro input was found (see section 3).
+* All 16 country tracks are covered, but a country's **second** championship
+  race (e.g. Ayers Rock after Auckland) is not loadable with the same
+  `country` field alone; it needs the championship to advance. The 16 picker
+  entries each gave one track, which is what section 2 covers. A dedicated
+  probe of the password's stage/upgrade fields might expose the second races
+  without racing for them.
+* The coverage runs take a screenshot every 600 frames, so per-frame sprite
+  pop-in/out at the widescreen edges was not measured; only still-frame
+  margin continuity (section 2) and the visible absence of wrapped/missing
+  scenery were checked.
+* The 60 fps option was not part of this task (another task owns it); all
+  coverage runs are stock rate, so the 60 fps physics parity notes above still
+  apply.
 * The open-loop replay of a *reactive* route diverges once the car touches the
   grass; the deterministic comparison that is valid today is same-mode
   repeatability (exact) and same-script Off/16:9 (exact). A tuned feed-forward
