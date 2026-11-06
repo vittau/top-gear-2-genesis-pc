@@ -17,6 +17,7 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 | 60 fps | Stock simulation plus host-only interpolation. Identical WRAM over 16000 frames; 60 pictures/s; no road artefacts; adds 50 ms display latency. | `FRAMERATE.md` |
 | Music + SFX (BOTH) | A third RACE SOUND value, **BOTH**, in the game's own SOUND menu. Stock MUSIC and SFX WAVs are byte-identical to stock. Limitation: a shared-chip mix, so music notes can be stolen by SFX; a clean second virtual chip is future work. | `AUDIO.md` |
 | Performance + audio pacing | Release build at 16:9+Edges+60 fps uses p95 60.5% of the frame budget on a Ryzen 5 3500U. Guest clock is exact (late frames repay their tick; overdue frames drop 60 fps synthesis, never guest time). Music is sequenced by a free-running Z80 program, so tempo follows guest time: under two CPU burners, -6.8 ms audio drift per 60 s, 0 underruns. DRC bounded to ±0.2%. Logs/settings/saves now go next to the executable (they used to go to `~/.local/bin`). Engine patches 0004-0006. | `PERFORMANCE.md` |
+| Real-device audio (owner bug) | Root cause: every host hitch was concealed and then became permanent latency, until the ring cap cut audio in bursts (delays, then pops). Fix: a cushioned, latency-bounded DRC (100 ms target, 250 ms ring, ±0.5%, latency bound 160 ms, quick resume). Measured on a PipeWire null-sink recording: 4×3-min races at 0 pops, dropouts and underruns. Needs the owner's listening confirmation. | `PERFORMANCE.md` §10 |
 | Options | Widescreen / 60 fps / HUD / Hide overscan in the launcher and the in-game overlay (gamepad: Back+RB), persisted in `settings.ini [mods.*]`. | `RELEASING.md` |
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
 | Release packaging | macOS `TG2Recomp.app` (universal2; finds the ROM beside the `.app`), single-file Linux `TG2Recomp-x86_64.AppImage` plus tarball, Windows zip. `v*` tags build a **draft** release with SHA256SUMS. Validated on CI run 42222837085: every platform smoke-ran 600 frames with the ROM auto-detected. | `RELEASING.md` |
@@ -27,7 +28,10 @@ submodule pin is upstream `dd520f1`.
 
 ## Still in progress
 
-Nothing. All tasks are merged.
+| Task | Worktree | State |
+|---|---|---|
+| 18 Music tempo vs reference (owner bug) | `tg2-music-tempo` | After task 15 the owner hears no pops, but music feels always slightly slow, with occasional speed changes. Recording a reference from an accurate emulator and a VGM render, measuring tempo and pitch, and fixing H1 (Z80 cycle/BUSREQ timing) or H2 (DRC wobble). A/B listening files go to `~/Music/tg2-ab/`. |
+| 16 BOTH in real play (owner bug) | `tg2-both-fix` | The owner selected BOTH and heard only music; the "BOTH" text looks off. Reproducing the real menu flow; rendering BOTH with the game's own font. |
 
 ## Questions for the owner (queued for 09:00)
 
@@ -37,9 +41,12 @@ Nothing. All tasks are merged.
 2. Does BOTH sound acceptable on real speakers? Music notes can be stolen
    by SFX. If not, the next step is a second virtual sound chip just for
    SFX.
-3. Is the music tempo steady now? Play `~/Games/TG2-play-c27839b/TG2Recomp`, a release-config build of main with every overnight fix.
+3. ~~Is the music tempo steady now?~~ Answered 2026-11-06: no, it's broken (pops, dropouts). See task 15.
+4. Previously: Play `~/Games/TG2-play-c27839b/TG2Recomp`, a release-config build of main with every overnight fix.
 
 ## Open items
+
+- **Final phase (deferred by the owner):** widescreen for *every* extendable non-race screen (track intro with scrolling scenery, menus, shop, results...). Spec: `docs/tasks/17-widescreen-menu-screens.md`.
 
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
