@@ -294,6 +294,12 @@ Report bugs with your platform, the build version (in `BUILD-INFO.txt`), your
 settings, and the steps to reproduce them. Don't attach ROMs, save states or
 generated code.
 
+## Support the project
+
+If you enjoy the port, you can support its development through
+[GitHub Sponsors](https://github.com/sponsors/vittau) or
+[Buy Me a Coffee](https://buymeacoffee.com/vittau).
+
 ## Development disclosure
 
 AI coding assistants wrote most of the code, tools, tests and documentation
