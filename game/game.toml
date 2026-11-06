@@ -79,4 +79,16 @@ addr = 0x02529E
 kind = "game_hook"
 [[widescreen_site]]
 addr = 0x0252D0
+
+# Read-only USA presentation captures, audited with tools/disasm_tg2.py.
+# Reset scene at the SAT allocator reset; capture mappings before native
+# horizontal culling; publish after the native SAT has been linked.
+[[widescreen_site]]
+addr = 0x0067EE
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x00B5FA
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x006982
 kind = "game_hook"
