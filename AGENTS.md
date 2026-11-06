@@ -57,6 +57,25 @@ renderer) and adapt it. Don't copy its game-specific addresses.
 - Commit often in small, described commits and push your branch to origin. Never commit ROM-derived artifacts.
 - Commit identity: `Vitor Machado <2932830+vittau@users.noreply.github.com>`. It's set in this repo's git config, so don't override it. Never put a personal e-mail in commits, patches (`git format-patch` `From:` headers) or docs.
 
+## Machine resources (5.7 GiB RAM, 8 threads)
+
+This laptop has only **5.7 GiB of RAM**. On 2026-11-06 systemd-oomd killed
+the whole Orca session (77 processes), including every worker, during
+parallel builds and a 1.3 GB in-memory WAV analysis.
+
+- Builds use **at most 3 jobs** (`JOBS=3 tools/build-linux.sh`, `ninja -j3`).
+- Wrap every build and every heavy analysis in the shared machine-wide lock:
+  `flock ~/.cache/tg2-heavy.lock <command>`. Only one heavy step runs at a
+  time, across all agents.
+- Never load whole WAVs or dumps into memory. Stream them (memmap, chunked
+  reads, or downsample first), and keep any single process under ~600 MB RSS.
+- At most one TG2Recomp instance per agent. Kill it as soon as its capture is
+  done.
+- Delete large temporary files (WAVs over 100 MB, dumps) once their numbers
+  are extracted.
+- The coordinator runs at most two workers at once, and never two that both
+  build heavily at the same time.
+
 ## CI budget (GitHub Free, private repo)
 
 The owner does not pay for GitHub. The private repo gets **2000 Actions
