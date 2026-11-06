@@ -15,6 +15,8 @@ Because the input timeline is frame-exact, the same route run in Off, 16:9 and
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -26,27 +28,59 @@ from tg2_runner import Runner, RaceState, BUTTON_ORDER  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def route_to_input_script(route, path: Path, shift: int = 0):
-    lines = []
-    previous = 1
+def route_to_input_script(route, path: Path, shift: int = 0, trace_end: int = 0):
+    actions = {}
     for entry in sorted(route, key=lambda e: e['frame']):
-        frame = int(entry['frame']) + shift
+        frame = max(1, int(entry['frame']) + shift)
         mask = int(entry['keys'], 16)
-        if frame <= previous:
-            frame = previous
         body = ['RELEASE'] + [f'HOLD {name}' for bit, name in enumerate(BUTTON_ORDER)
                               if mask & (1 << bit)]
+        actions.setdefault(frame, []).extend(body)
+    last = max(actions, default=1)
+    if trace_end:
+        dump_dir = path.parent / 'state-ram'
+        dump_dir.mkdir(exist_ok=True)
+        for frame in range(1, trace_end + 1):
+            actions.setdefault(frame, []).append(f'DUMP_RAM {dump_dir}/frame-{frame:06d}.ram')
+    lines, previous = [], 1
+    for frame, body in sorted(actions.items()):
         lines.extend([f'WAIT {frame - previous}', *body])
         previous = frame
-    # keep the script alive a little past the last event
     lines.append('WAIT 600')
     path.write_text('\n'.join(lines) + '\n')
-    return previous
+    return last
+
+
+def write_exact_trace(out):
+    """Input-script snapshots have an exact V-int label; TCP sampling can skip.
+
+    Hash all WRAM and the entire player record as well as decoding known fields:
+    this covers gear/RPM and every other player field without guessing offsets.
+    """
+    from tg2_runner import STATE_LO, STATE_LEN, P_BASE
+    files = sorted((out / 'state-ram').glob('frame-*.ram'))
+    if not files:
+        return
+    with (out / 'state-trace.csv').open('w') as f:
+        writer = csv.writer(f)
+        writer.writerow(['frame', 'clock', 'lap', 'pos', 'lat_raw', 'view', 'speed',
+                         'speed2', 'curv', 'slope', 'builds', 'player_sha256', 'wram_sha256'])
+        for path in files:
+            frame = int(path.stem.split('-')[1])
+            ram = path.read_bytes()
+            st = RaceState(ram[STATE_LO:STATE_LO + STATE_LEN], frame)
+            writer.writerow([frame, st.clock, st.lap, st.pos, st.lat, st.view, st.speed,
+                             st.speed2, st.curv, st.slope,
+                             int.from_bytes(ram[0x23B4:0x23B6], 'big'),
+                             hashlib.sha256(ram[P_BASE:P_BASE + 0x458]).hexdigest(),
+                             hashlib.sha256(ram).hexdigest()])
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--trace-frames', type=int, default=0,
+                   help='dump exact input-script WRAM every V-int 1..N and write state-trace.csv')
     p.add_argument('--route', type=Path, required=True)
     p.add_argument('--port', type=int, default=4470)
     p.add_argument('--out', type=Path, required=True)
@@ -74,8 +108,8 @@ def main():
     out = a.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     route = json.loads(a.route.read_text())
-    last = route_to_input_script(route, out / 'route.input', a.shift)
-    env = {'TG2_RACE_60FPS': '1'} if a.fps60 else {}
+    last = route_to_input_script(route, out / 'route.input', a.shift, a.trace_frames)
+    env = {'TG2_RACE_60FPS': '1' if a.fps60 else '0'}
     args = ['--hash-frames', str(a.hash_frames), '--input-script',
             str((out / 'route.input').resolve())]
     if a.turbo:
@@ -125,11 +159,13 @@ def main():
             prev_clock = st.clock
             prev_lat = st.lat_units
             if st.clock > 0 and stall >= 12 and st.speed == 0:
-                race['finish_frame'] = st.frame
-                race['finish_clock'] = st.clock
+                if race['finish_frame'] is None:
+                    race['finish_frame'] = st.frame
+                    race['finish_clock'] = st.clock
+                    r.screenshot(str(out / 'finish.png'))
                 result = 'finished'
-                r.screenshot(str(out / 'finish.png'))
-                break
+                if st.frame > a.trace_frames:
+                    break
             if st.frame > last + a.grace:
                 result = 'route-ended'
                 break
@@ -166,6 +202,8 @@ def main():
         print('result', result)
     finally:
         code = r.stop()
+        if a.trace_frames:
+            write_exact_trace(out)
         from tg2_race_driver import manifests
         m = manifests(out)
         path = out / 'summary.json'

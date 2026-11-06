@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 static int mode;
+static int race60;
+static uint64_t present_frame;
+static void presentation_clear(void);
 static int hud_edges, hud_configured;
 void tg2_video_set_hud_mode(int edges) {
     hud_edges = edges != 0;
@@ -52,6 +55,7 @@ static int configure(const char *s) {
     return 1;
 }
 static int enabled(void) { return mode != 0; }
+static int renderer_enabled(void) { return mode != 0 || race60; }
 static int width(int dw, int dh, int nw, int nh) {
     double w = nh * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
@@ -82,13 +86,14 @@ static unsigned read16(unsigned a) {
 }
 static unsigned read32(unsigned a) { return (read16(a) << 16) | read16(a + 2); }
 void tg2_video_reset(void) {
+    presentation_clear();
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
     shown = NULL;
     serial = overflow = matched_pieces = margin_pieces = 0;
 }
 int tg2_video_hook(uint32_t pc) {
-    if (!enabled())
+    if (!renderer_enabled())
         return 0;
     if (pc == 0x67EE)
         building.count = 0;
@@ -320,7 +325,8 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
         if (shifted[x])
             out[x] = pal[shifted[x]];
 }
-static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
+static int synthesizing;
+static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     int origin = (w - nw) / 2;
     if (line < 8) {
@@ -340,7 +346,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, ui
         return;
     }
     ++wide_lines;
-    if (!line)
+    if (!line && !synthesizing)
         select_scene(v);
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
     unsigned hbase = (v->reg[13] & 63) << 10;
@@ -396,6 +402,173 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw, ui
     memcpy(out + origin, native, nw * sizeof *out);
     hud_row(v, line, ha, hb, va, vb, ba, bb, pal, nw, out, w);
 }
+/* Completed pictures are immutable host snapshots. The guest still executes
+ * every instruction, IRQ and DMA with the stock budget. Three V-ints of fixed
+ * delay cover the measured 2/3-V-int picture cadence without extrapolation.
+ * Full per-row VDP copies also preserve mid-frame raster and palette changes.
+ * They are never passed to the bus, scheduler or serialized machine state. */
+enum { PRESENT_HISTORY = 8, PRESENT_ROWS = 224, PRESENT_DELAY = 3 };
+typedef struct {
+    GVDP row[PRESENT_ROWS];
+    Scene scene;
+    uint64_t frame;
+    int valid;
+} Picture;
+static Picture *pictures;
+static unsigned picture_index, picture_key;
+static int capture_picture;
+static Picture *from_picture, *to_picture;
+static unsigned phase_num, phase_den;
+static Scene mixed_scene;
+static GVDP mixed_vdp;
+static void presentation_clear(void) {
+    if (pictures)
+        for (int i = 0; i < PRESENT_HISTORY; ++i) pictures[i].valid = 0;
+    capture_picture = 0;
+    from_picture = to_picture = NULL;
+    picture_key = 0;
+}
+void tg2_video_frame(uint64_t frame, int on) {
+    if (on != race60 || frame < present_frame) presentation_clear();
+    race60 = on;
+    present_frame = frame;
+}
+static int mix(int a, int b) {
+    return a + (int)lround((double)(b - a) * phase_num / phase_den);
+}
+static unsigned mix_wrap(unsigned a, unsigned b, unsigned mask) {
+    int delta = (int)((b - a + (mask + 1) / 2) & mask) - (int)((mask + 1) / 2);
+    return mix((int)a, (int)a + delta) & mask;
+}
+static void put_word(unsigned char *p, unsigned a, unsigned x) {
+    p[a & 65535] = x >> 8;
+    p[(a + 1) & 65535] = x;
+}
+/* Match pieces by tile/size and nearest screen position, never by the SAT
+ * allocation index (the game builds that list backwards and culls entries).
+ * Appearance/disappearance and animation changes keep the older picture. */
+static void mix_sprites(GVDP *out, const GVDP *b) {
+    unsigned sa = (out->reg[5] & 127) << 9, sb = (b->reg[5] & 127) << 9;
+    unsigned char used[80] = {0};
+    int ia = 0;
+    for (int n = 0; n < 64; ++n) {
+        unsigned a = sa + ia * 8;
+        int ax = (word(out->vram, a + 6) & 511), ay = word(out->vram, a) & 1023;
+        int ib = 0, best = -1, distance = 4096;
+        for (int k = 0; k < 64; ++k) {
+            unsigned q = sb + ib * 8;
+            if (!used[ib] && word(out->vram, a + 4) == word(b->vram, q + 4) &&
+                out->vram[(a + 2) & 65535] == b->vram[(q + 2) & 65535]) {
+                int d = abs(ax - (int)(word(b->vram, q + 6) & 511)) +
+                        abs(ay - (int)(word(b->vram, q) & 1023));
+                if (d < distance) { best = ib; distance = d; }
+            }
+            ib = b->vram[(q + 3) & 65535] & 127;
+            if (!ib || ib >= 64) break;
+        }
+        if (best >= 0 && distance < 96) {
+            used[best] = 1;
+            unsigned q = sb + best * 8;
+            put_word(out->vram, a, mix_wrap(ay, word(b->vram, q) & 1023, 1023));
+            put_word(out->vram, a + 6, mix_wrap(ax, word(b->vram, q + 6) & 511, 511));
+        }
+        ia = out->vram[(a + 3) & 65535] & 127;
+        if (!ia || ia >= 64) break;
+    }
+}
+static void mix_pieces(const Scene *a, const Scene *b) {
+    mixed_scene = *a;
+    unsigned char used[MAX_PIECES] = {0};
+    for (unsigned i = 0; i < a->count; ++i) {
+        const Piece *p = &a->pieces[i];
+        int best = -1, distance = 96;
+        for (unsigned j = 0; j < b->count; ++j) {
+            const Piece *q = &b->pieces[j];
+            if (used[j] || p->attr != q->attr || p->size != q->size) continue;
+            int d = abs(p->x - q->x) + abs(p->y - q->y);
+            if (d < distance) { best = (int)j; distance = d; }
+        }
+        if (best >= 0) {
+            used[best] = 1;
+            mixed_scene.pieces[i].x = mix(p->x, b->pieces[best].x);
+            mixed_scene.pieces[i].y = mix(p->y, b->pieces[best].y);
+        }
+    }
+}
+static void presentation_begin(const GVDP *v) {
+    from_picture = to_picture = NULL;
+    capture_picture = 0;
+    if (!pictures) pictures = calloc(PRESENT_HISTORY, sizeof *pictures);
+    if (!pictures) return;
+    unsigned key = read32(0xFF231E);
+    if (key != picture_key || !pictures[picture_index].valid) {
+        picture_key = key;
+        picture_index = (picture_index + 1) % PRESENT_HISTORY;
+        Picture *p = &pictures[picture_index];
+        p->valid = 1;
+        p->frame = present_frame;
+        select_scene(v);
+        if (shown) p->scene = *shown;
+        else memset(&p->scene, 0, sizeof p->scene);
+        capture_picture = 1;
+    }
+    if (present_frame < PRESENT_DELAY) return;
+    uint64_t target = present_frame - PRESENT_DELAY;
+    for (int i = 0; i < PRESENT_HISTORY; ++i) {
+        Picture *p = &pictures[i];
+        if (!p->valid) continue;
+        if (p->frame <= target && (!from_picture || p->frame > from_picture->frame))
+            from_picture = p;
+        if (p->frame >= target && (!to_picture || p->frame < to_picture->frame))
+            to_picture = p;
+    }
+    if (!from_picture) return; /* warm-up: original image until bracketed */
+    if (!to_picture) to_picture = from_picture;
+    phase_den = (unsigned)(to_picture->frame - from_picture->frame);
+    phase_num = (unsigned)(target - from_picture->frame);
+    if (!phase_den) { phase_den = 1; phase_num = 0; }
+    mix_pieces(&from_picture->scene, &to_picture->scene);
+}
+static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
+                     uint32_t *out, int w) {
+    if (!race60 || line >= PRESENT_ROWS || nw != 256 || !race(v)) {
+        draw_scanline(v, line, native, nw, out, w);
+        return;
+    }
+    if (!line) presentation_begin(v);
+    if (capture_picture && pictures) pictures[picture_index].row[line] = *v;
+    if (!from_picture) {
+        draw_scanline(v, line, native, nw, out, w);
+        return;
+    }
+    mixed_vdp = from_picture->row[line];
+    const GVDP *b = &to_picture->row[line];
+    /* Raster vertical offsets encode road perspective, horizontal offsets
+     * encode road centre/skyline. Wrap interpolation follows the short arc. */
+    for (int i = 0; i < 2; ++i)
+        mixed_vdp.vsram[i] = mix_wrap(mixed_vdp.vsram[i], b->vsram[i], 1023);
+    unsigned ha = (mixed_vdp.reg[13] & 63) << 10, hb = (b->reg[13] & 63) << 10;
+    int ma = mixed_vdp.reg[11] & 3, mb = b->reg[11] & 3;
+    int ya = ma == 0 ? 0 : ma == 2 ? line & ~7 : line;
+    int yb = mb == 0 ? 0 : mb == 2 ? line & ~7 : line;
+    for (int i = 0; i < 2; ++i) {
+        unsigned a = ha + ya * 4 + i * 2, q = hb + yb * 4 + i * 2;
+        put_word(mixed_vdp.vram, a, mix_wrap(word(mixed_vdp.vram, a), word(b->vram, q), 1023));
+    }
+    mix_sprites(&mixed_vdp, b);
+    uint8_t indices[GVDP_MAX_WIDTH];
+    uint32_t pixels[GVDP_MAX_WIDTH];
+    int count = gvdp_render_scanline(&mixed_vdp, line, indices);
+    for (int x = 0; x < count; ++x)
+        pixels[x] = indices[x] < 192 ? genesis_dac_cram_to_argb(
+            mixed_vdp.cram[indices[x] & 63], indices[x] >> 6) : 0xFF000000;
+    const Scene *saved = shown;
+    shown = &mixed_scene;
+    synthesizing = 1;
+    draw_scanline(&mixed_vdp, line, pixels, nw, out, w);
+    synthesizing = 0;
+    shown = saved;
+}
 void tg2_video_command(int id, const char *json) {
     char out[22000];
     int n = snprintf(out, sizeof out,
@@ -406,6 +579,12 @@ void tg2_video_command(int id, const char *json) {
                      id, enabled(), wide_lines, native_lines, serial, shown ? shown->serial : 0,
                      shown ? shown->count : 0, overflow, matched_pieces, margin_pieces,
                      frame_margin_pixels, tg2_video_get_hud_mode(), hud_plane_pixels, hud_marker_pixels);
+    n += snprintf(out + n, sizeof out - n,
+                  ",\"race60\":%d,\"presentation_delay_frames\":%d,\"presentation_frame\":%llu,"
+                  "\"from_frame\":%llu,\"to_frame\":%llu,\"phase_num\":%u,\"phase_den\":%u",
+                  race60, PRESENT_DELAY, (unsigned long long)present_frame,
+                  (unsigned long long)(from_picture ? from_picture->frame : 0),
+                  (unsigned long long)(to_picture ? to_picture->frame : 0), phase_num, phase_den);
     if (json && strstr(json, "\"rows\"")) {
         n += snprintf(out + n, sizeof out - n, ",\"rows\":[");
         for (int i = 0; i < 224; ++i)
@@ -431,4 +610,5 @@ void tg2_video_command(int id, const char *json) {
     cmd_send_response(out);
 }
 const GameVideo tg2_video = {
-    .configure = configure, .enabled = enabled, .width = width, .scanline = scanline};
+    .configure = configure, .enabled = enabled, .width = width, .scanline = scanline,
+    .renderer_enabled = renderer_enabled};

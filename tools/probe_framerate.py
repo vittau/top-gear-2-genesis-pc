@@ -20,6 +20,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--out', type=Path, default=ROOT / 'build/fps/stock')
     p.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
+    p.add_argument('--60fps', dest='fps60', action='store_true')
+    p.add_argument('--widescreen', default='off')
+    p.add_argument('--hud', choices=['centered', 'edges'], default='centered')
+    p.add_argument('--turbo', action='store_true')
     p.add_argument('--extra', nargs='*', default=[])
     p.add_argument('--port', type=int, default=4410)
     p.add_argument('--start', type=int, default=3600)
@@ -59,14 +63,18 @@ def main():
         previous = frame
     script_path = a.out / 'route.input'
     script_path.write_text('\n'.join(script) + '\n')
-    env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy')
+    env = dict(os.environ, SDL_VIDEODRIVER='offscreen' if a.turbo else 'dummy',
+               SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy',
+               TG2_RACE_60FPS='1' if a.fps60 else '0', TG2_HUD_MODE=a.hud)
     # A host $APPIMAGE would anchor debug.ini/saves/evidence to the AppImage
     # directory and move the TCP server away from this build.
     env.pop('APPIMAGE', None)
     args = [str(a.exe), str(Path.home() / 'roms/genesis/tg2.bin'), '--no-launcher',
-            '--port', str(a.port), '--max-frames', str(max(5600, previous + 2)),
+            '--port', str(a.port), '--widescreen', a.widescreen, '--max-frames', str(max(5600, previous + 2)),
             '--hash-frames', '1', '--fresh-evidence', '--input-script', str(script_path),
             '--wav', str(a.out / 'audio.wav'), *a.extra]
+    if a.turbo:
+        args.append('--turbo')
     with (a.out / 'stdout.log').open('w') as out, (a.out / 'stderr.log').open('w') as err:
         proc = subprocess.Popen(args, cwd=a.exe.parent, env=env, stdout=out, stderr=err)
         try:
