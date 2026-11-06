@@ -32,6 +32,7 @@ submodule pin is upstream `dd520f1`.
 
 | Task | Worktree | State |
 |---|---|---|
+| 21 Crop race black bands + HUD Edges map split (owner request) | `tg2-race-crop` | The owner chose to crop the 8 top / 16 bottom black lines of races when Hide overscan is On. Also fixes the HUD Edges map/marker split. |
 | 20 BOTH via a second virtual chip (owner bug) | `tg2-both-dualchip` | Fourth playtest: BOTH sounds like noise because music and SFX fight over the same FM channels (shared-chip mix). Fix: route Z80 writes to chip A and 68k writes to chip B, then mix. Acceptance: BOTH ≈ MUSIC + SFX. Also fixes the menu showing MUSIC after BOTH. |
 
 ## Questions for the owner (queued for 09:00)
@@ -49,9 +50,6 @@ submodule pin is upstream `dd520f1`.
 
 - **Final phase (deferred by the owner):** widescreen for *every* extendable non-race screen (track intro with scrolling scenery, menus, shop, results...). Spec: `docs/tasks/17-widescreen-menu-screens.md`.
 
-- HUD Edges glitch (found 2026-11-06 while taking README screenshots): in 16:9 + Edges, on the
-  baseline route at frame 3480, the track map is drawn apart from its position markers
-  (1ST / 1P dots). At frames 3840 and 3900 they line up. Not yet investigated.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
 - Each country's second championship race is still unvisited (it needs
