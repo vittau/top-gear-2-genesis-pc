@@ -77,9 +77,10 @@ static void restore_mode(void)
 static int menu_value_handler(void)
 {
     uint32_t d0 = g_cpu.D[0] & 0xFFu;
+    /* Accept both the zero-extended 24-bit form and a sign-extended address. */
     uint32_t a4 = g_cpu.A[4] & 0xFFFFFFu;
 
-    if (a4 < 0xFF0000u || a4 > 0xFFFFFFu) return 0;  /* run stock handler */
+    if (a4 < 0xFF0000u) return 0;  /* not work RAM: run the stock handler */
 
     s_page_seen = 1;
 
@@ -126,7 +127,7 @@ static int menu_value_handler(void)
 }
 
 /* ---- Instruction hooks --------------------------------------------------- */
-int tg2_instruction_hook(uint32_t pc)
+int tg2_audio_hook(uint32_t pc)
 {
     switch (pc) {
     case 0x01F0D4u:                    /* RACE SOUND value handler */
@@ -264,12 +265,19 @@ static void sort_cols(struct col *c, int n)
         }
 }
 
-static void draw_both(void)
+/* Original value-row glyph tiles, saved the first frame BOTH is painted so
+ * that cycling BOTH -> MUSIC can put the game's own "MUSIC" tiles back.  The
+ * page value does not change between MUSIC (1) and BOTH (1), so the menu does
+ * not redraw that row by itself. */
+static uint8_t s_saved[5][2][32];
+static int s_saved_n;
+
+/* Locate the value row of the RACE SOUND page from the sprite table. */
+static int value_cols(struct col *cols)
 {
     uint8_t *vram = g_machine.vdp.vram;
     unsigned sat = (unsigned)((g_machine.vdp.reg[5] & 0x7Fu) << 9);
     int header = 0;
-    struct col cols[8];
     int ncols = 0;
 
     for (int i = 0; i < 80; i++) {
@@ -298,8 +306,17 @@ static void draw_both(void)
         }
     }
 
-    if (!header || ncols < 4) return;
+    if (!header || ncols < 4) return 0;
     sort_cols(cols, ncols);
+    return ncols;
+}
+
+static void paint_both(void)
+{
+    uint8_t *vram = g_machine.vdp.vram;
+    struct col cols[8];
+    int ncols = value_cols(cols);
+    if (!ncols) return;
 
     static const uint8_t (*const glyphs[])[8] = {
         (const uint8_t (*)[8])s_glyph_b,
@@ -309,6 +326,17 @@ static void draw_both(void)
         (const uint8_t (*)[8])s_glyph_blank,
     };
     int n = ncols < 5 ? ncols : 5;
+    if (!s_saved_n) {
+        for (int i = 0; i < n; i++) {
+            unsigned top = cols[i].top & 0x7FFu;
+            unsigned bot = (top + 1u) & 0x7FFu;
+            for (int b = 0; b < 32; b++) {
+                s_saved[i][0][b] = vram[top * 32u + (unsigned)b];
+                s_saved[i][1][b] = vram[bot * 32u + (unsigned)b];
+            }
+        }
+        s_saved_n = n;
+    }
     for (int i = 0; i < n; i++) {
         unsigned top = cols[i].top & 0x7FFu;
         unsigned bot = (top + 1u) & 0x7FFu;
@@ -317,9 +345,40 @@ static void draw_both(void)
     }
 }
 
+/* Put back the stock value-row glyphs when BOTH is deselected. */
+static void restore_value(void)
+{
+    uint8_t *vram = g_machine.vdp.vram;
+    struct col cols[8];
+    int ncols = value_cols(cols);
+    int n = ncols < s_saved_n ? ncols : s_saved_n;
+    for (int i = 0; i < n; i++) {
+        unsigned top = cols[i].top & 0x7FFu;
+        unsigned bot = (top + 1u) & 0x7FFu;
+        for (int b = 0; b < 32; b++) {
+            vram[top * 32u + (unsigned)b] = s_saved[i][0][b];
+            vram[bot * 32u + (unsigned)b] = s_saved[i][1][b];
+        }
+    }
+    s_saved_n = 0;
+}
+
+/* Guest reset or state load: forget the host-only BOTH selection. */
+void tg2_audio_reset(void)
+{
+    s_both = 0;
+    s_patched = 0;
+    s_page_seen = 0;
+    s_saved_n = 0;
+}
+
 void tg2_frame_post(uint64_t frame_count)
 {
     (void)frame_count;
-    if (!s_both || !s_page_seen) return;
-    draw_both();
+    if (!s_page_seen) return;
+    if (s_both) {
+        paint_both();
+        return;
+    }
+    if (s_saved_n) restore_value();
 }
