@@ -22,13 +22,16 @@ falls back to the ordinary image.
 
 For each V-int the renderer draws the presentation time **three V-ints
 behind** the current time, bracketed by the two surrounding completed stock
-pictures. It interpolates per-line road/background horizontal scroll and
-vertical raster offsets using their shortest modular displacement. It also
-interpolates native SAT and widescreen sprite coordinates, matching tile,
-size and nearest position instead of unstable SAT indices. Pattern,
-palette, occlusion and animation changes retain the earlier endpoint until
-the next endpoint is reached; this avoids blended sprite silhouettes.
-Appearance/disappearance and unmatched pieces remain discrete.
+pictures. Each output row takes **all discrete state from the nearest real
+picture** (the newer endpoint wins at the midpoint). This includes its
+vertical atlas selection, VRAM patterns/name tables, CRAM palette, plane-A
+HUD state and sprite attributes. Only plane-B horizontal translation and
+matched sprite coordinates interpolate. Road translation is constrained by
+both neighbours' actual silhouette bounds; authored widths and stripe runs
+remain intact. Appearance/disappearance and unmatched pieces remain discrete.
+Vertical raster offsets are **not continuous geometry** and are never
+interpolated; the earlier implementation that did so is superseded by the
+road correction described below.
 
 The existing native VDP renderer draws only a private `GVDP` copy. Its
 sprite collision/overflow writes therefore touch that copy, and the result
@@ -55,6 +58,119 @@ without a second timing model or guest render-only execution.
 The option remains default-on, latched at each single-player race start.
 Menus, fades, countdown, finish transitions and two-player races use the
 ordinary renderer/timing. Widescreen and Centered/Edges HUD compose with it.
+
+## Road topology: continuous geometry versus discrete atlas state
+
+The first host-only implementation preserved physics but visibly broke the
+road in intermediate pictures. This was a presentation bug, not a gameplay
+change. The following quantities form a road row on the audited USA ROM:
+
+| Input | Meaning | Presentation policy |
+|---|---|---|
+| Plane B base (`reg[4]`, `$E000`), 64×64-cell name table (`reg[16]=$11`) and pattern bytes | Authored road templates and their tile/palette/priority attributes | Whole nearest source |
+| H-scroll B (`reg[13]`, table `$B800`, row selected by `reg[11]`) | Horizontal road centre / curvature; effective wrap is 512 pixels | Interpolate translation |
+| Per-scanline `VSRAM[1]`; atlas Y = `(screen_y + VSRAM[1]) & 511` | Template, perspective width, stripe phase and ground type together | **Never interpolate the address** |
+| Atlas Y 0–143 / 144–287 / 288–359 / 360–431 | Four complete templates, with 144/144/72/72 perspective rows | Whole nearest source; switch at fraction 1/2 |
+| Tile palette bank and captured CRAM | Discrete stripe/grass colours | Same nearest source as pattern/atlas row |
+| Atlas Y 432–511 | Panorama/background, including HUD-covered bands | Whole nearest row; horizontal scroll may interpolate |
+
+The road atlas has palette nibbles **6** (border), **13** (lane marks),
+**14** (asphalt), with palette-bank variants 22/29/30. Its ground uses
+nibbles 5/15. The implementation measures each captured template row's
+silhouette from its actual pixels rather than guessing a linear width
+formula. VSRAM is therefore not merely a vertical camera offset.
+
+Decisive example from the failed frame **3600**, exported before correction:
+
+| Screen row | Earlier atlas Y | Newer atlas Y | Invalid interpolated Y |
+|---|---:|---:|---:|
+| 170 | 193 (template 2, perspective row 49) | 49 (template 1, row 49) | **97** (wrong width) |
+| 190 | 100 (template 1, row 100) | 244 (template 2, row 100) | **196** (template 2, row 52) |
+
+Those endpoint rows have the same intended perspective width, but averaging
+their addresses chooses another width. This produced the missing edge and
+fan-shaped apparent duplicate stripes. Linear interpolation of the full
+10-bit scroll also ignores the atlas's 512-pixel wrap.
+
+The corrected renderer translates one intact nearest-source row. It clamps
+that translation to the intersection of the left-edge and right-edge
+intervals defined by the two real pictures; the selected real endpoint is
+always feasible. At horizon/road boundaries it snaps the entire row to the
+nearest source. It never rescales or blends two stripe patterns on one line.
+Sprite position matching uses the same temporal direction when the discrete
+source is the newer picture, retaining continuous motion with matching
+pattern/palette state.
+
+### Automated artefact check
+
+`TG2_ROAD_AUDIT_DIR` exports owned **plane-B palette-index pixels** for the
+two real endpoints and actual presented road, before cars/HUD can hide an
+error. `tools/check_road_artifacts.py` independently extracts silhouette
+edges and stripe-run counts from those pixels. For every synthesized frame
+on the baseline route it checks rows **140–212**, excluding panorama rows
+where an endpoint has no road template. Every synthesized frame must have
+tested road rows. The horizontal audit span is **x -384–639**, so edges
+outside the 398-pixel viewport still count and clipping cannot hide errors.
+
+It checks both edge envelopes, stripe count equality to an endpoint, atlas
+Y equality to an endpoint, and **byte-exact equality to a translated nearest
+source row**. This last check includes palette-bank/stripe-phase identity,
+not merely geometry. Repeated exports of the same real endpoint must also
+be identical. Missing frames, incomplete files or untested frames fail.
+
+The probe integrates the check and propagates a nonzero exit:
+
+```sh
+python3 tools/probe_framerate.py --port 4480 --out build/fps/road-after \
+  --turbo --60fps --widescreen 16:9 --hud edges --road-audit \
+  --strip-start 3600 --strip-start 4500
+# Recheck an existing capture (NumPy; Pillow for strips):
+python3 tools/check_road_artifacts.py build/fps/road-after \
+  --strip-start 3600 --strip-start 4500
+```
+
+The detector was first run against the faulty implementation, not just the
+fix. Baseline frames **3098–5600** contain **2503** consecutive presentations,
+**1511** synthesized frames and **83732** tested road rows:
+
+| Metric | Before (exit 1) | Corrected (exit 0) |
+|---|---:|---:|
+| Maximum edge-envelope violation | **143 px** | **0 px** |
+| Rows violating an edge envelope | 35427 | **0** |
+| Maximum stripe-count violation | **2** | **0** |
+| Rows violating stripe count | 723 | **0** |
+| Invalid intermediate atlas rows | 36927 | **0** |
+| Rows differing from translated nearest source | 36927 | **0** |
+| Maximum pixel mismatches on one row | 1024 | **0** |
+| Inconsistent real-source snapshots / missing frames | 0 / 0 | **0 / 0** |
+
+Evidence: `build/fps/road-before/road-artifacts.json` and
+`build/fps/road-after/road-artifacts.json`. Both full 5600-frame runtime
+captures exited 0; the old artefact checker correctly exited **1**.
+
+The manually re-inspected 12-frame, nearest-neighbour **2x** strips are
+`build/fps/road-after/road-strip-3600-2x.png` (straight, curvature 0) and
+`road-strip-4500-2x.png` (curve, curvature -378). They label every frame as
+real/intermediate with its real-picture bracket. The missing edges and
+fan-shaped stripe artefacts are gone in both sequences. Discrete stripe
+phase still steps at the midpoint; it is not blended into fictitious road
+patterns. The ordinary single-player capture remains **360/360 changed
+pictures** in the cadence window.
+A matching four-frame vertical zoom for the original review crop is
+`build/fps/road-after/coordinator-artifact-zoom-fixed.png`. The consolidated
+requalification report is `build/fps/road-report.json`.
+
+The road correction was also requalified against the earlier stock state
+capture: **16000/16000 consecutive WRAM/player-record hashes match**, every
+numeric field has maximum difference 0, and the four replay laps remain
+39.9664 / 44.1331 / 51.9497 / 43.2997 seconds. See
+`build/fps/road-replay-comparison.json` and `road-parity-replay/summary.json`.
+A fresh Off run has **0 differences across all 5600 framebuffer hashes**
+versus the original Off baseline, including the mandatory cold-boot hashes.
+The new On and Off WAVs are byte-identical. Fresh moving two-player runs
+also retain **8800/8800 identical framebuffers**, identical terminal WRAM,
+clock 88473060 and speeds 2917/2421 (`build/fps/road-timing/`). All successful
+runtime runs exit 0 with four empty manifests; no engine changes were needed.
 
 ## Qualification
 
@@ -91,9 +207,9 @@ python3 tools/tg2_replay_route.py --port 4480 \
   --route build/fps/race-off/route-race.json --out build/fps/replay-off \
   --widescreen off --trace-frames 16000 --grace 4000 --timeout 600
 TG2_HUD_MODE=edges python3 tools/tg2_replay_route.py --port 4480 \
-  --route build/fps/race-off/route-race.json --out build/fps/replay-60 \
+  --route build/fps/race-off/route-race.json --out build/fps/road-parity-replay \
   --widescreen 16:9 --60fps --trace-frames 16000 --grace 4000 --timeout 600
-python3 tools/compare_race_replay.py build/fps/replay-off build/fps/replay-60 \
+python3 tools/compare_race_replay.py build/fps/replay-off build/fps/road-parity-replay \
   --out build/fps/replay-comparison.json
 ```
 
@@ -127,7 +243,7 @@ The finish clock is **628213343** in both. The capture includes the finish
 and subsequent frozen-clock frames; exact split labels come from the history
 snapshots rather than whichever live TCP poll happened to observe a crossing.
 
-`build/fps/replay-60/presentation-timing.json` contains **21** in-race
+`build/fps/road-parity-replay/presentation-timing.json` contains **21** in-race
 read-only samples. For every sample,
 `current - (from + (to-from)*phase_num/phase_den) = 3` V-ints exactly:
 measured additional presentation latency **50.05 ms** at the default pacer.
@@ -161,9 +277,9 @@ input masks) are identical. The times reproduce the earlier stock run.
 ### Picture cadence, screenshots and audio
 
 ```sh
-python3 tools/probe_framerate.py --port 4480 --out build/fps/parity-stock --turbo
-python3 tools/probe_framerate.py --port 4480 --out build/fps/parity-60 \
-  --turbo --60fps --widescreen 16:9 --hud edges
+python3 tools/probe_framerate.py --port 4480 --out build/fps/road-stock --turbo
+python3 tools/probe_framerate.py --port 4480 --out build/fps/road-after \
+  --turbo --60fps --widescreen 16:9 --hud edges --road-audit
 ```
 
 Both exited **0**, all four manifests empty. Frames 3601–3960:
@@ -184,7 +300,7 @@ The wider boot canvas naturally has
 different framebuffer hashes even before racing.
 
 The six consecutive **398×224** images are
-`build/fps/parity-60/frame-3600.png` through `frame-3605.png`; all six SHA-256
+`build/fps/road-after/frame-3600.png` through `frame-3605.png`; all six SHA-256
 values differ (`hashes.txt` alongside them). Visual inspection confirms the
 wide road, centred car and edge-anchored instruments/map.
 
@@ -199,14 +315,14 @@ A fixed two-pad script from
 `tg2_split_screen.build_script(4, 280, [3700])`, followed by an explicit
 player-2 START to leave pause and 1500 frames with both throttles held,
 was run with the option Off and On. The private reproduction harness is
-`build/fps/verify_split_timing.py` (`python3 build/fps/verify_split_timing.py`,
+`build/fps/road-timing/verify_split_timing.py` (`python3 build/fps/road-timing/verify_split_timing.py`,
 port 4480); evidence is `split-off/`, `split-60/` and
-`split-comparison.json` under `build/fps/`.
+`split-comparison.json` under `build/fps/road-timing/`.
 
 Both runs exited **0**, with all four manifests empty. Every one of the
 **8800 framebuffer hashes** is identical, and the terminal **64 KiB WRAM
 snapshots are byte-identical**. Both have `$FF189E = 1`, clock **88473060**,
-player-1 speed **2917**, player-2 speed **2421**; `split-60/end.png` shows
+player-1 speed **2917**, player-2 speed **2421**; `road-timing/split-60/end.png` shows
 both racing without a pause banner. The option does not interpolate or add
 latency in split-screen.
 

@@ -4,7 +4,10 @@ The 60 fps rows below describe the **superseded CPU-headroom design**. The
 current presentation-only implementation and its exact per-V-int replay,
 full-race, cadence and audio comparisons are documented in
 [FRAMERATE.md](FRAMERATE.md#qualification). Historical trajectory/lap-time
-divergence below must not be read as a current limitation.
+divergence below must not be read as a current limitation. The subsequent
+road-atlas correction has a regression check over every synthesized baseline
+frame: maximum edge-envelope and stripe-count violations are both zero; see
+[road topology qualification](FRAMERATE.md#road-topology-continuous-geometry-versus-discrete-atlas-state).
 
 Scope: does the native port play the real game, and do the presentation options
 change what the game does? Every entry below was produced headlessly (SDL dummy
