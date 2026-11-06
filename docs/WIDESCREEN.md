@@ -526,11 +526,11 @@ frames.
 
 The same-input physics replay still matches: Off and 16:9 + Edges + 60 fps
 produce identical complete-player-record and 64 KiB WRAM hashes on
-**5000/5000** frames (`build/evidence/replay-comparison.json`), and the road
-artefact check passes with **2503** frames, **1511** synthesized frames,
-**83,732** tested rows and **0** violations
-(`build/fps/task13-road/road-artifacts.json`). The changes are host-only; no
-guest write or new hook was added.
+**16000/16000** frames, with identical lap splits and finish clock
+(`build/evidence/replay16-comparison.json`). The road artefact check passes
+with **2503** frames, **1511** synthesized frames, **83,732** tested rows and
+**0** violations (`build/fps/task13-road/road-artifacts.json`). The changes are
+host-only; no guest write or new hook was added.
 
 ## Known artefacts and limitations
 
