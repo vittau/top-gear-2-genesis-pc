@@ -295,7 +295,7 @@ def logic_tokens(regs, with_times=False):
 
 
 # --------------------------------------------------------------- comparison
-def align_keyons(ref_keys, port_keys, probe=150):
+def align_keyons(ref_keys, port_keys, probe=400):
     """Index in `port_keys` where the reference key-on/off train starts.
 
     Key events only: they are the musical skeleton, they exist in both streams,
@@ -317,6 +317,28 @@ def align_keyons(ref_keys, port_keys, probe=150):
             if score == probe:
                 break
     return best, best_score / probe
+
+
+def refine_offset(ref_tokens, port_tokens, off, span=8, window=4000):
+    """Re-pick the start by matching the first `window` non-DAC tokens.
+
+    The key-on train alone cannot resolve a one-note shift when the driver
+    plays the same note on several channels in the same tick (Auckland scores
+    96 % two events away from the truth), so the coarse offset is re-scored
+    against the full event sequence."""
+    skip = ('dac',)
+    ref = [t for t in ref_tokens if t[0] not in skip][:window]
+    if not ref:
+        return off
+    best, best_score = off, -1.0
+    for cand in range(max(0, off - span), min(len(port_tokens) - 1, off + span) + 1):
+        sub = [t for t in port_tokens[cand:cand + window * 2] if t[0] not in skip][:window]
+        if not sub:
+            continue
+        score, _d, _e = sequence_match(ref, sub, top=0)
+        if score > best_score:
+            best, best_score = cand, score
+    return best
 
 
 def token_index_of_key(tokens, key_index):
@@ -475,8 +497,13 @@ def local_ratio(pairs, window=1.0, min_pairs=12):
     return out
 
 
-def detect_loop(keyons, min_seconds=10.0, probe=120):
-    """Loop period of a key-on train: best self-match lag, in seconds."""
+def detect_loop(keyons, min_seconds=10.0, probe=200, min_score=0.97):
+    """Loop period of a key-on train: best self-match lag, in seconds.
+
+    Only reported when the train really repeats (>= min_score of the probe).
+    Top Gear 2's phrases repeat about 1 % away from the true loop, which is the
+    same aliasing that defeated task 18's envelope alignment, so a weak match
+    is reported as "not resolvable" instead of as a loop."""
     n = len(keyons)
     if n < 4 * probe:
         return None
@@ -494,7 +521,7 @@ def detect_loop(keyons, min_seconds=10.0, probe=120):
             best = (lag, score)
         if score >= probe * 0.98:
             break
-    if not best or best[1] < probe * 0.9:
+    if not best or best[1] < probe * min_score:
         return None
     lag = best[0]
     period = keyons[lag][0] - keyons[0][0]
@@ -509,26 +536,42 @@ def compare(ref, port, label='', quiet=False):
     port_ticks = timer_ticks(port_regs)
     ref_keys = key_events(ref_regs)
     port_keys = key_events(port_regs)
-    ref_tokens = logic_tokens(ref_regs)
+    ref_tokens, ref_times = logic_tokens(ref_regs, with_times=True)
     port_tokens, port_times = logic_tokens(port_regs, with_times=True)
 
     key_off, key_score = align_keyons(ref_keys, port_keys)
     off = token_index_of_key(port_tokens, key_off)
+    off = refine_offset(ref_tokens, port_tokens, off)
     pairs = pair_events(ref_keys, port_keys[key_off:])
     reg = robust_regress(pairs)
     local = local_ratio(pairs)
 
-    # Compare the same musical span on both sides. The reference rip is one
-    # pass plus a little and the port capture is longer, so cut the port at the
-    # tick that corresponds to the reference's last one: extra music would
-    # otherwise count as insertions.
+    # Compare the same musical span on both sides: cut whichever side is
+    # longer at the other side's last tick, otherwise the extra music counts as
+    # insertions and drags the match ratio down.
     cut = len(port_tokens)
-    if len(port_ticks) > len(ref_ticks) >= 2:
-        port_end = port_ticks[len(ref_ticks) - 1] + 0.02
+    ref_keep = len(ref_tokens)
+    # The port capture starts at boot, so it carries ticks of whatever played
+    # before the route reached this song (the title theme). The alignment above
+    # found where the reference's first key event sits in the port, so count
+    # ticks from there before matching spans.
+    tick_off = 0
+    if key_off < len(port_keys):
+        t_song = port_keys[key_off][0]
+        while tick_off < len(port_ticks) and port_ticks[tick_off] < t_song:
+            tick_off += 1
+    port_song_ticks = len(port_ticks) - tick_off
+    if port_song_ticks >= len(ref_ticks) >= 2:
+        port_end = port_ticks[tick_off + len(ref_ticks) - 1] + 0.02
         cut = 0
         while cut < len(port_times) and port_times[cut] <= port_end:
             cut += 1
-    logic = logic_compare(ref_tokens, port_tokens[:cut], off)
+    elif len(ref_ticks) > port_song_ticks >= 2:
+        ref_end = ref_ticks[port_song_ticks - 1] + 0.02
+        ref_keep = 0
+        while ref_keep < len(ref_times) and ref_times[ref_keep] <= ref_end:
+            ref_keep += 1
+    logic = logic_compare(ref_tokens[:ref_keep], port_tokens[:cut], off)
     logic['align_key_score'] = key_score
     logic['span_seconds'] = pairs[-1][0] - pairs[0][0] if pairs else 0.0
 
