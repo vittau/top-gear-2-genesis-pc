@@ -214,10 +214,14 @@ Off) the stock hashes still pass: frame 60 `2A0B972960C5E325`, frame 300
 
 ## Off-mode guarantees
 
-With `--widescreen off` (or the mod turned off) the provider's width and row
+With `--widescreen off` and Hide overscan Off, the provider's width and row
 callbacks are never entered: `game_video_prepare_frame` leaves the frame
-unowned and the runner presents the native image. The measured stock hashes
-are unchanged (frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`).
+unowned and the runner presents the native image. With Hide overscan On the
+provider owns the rows only to blank the active top window band; every other
+row is the native one, and the width stays native. The measured stock hashes
+are unchanged (frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`) both
+with Hide overscan Off and On, because those boot/menu frames have no active
+top window.
 
 For the widened modes with HUD: Centered the native centre is copied from
 the original row after the margins are filled, so the canonical RAM, VRAM and native-centre pixels are
