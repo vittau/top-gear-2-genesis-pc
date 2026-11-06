@@ -37,6 +37,22 @@ Every tree has a snapshot at `refs/keep/<worktree>-pause`, pushed to origin.
 - Music slightly slow / wobbling: task 12.
 - Not yet answered: whether the 50 ms 60 fps latency is acceptable.
 
+## Owner feedback (second playtest, release-config build of f618606) — not yet dispatched
+
+1. **Tunnel looks wrong in widescreen.** Inside a tunnel, the native centre
+   draws black walls/ceiling with the exit window, while the margins keep
+   showing the outside sky/skyline from plane B. Screenshot:
+   `build/user-reports/tunnel-margins.png`. The margins must follow
+   whatever covers plane B in the native edge columns (tunnel walls).
+2. **Music still slow during races.** Forwarded to task 12.
+3. **Brief black margin lines still flicker on road tilts** (smaller than
+   before). It's a residual of the hill fix, probably on lines or frames
+   the audit doesn't cover (interpolated 60 fps frames?).
+4. **Red marks in the black top band.** This is stock window-plane
+   pattern 0 at native x=16–31, normally hidden by CRT overscan. Proposal:
+   a presentation option "Hide overscan" (default on) that blanks the top
+   window band.
+
 ## Open items after these
 
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
