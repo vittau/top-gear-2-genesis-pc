@@ -1,0 +1,59 @@
+diff --git a/runner/audio/mixer.c b/runner/audio/mixer.c
+index f3c55b1..c15f4d5 100644
+--- a/runner/audio/mixer.c
++++ b/runner/audio/mixer.c
+@@ -161,7 +161,7 @@ static void mixer_read_toggles(void) {
+     const char *e;
+     if ((e = getenv("GENESIS_MIXER_NO_SPREAD"))    && *e && *e!='0') s_no_spread   = 1;
+     if ((e = getenv("GENESIS_MIXER_NO_PAIRGUARD")) && *e && *e!='0') s_no_pairguard= 1;
+-    if ((e = getenv("GENESIS_MIXER_NO_LEFTOVER"))  && *e && *e!='0') s_no_leftover = 1;
++    if ((e = getenv("GENESIS_MIXER_RESET_LEFTOVER")) && *e && *e!='0') s_no_leftover = 1;
+     if ((e = getenv("GENESIS_MIXER_NO_CLAMP"))     && *e && *e!='0') s_no_clamp    = 1;
+     if (s_no_spread||s_no_pairguard||s_no_leftover||s_no_clamp)
+         fprintf(stderr, "[MIXER-TOGGLE] no_spread=%d no_pairguard=%d no_leftover=%d no_clamp=%d\n",
+@@ -322,12 +322,16 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+     }
+     if (frame_end_cycle > psg_prev) psg_advance (frame_end_cycle - psg_prev);
+ 
+-    /* Match clownmdemu's per-Iterate sync-state reset: the sub-sample
+-     * fractional cycle carried across is discarded at each frame
+-     * boundary there (sync.psg.current_cycle is a per-Iterate local
+-     * that resets to 0). Our persistent leftover caused sub-sample
+-     * drift that may have been the boop source on long runs. */
+-    if (!s_no_leftover) psg_reset_leftover();
++    /* Sub-sample clock remainder. This used to be discarded at every frame
++     * boundary (to mirror clownmdemu's per-Iterate sync reset); that loses up
++     * to 239 of the 240 master cycles in the PSG's sample divider on every
++     * frame, i.e. a systematic -112 ppm on top of the frame-length error, and
++     * it is why the offline tap was 3732 samples/frame instead of 3733.5.
++     * The remainder is kept now so the audio sample clock is the guest clock
++     * exactly (task 18 tempo fidelity); 3733/3734 samples alternate and the
++     * long-run average is exact. GENESIS_MIXER_RESET_LEFTOVER=1 restores the
++     * old per-frame reset for A/B measurement only. */
++    if (s_no_leftover) psg_reset_leftover();
+ 
+     /* Copy generated samples into the caller's buffers. */
+     size_t fm_avail  = ym2612_samples_available();
+diff --git a/runner/sim_step.c b/runner/sim_step.c
+index 5b530a1..02b31c0 100644
+--- a/runner/sim_step.c
++++ b/runner/sim_step.c
+@@ -12,8 +12,16 @@
+ 
+ /* One NTSC wall frame of master cycles: the audio chips advance this far every
+  * tick whatever the 68K did (see main.c's comment history on why the drain is
+- * the wall frame, not g_audio_cycle_counter). */
+-#define GENESIS_SIM_WALL_FRAME_MASTER_CYCLES 895780u
++ * the wall frame, not g_audio_cycle_counter).
++ *
++ * This MUST equal the machine's own frame length (LINES_TOTAL 262 scanlines x
++ * MASTER_PER_LINE 3420 master cycles = 896040, genesis_machine.c). It used to
++ * be 895780, i.e. 260 master cycles short, which made every frame emit 3732
++ * PSG samples instead of 3733.5: the whole audio stream played 388 ppm flat
++ * (0.04 %, 0.7 cents) against hardware, and the DRC had to absorb that as a
++ * permanent correction. Tempo fidelity (task 18) starts here: the guest clock
++ * and the audio sample clock must be the same clock. */
++#define GENESIS_SIM_WALL_FRAME_MASTER_CYCLES 896040u
+ 
+ /* glue.c frame bookkeeping (not in glue.h; main.c historically declared
+  * them at the call site). */
