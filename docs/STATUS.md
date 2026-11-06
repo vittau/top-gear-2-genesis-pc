@@ -1,4 +1,4 @@
-# Project status (overnight autonomous run, 2026-11-06)
+# Project status (2026-11-06)
 
 Overall estimate: about **88%** of the goal, which is a native Top Gear 2
 on Windows, Linux/Steam Deck and macOS, with widescreen and true 60 fps,
@@ -34,7 +34,7 @@ CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platf
 
 ## Questions for the owner (queued for 09:00)
 
-0. **CI minutes exhausted** for this month (GitHub Free private repo; macOS 10×, Windows 2×). The owner doesn't pay for GitHub. Resolved by policy, not billing: since 6884a90, CI runs only manually (Linux by default) or on `v*` tags (AGENTS.md "CI budget"). Cross-platform CI resumes when the monthly quota resets.
+0. ~~CI minutes~~ Resolved 2026-11-06: the repo is now **public** (unlimited Actions minutes on standard runners). The CI budget policy stays: manual (Linux by default) or `v*` tags only.
 
 1. Is the 50 ms display latency of 60 fps acceptable on the controller?
 2. Does BOTH sound acceptable on real speakers? Music notes can be stolen
@@ -49,7 +49,7 @@ CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platf
 - Each country's second championship race is still unvisited (it needs
   progression).
 - First public release: the owner decides when to make the repo public.
-  `vittau/top-gear-2-private-inputs` must stay private forever.
+  Done on 2026-11-06: history rewritten to the noreply e-mail, PolyForm NC license, public README; the repo is now public. `vittau/top-gear-2-private-inputs` must stay private forever.
 
 ## For playtests
 
