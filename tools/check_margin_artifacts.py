@@ -37,11 +37,15 @@ def check(path):
                                  'ground/separator' if row['atlas_y'] < 448 else 'panorama')
                 totals['examples'].append(row)
     totals['frames'] = len(frames)
+    totals['first_frame'] = min(frames) if frames else None
+    totals['last_frame'] = max(frames) if frames else None
+    totals['missing_frames'] = sorted(set(range(min(frames), max(frames) + 1)) - frames.keys()) if frames else []
     totals['incomplete_frames'] = [f for f, coverage in frames.items()
                                   if coverage != (1 << 448) - 1]
     totals['line_range'] = [min(lines), max(lines)] if lines else []
     totals['slope_range'] = [min(slopes), max(slopes)] if slopes else []
-    totals['passed'] = (totals['rows'] > 0 and not totals['incomplete_frames']
+    totals['passed'] = (totals['rows'] > 0 and not totals['missing_frames']
+                        and not totals['incomplete_frames']
                         and not totals['black_violations']
                         and not totals['ground_colour_violations'])
     return totals
