@@ -31,6 +31,7 @@ submodule pin is upstream `dd520f1`.
 
 | Task | Worktree | State |
 |---|---|---|
+| 20 BOTH via a second virtual chip (owner bug) | `tg2-both-dualchip` | Fourth playtest: BOTH sounds like noise because music and SFX fight over the same FM channels (shared-chip mix). Fix: route Z80 writes to chip A and 68k writes to chip B, then mix. Acceptance: BOTH ≈ MUSIC + SFX. Also fixes the menu showing MUSIC after BOTH. |
 | 19 VGM tempo + music logic check | `tg2-vgm-check` | Uses the owner's 4 VGM rips (`~/roms/genesis/tg2-vgm/`, never committed) to pin the remaining race-music tempo (-1.7% suspected, YM timer B) and to check note/instrument sequences against the port. |
 
 ## Questions for the owner (queued for 09:00)
