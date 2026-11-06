@@ -204,7 +204,7 @@ static int race(const GVDP *v) {
            (op == 0x2C9D || op == 0x601E || op == 0x6042);
 }
 /* The 512x512 B atlas holds four road templates in rows 0..431,
- * followed by the skyline. The road's center is the atlas seam (X=0),
+ * followed by ground separators and the skyline. The road's center is the atlas seam (X=0),
  * with exterior ground at X=256. Extend that exterior, never another road.
  * The skyline is an authored repeating panorama and retains its wrap. */
 static int road_x(int nx, int scroll, int py) {
@@ -369,10 +369,11 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
     }
     if (line == 223) fflush(margin_audit);
 }
-static int synthesizing;
+static int synthesizing, audit_race_frame;
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     int origin = (w - nw) / 2;
+    if (!line) audit_race_frame = nw == 256 && race(v);
     if (line < 8) {
         memcpy(top_rows[line].reg, v->reg, sizeof top_rows[line].reg);
         memcpy(top_rows[line].vsram, v->vsram, sizeof top_rows[line].vsram);
@@ -387,7 +388,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
     if (!race(v) || !(v->reg[1] & 64)) {
         ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
-        if (nw == 256 && !word(g_ram, 0x189E))
+        if (audit_race_frame)
             audit_margins(v, line, native, nw, out, w);
         return;
     }
@@ -416,7 +417,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
         unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
         out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
-    audit_margins(v, line, native, nw, out, w);
+    if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
     /* Reverse allocation order matches the native backward SAT builder. */
     unsigned char covered[4096] = {0};
     for (unsigned n = shown ? shown->count : 0; n > 0; --n) {
@@ -462,7 +463,7 @@ typedef struct { int left, right, valid; } RoadGeometry;
 static RoadGeometry road_geometry(const GVDP *v, int line) {
     RoadGeometry result = {256, -257, 0};
     unsigned py = (line + v->vsram[1]) & 511;
-    if (py >= 432) return result; /* panorama, not a road template */
+    if (py >= 432) return result; /* ground separator/panorama, not a road template */
     unsigned base = (v->reg[4] & 7) << 13;
     for (int x = -256; x < 256; ++x) {
         unsigned attr, nib = pixel(v, base, x, py, &attr) & 15;
