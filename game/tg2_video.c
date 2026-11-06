@@ -12,6 +12,16 @@ static int mode;
 static int race60;
 static uint64_t present_frame;
 static void presentation_clear(void);
+/* Stock CRT overscan hid the eight-row window band at the top of the race
+ * screen. Hiding it is presentation-only: four of the eight rows carry the
+ * window-plane colour artefacts documented in docs/WIDESCREEN.md. */
+static int hide_overscan = 1;
+void tg2_video_set_hide_overscan(int on) { hide_overscan = on != 0; }
+int tg2_video_get_hide_overscan(void) {
+    const char *s = getenv("TG2_HIDE_OVERSCAN");
+    if (s) return !(s[0] == '0' || s[0] == 'n' || s[0] == 'N' || s[0] == 'f' || s[0] == 'F');
+    return hide_overscan;
+}
 static int hud_edges, hud_configured;
 void tg2_video_set_hud_mode(int edges) {
     hud_edges = edges != 0;
@@ -55,7 +65,11 @@ static int configure(const char *s) {
     return 1;
 }
 static int enabled(void) { return mode != 0; }
-static int renderer_enabled(void) { return mode != 0 || race60; }
+/* Ownership is independent of the viewport: Hide overscan must also reach a
+ * stock 4:3 frame, whose width stays native. */
+static int renderer_enabled(void) {
+    return mode != 0 || race60 || tg2_video_get_hide_overscan();
+}
 static int width(int dw, int dh, int nw, int nh) {
     double w = nh * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
@@ -378,14 +392,43 @@ static unsigned window_margins(const GVDP *v, int line, const uint32_t *native,
         for (int x = origin + nw; x < w; ++x) out[x] = native[nw - 1];
     return mask;
 }
-/* Private per-line margin evidence, before sprites and HUD relocation. */
+/* Plane A also carries raster-positioned full-screen effects, such as the
+ * Auckland tunnel wall and its opening. When an opaque high-priority plane-A
+ * texel is the visible native edge pixel, the margin continues that native
+ * edge colour to the screen edge, so a wall never turns into the plane-B
+ * scenery it hides. Sampling plane A farther out is not equivalent: the
+ * overlay's silhouette can end exactly at the native edge, and continuing a
+ * neighbouring texel would leave a seam. The native centre is untouched, and
+ * an ordinary plane-B edge (or a sprite over it) never qualifies. */
+static void plane_a_margins(const GVDP *v, int line, const uint32_t *native,
+                            int nw, const uint32_t *pal, uint32_t *out, int w,
+                            int ha, int va, unsigned ba) {
+    int origin = (w - nw) / 2;
+    for (int side = 0; side < 2; ++side) {
+        int edge = side ? nw - 1 : 0;
+        unsigned attr, ap = pixel(v, ba, edge - ha, line + va, &attr);
+        if (!ap || !(attr & 0x8000) || pal[ap] != native[edge]) continue;
+        if (side)
+            for (int x = origin + nw; x < w; ++x) out[x] = native[edge];
+        else
+            for (int x = 0; x < origin; ++x) out[x] = native[edge];
+    }
+}
+/* Private per-line margin evidence, before sprites and HUD relocation.
+ * Optional frame window keeps focused investigations small; a full route run
+ * leaves both unset and audits every presented picture, synthesized included. */
 static FILE *margin_audit;
 static int margin_audit_checked;
+static uint64_t margin_audit_from, margin_audit_to = ~(uint64_t)0;
 static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                           int nw, const uint32_t *out, int w) {
     if (!margin_audit_checked) {
         margin_audit_checked = 1;
         const char *path = getenv("TG2_MARGIN_AUDIT");
+        const char *from = getenv("TG2_MARGIN_AUDIT_FROM");
+        const char *to = getenv("TG2_MARGIN_AUDIT_TO");
+        if (from && *from) margin_audit_from = strtoull(from, NULL, 10);
+        if (to && *to) margin_audit_to = strtoull(to, NULL, 10);
         if (path && *path) {
             margin_audit = fopen(path, "w");
             if (!margin_audit) { perror(path); exit(1); }
@@ -393,6 +436,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         }
     }
     if (!margin_audit || w <= nw) return;
+    if (present_frame < margin_audit_from || present_frame > margin_audit_to) return;
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
     unsigned hbase = (v->reg[13] & 63) << 10;
     int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
@@ -440,6 +484,14 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
     }
     for (int x = 0; x < w; ++x)
         out[x] = 0xFF000000;
+    /* Presentation-only: the stock top window band carried coloured
+     * window-plane artefacts that CRT overscan hid. Blank the whole band in
+     * every output mode, while an inactive window keeps menu rows intact. */
+    if (tg2_video_get_hide_overscan() && line < 8 &&
+        window_at(v, line, 0) && window_at(v, line, nw - 1)) {
+        if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
+        return;
+    }
     if (!race(v) || !(v->reg[1] & 64)) {
         ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
@@ -475,6 +527,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
         out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
     unsigned window_mask = window_margins(v, line, native, nw, out, w);
+    plane_a_margins(v, line, native, nw, pal, out, w, ha, va, ba);
     if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
     /* Reverse allocation order matches the native backward SAT builder. */
     unsigned char covered[4096] = {0};
@@ -738,7 +791,18 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
      * Only translate its geometry horizontally; never interpolate atlas Y. */
     unsigned hs = mix_wrap(hscroll(a, line, 1), hscroll(b, line, 1), 511);
     RoadGeometry ga = from_picture->road[line], gb = to_picture->road[line];
-    if (ga.valid && gb.valid) {
+    /* Ground/separator rows (atlas Y 432..447) have an opaque half and a
+     * transparent half. Both endpoints can be non-road there, so the road
+     * envelope below does not constrain the interpolated scroll. Translating
+     * such a row can move the transparent half onto the native edge and leave
+     * a one-line black gap (visible only on synthesized pictures). Keep the
+     * row's own discrete scroll instead, exactly like its atlas Y, VRAM and
+     * palette. Panorama rows 448..511 remain horizontally interpolated. */
+    unsigned source_py = (line + source->vsram[1]) & 511;
+    if (!(ga.valid && gb.valid) && !(ga.valid != gb.valid) &&
+        source_py >= 432 && source_py < 448)
+        hs = hscroll(source, line, 1);
+    else if (ga.valid && gb.valid) {
         RoadGeometry shape = nearer_b ? gb : ga;
         int ca = 128 + ((hscroll(a, line, 1) + 128) & 511) - 256;
         int cb = 128 + ((hscroll(b, line, 1) + 128) & 511) - 256;
@@ -786,10 +850,12 @@ void tg2_video_command(int id, const char *json) {
                      "{\"id\":%d,\"ok\":true,\"enabled\":%d,\"wide_lines\":%u,\"native_lines\":%u,"
                      "\"published\":%u,\"displayed\":%u,\"pieces\":%u,\"overflow\":%u,"
                      "\"sat_matches\":%u,\"margin_pieces\":%u,\"sprite_margin_pixels\":%u,"
-                     "\"hud_edges\":%d,\"hud_plane_pixels\":%u,\"hud_marker_pixels\":%u",
+                     "\"hud_edges\":%d,\"hud_plane_pixels\":%u,\"hud_marker_pixels\":%u,"
+                     "\"hide_overscan\":%d",
                      id, enabled(), wide_lines, native_lines, serial, shown ? shown->serial : 0,
                      shown ? shown->count : 0, overflow, matched_pieces, margin_pieces,
-                     frame_margin_pixels, tg2_video_get_hud_mode(), hud_plane_pixels, hud_marker_pixels);
+                     frame_margin_pixels, tg2_video_get_hud_mode(), hud_plane_pixels, hud_marker_pixels,
+                     tg2_video_get_hide_overscan());
     n += snprintf(out + n, sizeof out - n,
                   ",\"race60\":%d,\"presentation_delay_frames\":%d,\"presentation_frame\":%llu,"
                   "\"from_frame\":%llu,\"to_frame\":%llu,\"phase_num\":%u,\"phase_den\":%u",
