@@ -3,7 +3,7 @@
  * IRQ vectors point to installed RAM code; the engine resolves RAM execution
  * through recomp_call_addr. The stock build is byte-identical to the original
  * 4:3 port. The optional "60 fps race" mode is described below and in
- * docs/FRAMERATE.md; it is off unless the player enables it. */
+ * docs/FRAMERATE.md; its preference is latched at each race start. */
 #include "game_spec.h"
 #include "genesis_runtime.h"
 #include "tg2_video.h"
@@ -16,8 +16,6 @@ static const GameDebugCommand commands[] = {
 };
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 /* The guest always runs at stock cycle cost. Only the host video adapter
  * uses this race-latched preference; no IRQ hooks or temporary RAM writes. */

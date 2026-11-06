@@ -51,7 +51,7 @@ def route_to_input_script(route, path: Path, shift: int = 0, trace_end: int = 0)
     return last
 
 
-def write_exact_trace(out):
+def write_exact_trace(out, expected):
     """Input-script snapshots have an exact V-int label; TCP sampling can skip.
 
     Hash all WRAM and the entire player record as well as decoding known fields:
@@ -59,8 +59,9 @@ def write_exact_trace(out):
     """
     from tg2_runner import STATE_LO, STATE_LEN, P_BASE
     files = sorted((out / 'state-ram').glob('frame-*.ram'))
-    if not files:
-        return
+    frames = [int(path.stem.split('-')[1]) for path in files]
+    if frames != list(range(1, expected + 1)):
+        raise RuntimeError(f'incomplete V-int trace: expected {expected} snapshots, got {len(frames)}')
     with (out / 'state-trace.csv').open('w') as f:
         writer = csv.writer(f)
         writer.writerow(['frame', 'clock', 'lap', 'pos', 'lat_raw', 'view', 'speed',
@@ -115,7 +116,7 @@ def main():
     if a.turbo:
         args.append('--turbo')
     r = Runner(port=a.port, out=out, exe=a.exe, rom=a.rom, widescreen=a.widescreen,
-               max_frames=last + a.grace + 600, env_extra=env, extra_args=args,
+               max_frames=max(last + a.grace, a.trace_frames) + 600, env_extra=env, extra_args=args,
                video_driver='offscreen' if a.turbo else 'dummy')
     trace, races = [], []
     result = 'error'
@@ -166,7 +167,7 @@ def main():
                 result = 'finished'
                 if st.frame > a.trace_frames:
                     break
-            if st.frame > last + a.grace:
+            if st.frame > max(last + a.grace, a.trace_frames):
                 result = 'route-ended'
                 break
             if a.monitor_every > 1:
@@ -203,7 +204,7 @@ def main():
     finally:
         code = r.stop()
         if a.trace_frames:
-            write_exact_trace(out)
+            write_exact_trace(out, a.trace_frames)
         from tg2_race_driver import manifests
         m = manifests(out)
         path = out / 'summary.json'
