@@ -231,8 +231,14 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     if (!tg2_video_get_hud_mode() || nw != 256 || w <= nw)
         return;
     int origin = (w - nw) / 2, right = w - nw - origin;
-    unsigned char removed[256] = {0}, sprites[256] = {0}, shifted[4096] = {0};
-    unsigned short spr_attr[256] = {0};
+    /* One row at a time, single-threaded: keep the scratch off the stack and
+     * zero only what this row uses. */
+    static unsigned char removed[256], sprites[256], shifted[4096];
+    static unsigned short spr_attr[256];
+    memset(removed, 0, sizeof removed);
+    memset(sprites, 0, sizeof sprites);
+    memset(shifted, 0, sizeof shifted);
+    memset(spr_attr, 0, sizeof spr_attr);
     int dirty = 0;
     /* The HUD raster phase uses signed-negative 10-bit V-scroll (-14 on
      * this ROM). During the initial window-plane band, nonnegative plane-A
@@ -253,7 +259,8 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
      * into the SAT. Read the displayed SAT, never the next CPU picture. */
     unsigned sat = (v->reg[5] & 127) << 9;
     int link = 0, on_line = 0, budget = nw;
-    unsigned char occupied[4096] = {0};
+    static unsigned char occupied[4096];
+    memset(occupied, 0, sizeof occupied);
     for (int n = 0; n < 64; ++n) {
         unsigned e = sat + link * 8;
         int y = (word(v->vram, e) & 1023) - 128;
@@ -371,7 +378,8 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
         out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
     /* Reverse allocation order matches the native backward SAT builder. */
-    unsigned char covered[4096] = {0};
+    static unsigned char covered[4096];
+    memset(covered, 0, sizeof covered);
     for (unsigned n = shown ? shown->count : 0; n > 0; --n) {
         const Piece *s = &shown->pieces[n - 1];
         int sw = (((s->size >> 2) & 3) + 1) * 8, sh = ((s->size & 3) + 1) * 8;
@@ -440,7 +448,6 @@ static int capture_picture;
 static Picture *from_picture, *to_picture;
 static unsigned phase_num, phase_den;
 static Scene mixed_scene;
-static GVDP mixed_vdp;
 /* Optional read-only qualification stream. Each row owns three complete
  * plane-B index strips: the two real endpoints and the actual presented row.
  * Export before sprites/HUD so occlusion cannot hide broken road topology. */
@@ -469,13 +476,19 @@ static unsigned hscroll(const GVDP *v, int line, int plane) {
     int y = mode == 0 ? 0 : mode == 2 ? line & ~7 : line;
     return word(v->vram, base + y * 4 + plane * 2) & 1023;
 }
-static void audit_row(int line, const GVDP *a, const GVDP *b, const GVDP *image) {
+static void audit_row(int line, const GVDP *a, const GVDP *b, const GVDP *image,
+                      int image_hs) {
     if (!road_audit || line < 140 || line > 212) return;
+    /* The presented strip keeps the translated H-scroll explicitly: the row's
+     * endpoint snapshots are restored before this export, so the image must
+     * not be read back from the (now original) snapshot. Sprites never reach
+     * this plane-B-only export. */
     const GVDP *sources[] = {a, b, image};
     for (int i = 0; i < 3; ++i) {
         const GVDP *v = sources[i];
         unsigned py = (line + v->vsram[1]) & 511;
-        unsigned hs = hscroll(v, line, 1), base = (v->reg[4] & 7) << 13;
+        unsigned hs = i == 2 ? (unsigned)image_hs : hscroll(v, line, 1);
+        unsigned base = (v->reg[4] & 7) << 13;
         audit_u32(py);
         audit_u32(hs);
         unsigned char row[1024];
@@ -502,6 +515,11 @@ void tg2_video_frame(uint64_t frame, int on) {
     present_frame = frame;
 }
 static int mix_reverse;
+/* Undo log for the per-row VDP edit (see scanline()). The presented row is
+ * produced by patching the endpoint's own private snapshot and restoring it,
+ * instead of copying the whole 64 KiB GVDP for every presented scanline. */
+static unsigned sprite_undo_addr[64], sprite_undo_x[64], sprite_undo_y[64];
+static unsigned sprite_undo_count;
 static int mix(int a, int b) {
     unsigned num = mix_reverse ? phase_den - phase_num : phase_num;
     return a + (int)lround((double)(b - a) * num / phase_den);
@@ -539,6 +557,12 @@ static void mix_sprites(GVDP *out, const GVDP *b) {
         if (best >= 0 && distance < 96) {
             used[best] = 1;
             unsigned q = sb + best * 8;
+            if (sprite_undo_count < 64) {
+                sprite_undo_addr[sprite_undo_count] = a;
+                sprite_undo_y[sprite_undo_count] = word(out->vram, a);
+                sprite_undo_x[sprite_undo_count] = word(out->vram, a + 6);
+                ++sprite_undo_count;
+            }
             put_word(out->vram, a, mix_wrap(ay, word(b->vram, q) & 1023, 1023));
             put_word(out->vram, a + 6, mix_wrap(ax, word(b->vram, q + 6) & 511, 511));
         }
@@ -608,7 +632,9 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     if (!line) {
         capture_picture = 0;
         from_picture = to_picture = NULL;
-        if (race60 && nw == 256 && race(v)) presentation_begin(v);
+        /* An overdue frame is not presented: skip the whole synthesis so the
+         * guest tick can be repaid sooner. Guest rendering is unaffected. */
+        if (race60 && !genesis_frame_overdue() && nw == 256 && race(v)) presentation_begin(v);
     }
     /* Capture every row of an eligible picture, including transient raster
      * bands that use the original row producer below. */
@@ -616,14 +642,21 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
         pictures[picture_index].row[line] = *v;
         pictures[picture_index].road[line] = road_geometry(v, line);
     }
-    if (!race60 || line >= PRESENT_ROWS || nw != 256 || !race(v) || !from_picture) {
+    if (!race60 || line >= PRESENT_ROWS || nw != 256 || !race(v) || !from_picture ||
+        genesis_frame_overdue()) {
         draw_scanline(v, line, native, nw, out, w);
         return;
     }
     const GVDP *a = &from_picture->row[line], *b = &to_picture->row[line];
     int nearer_b = phase_num * 2 >= phase_den;
     const GVDP *source = nearer_b ? b : a;
-    mixed_vdp = *source;
+    /* The snapshot is host-only, immutable between captures and never read by
+     * the guest, so the row can be rendered from it directly after applying
+     * the two edits below. Copying the complete VDP state per presented
+     * scanline cost ~66 KiB x 224 = 14.8 MiB of memory traffic every frame at
+     * 60 fps (and evicted the very VRAM the renderer then reads); the undo
+     * log is at most 64 sprite entries plus one scroll word. */
+    GVDP *row_vdp = (GVDP *)source;
     /* VSRAM selects a row in one of four authored road atlases, carrying
      * width, stripe phase, palette bank and ground type together. Keep that
      * entire discrete row, VRAM, CRAM and register state from ONE endpoint.
@@ -651,26 +684,35 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     } else if (ga.valid != gb.valid) {
         hs = hscroll(source, line, 1); /* horizon/segment boundary: snap row */
     }
-    unsigned base = (mixed_vdp.reg[13] & 63) << 10;
-    int hm = mixed_vdp.reg[11] & 3;
+    unsigned base = (row_vdp->reg[13] & 63) << 10;
+    int hm = row_vdp->reg[11] & 3;
     int hy = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
-    put_word(mixed_vdp.vram, base + hy * 4 + 2, hs);
+    unsigned scroll_slot = base + hy * 4 + 2;
+    unsigned scroll_saved = word(row_vdp->vram, scroll_slot);
+    put_word(row_vdp->vram, scroll_slot, hs);
+    sprite_undo_count = 0;
     mix_reverse = nearer_b;
-    mix_sprites(&mixed_vdp, nearer_b ? a : b);
+    mix_sprites(row_vdp, nearer_b ? a : b);
     mix_reverse = 0;
-    audit_row(line, a, b, &mixed_vdp);
     uint8_t indices[GVDP_MAX_WIDTH];
     uint32_t pixels[GVDP_MAX_WIDTH];
-    int count = gvdp_render_scanline(&mixed_vdp, line, indices);
+    int count = gvdp_render_scanline(row_vdp, line, indices);
     for (int x = 0; x < count; ++x)
         pixels[x] = indices[x] < 192 ? genesis_dac_cram_to_argb(
-            mixed_vdp.cram[indices[x] & 63], indices[x] >> 6) : 0xFF000000;
+            row_vdp->cram[indices[x] & 63], indices[x] >> 6) : 0xFF000000;
     const Scene *saved = shown;
     shown = &mixed_scene;
     synthesizing = 1;
-    draw_scanline(&mixed_vdp, line, pixels, nw, out, w);
+    draw_scanline(row_vdp, line, pixels, nw, out, w);
     synthesizing = 0;
     shown = saved;
+    put_word(row_vdp->vram, scroll_slot, scroll_saved);
+    for (unsigned i = 0; i < sprite_undo_count; ++i) {
+        put_word(row_vdp->vram, sprite_undo_addr[i], sprite_undo_y[i]);
+        put_word(row_vdp->vram, sprite_undo_addr[i] + 6, sprite_undo_x[i]);
+    }
+    /* Endpoint snapshots must read as real pictures in the audit export. */
+    audit_row(line, a, b, row_vdp, (int)hs);
 }
 void tg2_video_command(int id, const char *json) {
     char out[22000];
