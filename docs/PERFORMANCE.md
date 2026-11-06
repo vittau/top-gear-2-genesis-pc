@@ -175,24 +175,32 @@ seconds of boot, then it settles below 0.07 %. Before, it was 0.5 % for 26 s.
 
 ## 5. 60 s windowed recording under deliberate load
 
-Release build, frames 3100-4400 (19.2 s of race, 1150 frames - the ring window
-is 24 576 frames, so a longer capture is available on request), **two CPU
-burners running in parallel** on a machine already shared with other work:
+Release build, **3600 consecutive frames = 60.04 s of wall time** (frames
+2000-5600 of the baseline route, so the window contains the menu lead-in, the
+whole measured race and the stop), with **two CPU burners running in parallel**
+on a machine already shared with other work:
 
 | Metric | Value |
 |---|---|
-| guest clock vs wall | **-2.2 ppm** (59.9400 fps measured) |
-| audio produced vs wall | -113 ppm |
-| audio device clock vs wall | -619 ppm (host audio clock, absorbed by the bridge) |
-| audio drift (produced seconds - wall) | **-2.2 ms** over 19.2 s |
-| DRC ratio | -1012 … +404 ppm (abs mean 413 ppm) |
-| ring fill | 41.8 … 74.4 ms |
+| window | frames 2000-5600, **60.043 s** |
+| guest clock vs wall | **-2.7 ppm** (59.9398 fps) |
+| audio drift (produced seconds - wall) | **-6.8 ms over 60 s** (-113 ppm) |
+| DRC ratio | -970 … +273 ppm |
+| ring fill | 44.6 … 74.0 ms |
 | underruns / conceal events | **0 / 0** |
-| CPU work p50 / p95 | 7.36 ms / 10.56 ms (63.3 % budget) |
+| CPU work p95 / budget (race subset) | 63.2 % |
 
-The raw series is `build/perf/merge-load60/frame-stats.csv` (one row per frame:
-interval, wait, present, nine wall phases, nine CPU phases, DRC ratio, fill,
-underrun/conceal counters, pushed/pulled sample counts).
+The residual +6.8 ms/60 s is the host audio device clock (PipeWire reported
+-619 ppm against the pacer clock in the same runs), not frame pacing: the guest
+itself stays within 3 ppm of 59.940 fps for the whole minute.
+
+Same run restricted to the race (frames 3100-5600, 41.7 s): guest -6.5 ppm,
+drift -4.9 ms, ratio -970…+273 ppm, 0 underruns, 0 conceals.
+
+Raw series: `build/perf/merge-load60s/frame-stats.csv` (one row per frame:
+frame, wall stamp, interval, pacer wait, present, nine wall phases, nine CPU
+phases, DRC ratio (ppm), ring fill (µs), underrun/conceal counters, pushed and
+pulled sample counts).
 
 ## 6. Hotspots and fixes
 
