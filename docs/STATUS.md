@@ -56,6 +56,8 @@ submodule pin is upstream `dd520f1`.
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
 - Each country's second championship race is still unvisited (it needs
   progression).
+- Quiver Launcher listing: the owner submits the project after the first real release (v0.1.0) exists, so
+  Quiver can review it. Window screenshot for the form: `~/Pictures/tg2-quiver-screenshot.png` (outside git).
 - First public release: the owner decides when to make the repo public.
   Done on 2026-11-06: history rewritten to the noreply e-mail, PolyForm NC license, public README; the repo is now public. `vittau/top-gear-2-private-inputs` must stay private forever.
 
