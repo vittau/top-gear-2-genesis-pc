@@ -13,6 +13,7 @@ headlessly. The owner has played one short session (Linux, Ryzen 5 3500U).
 | Widescreen | Adaptive / 16:9 / 21:9 race renderer: road, background, sprites in the margins. HUD Centered or Edges. Off is byte-identical to stock. | `WIDESCREEN.md` |
 | 60 fps | Stock simulation plus host-only interpolation. Identical WRAM over 16000 frames; 60 pictures/s; no road artefacts; adds 50 ms display latency. | `FRAMERATE.md` |
 | Hill margins (owner bug) | Black margin bands on downhills and the top-window line fixed; per-line margin audit at 0 violations in 8 combinations. Merged 2026-11-06. | `WIDESCREEN.md` |
+| All 16 tracks | Password codec reversed (`PASSWORDS.md`, `tools/tg2_password.py`). All 16 countries raced for 62 s in Off and 16:9+Edges, 0 manifest entries; rain, night, fog and snow covered. Nitro = C button. A horizon black-band artefact seen on 5 tracks was the pre-hill-fix renderer; re-checked clean on main 1a787fb. | `VALIDATION.md` |
 | Options | Widescreen / 60 fps / HUD in the launcher and the in-game overlay (gamepad: Back+RB), persisted in `settings.ini [mods.*]`. | `RELEASING.md` |
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
 | ROM | Auto-detected by CRC next to the executable, whatever the file name. | `BRINGUP.md` |
@@ -27,7 +28,6 @@ Every tree has a snapshot at `refs/keep/<worktree>-pause`, pushed to origin.
 | Task | Worktree / branch | State |
 |---|---|---|
 | 12 Performance + audio pacing (owner bug) | `tg2-performance` | Music tempo wobbles under CPU load; release build is better than dev. Also asked: decouple music from frame pacing, and fix the feedback replay being written to `~/.local/bin/logs`. Nothing pushed yet. |
-| 10 All-track coverage | `tg2-track-coverage` | Reversing the password system to reach all 16 tracks, rain and nitro. Uncommitted password tools only. |
 | 05 Music + SFX "BOTH" | `tg2-audio-both` | Stalled 2026-11-05 18:48: the session died after a provider overload. Restarted 2026-11-06 with a fresh OpenCode worker, continuing from commit 144132c and the uncommitted draft. |
 
 ## Owner feedback (first playtest)
@@ -60,7 +60,7 @@ Every tree has a snapshot at `refs/keep/<worktree>-pause`, pushed to origin.
 
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned; the payload is a folder, not a `.app`).
-- 14 of 16 tracks, rain and nitro not yet seen (task 10).
+- Each country's second championship race is still unvisited (it needs progression).
 - First public release: the owner decides when to make the repo public.
   `vittau/top-gear-2-private-inputs` must stay private forever.
 
