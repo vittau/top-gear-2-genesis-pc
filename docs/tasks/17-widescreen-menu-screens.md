@@ -51,7 +51,9 @@ When widescreen is on, the track intro screen fills the whole window:
 
 Then survey **every** other non-race screen and extend every one that can
 be extended correctly (owner requirement); pillarbox only what truly can't
-be:
+be. Screens whose background is plain black need no work: pillarboxing
+them is visually identical, so the owner explicitly accepts it. Focus on
+screens with visible backgrounds (patterns, scenery, artwork):
 - title / "TOP GEAR 2" menu background;
 - RACE/PLAYER/GEARS/SPEED/CONTROL setup;
 - shop/upgrades;
