@@ -374,3 +374,278 @@ the race and hold accelerate at frame 3050.
   BOTH is deselected.
 * A second virtual YM2612+PSG (clean layered mix) remains the next step if
   the shared-chip mix is not acceptable by ear.
+
+## 9. Tempo fidelity (task 18)
+
+The owner's report after the real-device fix was: no pops any more, but the
+music still changes speed sometimes, and it sounds slightly slower than
+normal. This section measures the music's tempo and pitch against an
+independent reference instead of trusting the ear or the engine's counters.
+
+### 9.1 Reference: an accurate emulator, rendered offline
+
+`tools/gpgx_render.c` is a headless libretro frontend (about 400 lines) used
+only for this measurement. It loads a core (`genesis_plus_gx_libretro.so`,
+installed under `~/tools/retroarch`, never committed), drives the pad from the
+same exact-wall-frame JSON route the port uses, steps the core one frame at a
+time, and writes the core's own audio callback stream to a WAV (native 44100
+Hz, no host resampling) plus PPM screenshots at the route's shot frames. It
+opens no window and never touches the host mixer, so a 93 s reference render
+takes 2.7 s and is bit-reproducible.
+
+Provenance: Genesis Plus GX (libretro nightly, 2025-11-05 build) on the
+owner's cartridge dump, NTSC, region autodetect, no filters, no overclock.
+The reference is a *record*, not a claim about the emulator's own accuracy:
+GPGX is cycle-accurate for the Z80/YM2612 timing this measurement depends on.
+
+The route reaches the same game state in both: title screen (frame 600), main
+menu (1350), and - with the extra SOUND page steps described below - a race
+with RACE SOUND = MUSIC at frame ~3900. Screenshots from both sides are in
+`build/ref/`.
+
+### 9.2 `tools/audio_tempo_compare.py`
+
+Both recordings are turned into a 100 Hz envelope on log-spaced bands (each
+band z-scored, so a level or mix difference between the port and the emulator
+does not bias the comparison). The measured envelope is then warped over a
+tempo-ratio grid and correlated against the reference, with a lag search, which
+gives
+
+* the **global tempo ratio** (measured/reference), in % and in BPM (the
+  reference BPM comes from the envelope's autocorrelation, not from a guess);
+* the **local tempo ratio** in 1 s steps from sliding 8 s windows, with the
+  weighted standard deviation and the largest deviation;
+* the **pitch offset in cents**, from the maximum of the long-term log-spectrum
+  cross-correlation over a cents-shift grid.
+
+`--selftest` synthesises a melody with known note times and pitches and then
+three tempo variants (+1.5 %, -1.0 %, +0.1 %) and two pitch variants (+25 c,
+-40 c, event times unchanged). All five are recovered within 0.02 % tempo and
+1 cent pitch, and each variant is reported in its own dimension only, so the
+tool is qualified rather than trusted.
+
+### 9.3 What the Z80 actually does (ROM evidence)
+
+Disassembling the resident driver (`tools/z80_disasm.py`, a 200-line
+bring-up disassembler; the image is ROM `$02589A..$027899` copied to
+`$A00000`) shows the music clock is **not** the 68k and **not** the Z80's
+vblank IRQ:
+
+```
+A00042  call $0D30        ; init
+A00045  call $0BE1        ; stop timer B, write reg $26=$BE, start timer B
+A00048  ld a,($8006)
+A0004B  ld ($0080),a      ; publish the mailbox status byte ($A00080)
+A0004E  ei
+A0004F  call $0BFC        ; wait for YM2612 status bit 1 (timer B), reload
+A00052  call $0627        ; process one music tick
+A00055  jr   $0A4F
+...
+A00038  push af / push hl / inc ($008C) / pop hl / pop af / ei / ret   ; vblank
+```
+
+The vblank handler only bumps a counter at `$008C`; the sequencer tick is
+`call $0BFC` waiting for `ld a,($4000) / and $02` - the YM2612 **timer B
+overflow flag** - and then restarting the timer. So the music tempo is the
+timer B period, which the engine models synchronously for CPU-visible status
+reads (`runner/video/genesis_bus.c`, `ym_timer_update`).
+
+Measured from the chip-write stream (`GENESIS_AUDIO_WRITEDUMP`, tick = the
+`$27=$2E` reload written at Z80 PC `$0C4F`): 452 ticks over 9.41 s = 48.0
+ticks/s, median interval 19.87 ms, against the modelled timer B period
+`(256-$BE) * 16 * 144 * 7` master cycles = 19.83 ms. The guest-side clock is
+therefore within 0.2 % of the model, and scaling the modelled period by 2 or
+0.5 scales the tick rate by exactly 2 or 0.5 (`GENESIS_YM_TIMER_SCALE`, a
+measurement-only knob, not committed): the driver is timer-bound, not
+processing-bound.
+
+### 9.4 H1 audit: is the Z80 starved?
+
+The candidate H1 mechanisms were BUSREQ held longer than hardware, a wrong Z80
+cycle budget per line, a wrong timer rate, and bank/wait-state accounting. A
+temporary instrument in `step_z80` counted every slice (removed before commit;
+the numbers are reproduced here):
+
+```
+[Z80-STATS] steps=183400 cycles=33898128 skipped_reset=34349 skipped_busreq=375
+```
+
+Over 700 wall frames that is 262 slices per frame (228 Z80 cycles each =
+59,736 cycles/frame = 3.579545 MHz exactly). 34,349 slices were skipped
+because the Z80 is held in reset before the driver upload (frames 0-131) and
+**375 because the 68k held BUSREQ**, i.e. 0.66 lines per frame = **0.25 % of
+the Z80's cycles**, and those are the frames where the 68k really requests the
+bus. `Z80_PER_LINE 228` and `MASTER_PER_LINE 3420` are the exact hardware
+ratio (53.693175/3.579545 = 15.0). No cycle budget is lost: the debt carries
+across slices, so whole-instruction overshoot is repaid rather than dropped.
+
+So the guest side had one genuine clock defect, and it is in the **audio
+sample clock**, not the CPU budget: the mixer was drained with
+`895780` master cycles per frame while the machine runs `262 * 3420 = 896040`,
+and the PSG's sub-sample divider remainder was discarded at every frame
+boundary. That is `3732` samples per frame instead of `3733.5`: the whole
+stream ran **-402 ppm** (0.04 %, 0.7 cents) against hardware, and the DRC had
+to absorb it as a permanent correction. Patch `0008` fixes both (exact frame
+length, remainder carried); the offline tap is now exactly `3733.5`
+samples/frame and the framebuffer hashes are unchanged (frame 60
+`2A0B972960C5E325`, frame 300 `1131D937D70234FD`).
+
+## 10. Feasibility map: a decoupled Z80 + YM2612 + PSG clock domain
+
+The owner asked whether the 68k/Z80 coupling can be loosened so the music no
+longer depends on 68k or video timing (design C: run the Z80 and both sound
+chips on the audio device clock, in realtime mode only). This is the map the
+implementation would need; it is a feasibility study, not a change: nothing in
+this section is implemented, and the offline deterministic mode stays coupled.
+
+### 10.1 Every 68k <-> Z80 interaction in this game
+
+ROM evidence (disassembly in `docs/AUDIO.md` §2 and the driver image above) plus
+the `GENESIS_AUDIO_WRITEDUMP` stream and the `[SND-TRACE]` ring:
+
+| Interaction | Site | Frequency | Needs the bus? |
+|---|---|---|---|
+| Z80 RAM mailbox writes (command, pause/stop, work pointer, volume/pan) | 68k veneers `$024CD4`, `$024D04`, `$024D50/$024D64` writing `$A00080..$A00093` | on a track change / stop, not per frame in MUSIC mode | yes, BUSREQ |
+| Z80 RAM mailbox read (driver status byte `$A00081`) | `$024D22` | once per race-init / track change, not per frame | yes, BUSREQ |
+| YM2612 register writes from the 68k | SFX engine `$070A12/$070AC0`, PSG `$07090E/$07092C` | **0 in MUSIC mode** during a race; ~18k writes per 2600 frames in SFX/BOTH | yes, BUSREQ |
+| YM2612 status reads from the 68k | none in these drivers (the 68k engines do not poll the chip) | - | - |
+| BUSREQ (68k owns the Z80 bus) | `$A11100` writes around every mailbox/chip access | measured 375 held scanlines in 568 active frames = **0.25 % of Z80 cycles** | - |
+| Z80 -> 68k | nothing: the Z80 writes only its own RAM and the chips | - | - |
+| Z80 vblank IRQ (VDP) | handler `$0038` = `inc ($008C)` only | 60/s, and the count is not the music clock | - |
+| Z80 YM2612 status reads | 4 sites; the sequencer loop `$0BFC` polls status bit 1 (timer B overflow) | once per music tick (~50/s) | - |
+
+### 10.2 What can be answered from a snapshot, and what cannot
+
+* **Mailbox writes and the status-byte read (68k side).** These are
+  "start track N", "stop", "set volume" and one acknowledged handshake. Applying
+  them at the next Z80 slice (<= one video frame, 16.7 ms) changes nothing that
+  is audible or observable: the track still starts, the stop still stops. A
+  timestamped mailbox can therefore answer them with no synchronous handshake.
+* **68k chip writes (SFX/BOTH).** Already timestamped on the shared audio event
+  queue; a decoupled domain would apply them into the audio clock with the same
+  stamps. They are fire-and-forget, so late application is safe.
+* **The Z80's own YM2612 status poll.** This one *cannot* be answered from
+  another domain: the sequencer waits for the chip's timer-B flag, and the flag
+  is produced by the chip that renders the music. That is exactly why the
+  decoupled design has to move the Z80 *and* the chips together, and it is the
+  only place a split domain would need care (a poll must never see a flag from
+  a different time base, or the tick count changes).
+* **BUSREQ.** In a decoupled domain the 68k never stops the Z80; the mailboxes
+  absorb the interaction instead. That is the whole point, and it costs the
+  music nothing because the measured cost today is 0.25 %.
+
+### 10.3 SFX latency
+
+A 68k SFX command applied at the next audio-domain boundary adds at most one
+audio block (21 ms at 1024 frames / 48 kHz, 16.7 ms at the frame cadence).
+Engine sound and one-shot effects are already mixed a frame ahead of the
+speaker, so this is inside the existing latency budget and under the ~30 ms
+audio/visual sync threshold.
+
+### 10.4 Verdict
+
+No blocking synchronous dependency exists in MUSIC mode, so design C is
+feasible. It is nevertheless a large change: a second scheduler timebase, a
+timestamped mailbox, and save-state/rollback state for both domains, plus the
+rule that the offline deterministic capture stays coupled (so the offline WAV
+and framebuffer hashes remain reproducible). Its value is immunity to
+68k/video stalls; it would *not* by itself change the music tempo, because the
+measurements above show the Z80 already receives 99.75 % of its cycles and the
+sequencer clock is the YM2612 timer, not the 68k. It is therefore proposed as a
+follow-up, not as this task's fix.
+
+### 10.5 Why not implement it now
+
+The measurable guest-side defects this task did find are ordinary clock bugs
+(fixed in patches 0008 and 0009), and the real-device wobble is a host-side
+control-loop problem that design C does not address: a decoupled Z80 removes
+starvation, but the speaker still gets the music through the same DRC bridge,
+so the ratio controller is what has to be tempo-stable either way. Landing a
+second timebase and a mailbox first would add save-state risk without fixing
+the symptom the owner reported.
+
+### 9.5 Measurements
+
+Route: the SOUND page selects `RACE SOUND = MUSIC`, then a race is started and
+accelerated - both sides play the *music*, not the engine SFX, which is what the
+owner's report is about. Device captures are the PipeWire null sink of
+PERFORMANCE §10 (16:9, 60 fps on, no CPU burners), 11 000 frames = 183 s.
+
+**Guest side (offline, deterministic).**
+
+| Quantity | Before | After |
+|---|---|---|
+| PSG samples per guest frame | 3732 (fixed) | 3733.5 (exact, 3733/3734 alternating) |
+| Audio stream rate error vs hardware | **-402 ppm** | **0 ppm** |
+| Music tick (chip-write stream, median) | 19.87 ms = 50.3/s | 19.87 ms = 50.3/s |
+| Modelled YM2612 timer B period | 19.83 ms | 19.83 ms (tick is timer-bound: verified by scaling it 2x / 0.5x and watching the tick rate follow exactly) |
+| Z80 cycles delivered | 33 898 128 in 148 676 slices, 375 BUSREQ lines lost = **99.75 %** | unchanged |
+| Framebuffer hashes, frames 60 / 300 | `2A0B972960C5E325` / `1131D937D70234FD` | **identical** |
+
+**Pitch.** The port is in tune with the reference: 0.0 +/- 0.5 cents on the
+long-term spectrum of the title music, and +0.5 cents between the two device
+captures of the same route. The tool's selftest recovers +25 and -40 cents
+within 1 cent. There is no transposition defect; the "slower" impression is not
+a pitch shift.
+
+**Real-device tempo stability (H2).** Same 183 s music route, same build, only
+the controller differs (`GENESIS_AUDIO_DRC_CLASSIC=1` restores the pre-fix
+servo for the A/B). The playback ratio is what the ear hears as speed:
+
+| Controller | ratio p05..p95 | ratio span | fastest ratio change | ring fill p05/p50/p95 | dropouts |
+|---|---|---:|---:|---|---:|
+| pre-task-18 proportional servo (classic) | -211..+519 ppm | 1986 ppm | **1233 ppm/s** | 72 / 82 / 92 ms | 0 |
+| task-18 tempo-stable controller | **-337..+723 ppm** | **1330 ppm** | **37 ppm/s** | 70 / 82 / 94 ms | 0 |
+
+The new controller's ratio moves **30x slower** (37 ppm/s worst case = 0.0037 %
+per second, a fraction of a cent) while the ring fill stays where task 15 put
+it and there are still zero underruns, zero conceals and zero pops. Comparing
+the two device recordings of the same 3-minute route through
+`tools/audio_tempo_compare.py`: global tempo ratio **1.000000**, local tempo at
+1 s steps over 170 windows: mean -0.005 %, **std 0.060 %, max deviation
+0.155 %** - i.e. the two builds play the same music and differ only by the
+slow wander the classic servo had.
+
+**What is verified and what is not.** Verified: the sample-clock error (-402 ppm)
+and its fix; the Z80 cycle budget; the timer-B-driven tick rate; the pitch; the
+30x reduction of playback-ratio slew; unchanged video hashes. Not established:
+an absolute tempo number for the race music against the emulator. My alignment
+attempts on this soundtrack are defeated by its own loop period (a 7 % warp
+aliases onto exactly one loop over a 35 s window, which produced a convincing
+but false "-7 %" before I checked the loop period). The one direct comparison
+that does not alias - a 500 fps autocorrelation of the rhythmic pulse - gives
+118 ms on the reference and 120 ms on the port (-1.7 %), and the port's
+*measured* tick rate (50.3/s) leaves no room for more than a couple of percent.
+A guest-side timer-model error of that order is possible and is the next thing
+to pin down (the exact hardware timer-B divisor for `$26=$BE`); it is not
+explained by anything this task fixed.
+
+### 9.6 Reproduce
+
+```sh
+# Reference (no window, no host mixer, bit-reproducible):
+cc -O2 -o build/gpgx_render tools/gpgx_render.c -ldl -lm
+build/gpgx_render --core ~/tools/retroarch/cores/genesis_plus_gx_libretro.so \
+    --rom ~/roms/genesis/tg2.bin --frames 6000 \
+    --script game/baseline-route.json --wav build/ref/race-music.wav
+
+# Port, deterministic:
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy build/TG2Recomp ~/roms/genesis/tg2.bin \
+    --no-launcher --widescreen off --max-frames 6000 \
+    --input-script build/ref/music-route.input --wav build/ref/port.wav
+
+# Comparison (also --selftest):
+python3 tools/audio_tempo_compare.py build/ref/race-music.wav build/ref/port.wav
+
+# Real device, before/after the controller change:
+pactl load-module module-null-sink sink_name=tg2_test
+python3 tools/audio_device_capture.py --exe build/TG2Recomp \
+    --out build/device/after --frames 11000 --mode on \
+    --route build/ref/music-route.input
+python3 tools/audio_device_capture.py --exe build/TG2Recomp \
+    --out build/device/before --frames 11000 --mode on \
+    --route build/ref/music-route.input --env GENESIS_AUDIO_DRC_CLASSIC=1
+python3 tools/audio_drc_stats.py build/device/after/frame-stats.csv \
+    build/device/before/frame-stats.csv
+pactl unload-module <id>
+```
