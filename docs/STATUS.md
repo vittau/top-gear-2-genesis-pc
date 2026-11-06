@@ -28,13 +28,13 @@ submodule pin is upstream `dd520f1`.
 
 | Task | Worktree | State |
 |---|---|---|
-| 14 Release packaging polish | branch `vittau/tg2-release-polish` (8380998), worktree removed | **Implemented, NOT merged; waiting for CI.** macOS `.app` with ROM beside the bundle (engine patch 0007), single-file AppImage (verified locally: ROM beside it, 600 frames, exit 0), draft release job on `v*` tags, CI cost control (non-main branches build Linux only). After billing is fixed: dispatch `build.yml` on this branch with platforms=all and dry_run=true; merge if green. |
+| 14 Release packaging polish | branch `vittau/tg2-release-polish` (8380998), worktree removed | **Implemented, NOT merged; waiting for CI.** macOS `.app` with ROM beside the bundle (engine patch 0007), single-file AppImage (verified locally: ROM beside it, 600 frames, exit 0), draft release job on `v*` tags, CI cost control (non-main branches build Linux only). When minutes are available: rebase on main **keeping main's manual/tag-only triggers** (the branch's own cost-control edit to `build.yml` is superseded), dispatch once with platforms=all and dry_run=true, and merge if green. |
 
 CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platforms.
 
 ## Questions for the owner (queued for 09:00)
 
-0. **BLOCKER: GitHub Actions billing.** Since ~04:00 every CI job is refused: "recent account payments have failed or your spending limit needs to be increased" (run 42177794812). Fix the payment method or raise the Actions spending limit under Settings → Billing & plans. Cause: private-repo minutes, with macOS billed at 10×. CI is being changed so that non-main branch pushes build only Linux.
+0. **CI minutes exhausted** for this month (GitHub Free private repo; macOS 10×, Windows 2×). The owner doesn't pay for GitHub. Resolved by policy, not billing: since 6884a90, CI runs only manually (Linux by default) or on `v*` tags (AGENTS.md "CI budget"). Cross-platform CI resumes when the monthly quota resets.
 
 1. Is the 50 ms display latency of 60 fps acceptable on the controller?
 2. Does BOTH sound acceptable on real speakers? Music notes can be stolen
