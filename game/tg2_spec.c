@@ -8,6 +8,9 @@
 #include "genesis_runtime.h"
 #include "tg2_video.h"
 #include "tg2_options.h"
+extern int tg2_audio_hook(uint32_t pc);
+extern void tg2_audio_reset(void);
+extern void tg2_frame_post(uint64_t frame_count);
 struct RecompLauncherCModProvider;
 const struct RecompLauncherCModProvider *tg2_mods(const struct RecompLauncherCModProvider *base);
 static const GameDebugCommand commands[] = {
@@ -50,14 +53,20 @@ static void tg2_entry(void)
 }
 
 
-/* Scene capture hooks only read guest state. */
+/* Scene capture hooks only read guest state; the audio hook owns the
+ * RACE SOUND menu leaf and the race sound-policy sites. */
 static int tg2_instruction_hook(uint32_t pc)
 {
+    if (tg2_audio_hook(pc)) return 1;
     return tg2_video_hook(pc);
+}
+static void tg2_post_reset(void)
+{
+    tg2_audio_reset();
+    tg2_video_reset();
 }
 static void tg2_vblank(void) { recomp_call_addr(0xFF01EAu); }
 static void tg2_hblank(void) { recomp_call_addr(0xFFF9FEu); }
-
 const GameSpec g_game_spec = {
     .video = &tg2_video,
     .video_default = "fit",
@@ -67,8 +76,8 @@ const GameSpec g_game_spec = {
     .runtime_ui_get = tg2_options_runtime_get,
     .runtime_ui_set = tg2_options_runtime_set,
     .mods = tg2_mods,
-    .on_post_reset = tg2_video_reset,
-    .on_state_loaded = tg2_video_reset,
+    .on_post_reset = tg2_post_reset,
+    .on_state_loaded = tg2_post_reset,
     .commands = commands,
     .command_count = sizeof commands / sizeof commands[0],
     .display_name = "Top Gear 2",
@@ -80,5 +89,6 @@ const GameSpec g_game_spec = {
     .call_vblank = tg2_vblank,
     .call_hblank = tg2_hblank,
     .on_frame_pre = tg2_frame_pre,
+    .on_frame_post = tg2_frame_post,
     .instruction_hook = tg2_instruction_hook,
 };

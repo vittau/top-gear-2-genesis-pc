@@ -52,6 +52,30 @@ Controller evidence from ROM `$00D7A6..00D872`:
 | `$FF18FC` | byte | Previous remapped player-1 controls | `$00D86C` copies +$30 to +$32(A4) |
 | `$FF19AE..FF19BA` | words | Direction/button remapping indices | `$00D80C..00D858`, +$E4..$F0(A4) |
 
+## Sound driver and SOUND menu (see docs/AUDIO.md)
+
+| Address | Size | Meaning | Evidence |
+|---|---|---|---|
+| `$FF240E` | word | Race sound mode; `0`=SOUND EFFECTS, `1`=MUSIC; A3-relative `-$5FFA` | Readers `$0048E2`, `$006530`, `$023062`, `$0251F4`; writers `$01ED60`, `$002104` |
+| `$FF2554` | struct | Menu controller object; RACE SOUND page uses `A4+$0C` | Handler `$01F0D4`, enter/leave `$01ED3A/$01ED60` |
+| `$FF2560` | word | RACE SOUND page value word (`A4+$0C`): 0=SFX, 1=MUSIC | `$01F0D4`; runtime diff at the page |
+| `$FF8622` | struct | 68k PSG SFX engine state base | `$0253EE` loads A4 here; `$070008/$070014` |
+| `$FF862E` | struct | 68k FM SFX engine state base | `$0253EE` loads A4 here; `$070018/$07001C` |
+| `$FF16BE` | word | Race/attract index used to pick music track `{1,2,3,6}` | `$0251F4` masks `&3`, table `$02522A` |
+| `$A00080` | byte | Music driver A command mailbox (Z80 RAM) | Writers `$024CD4/$024D04` |
+| `$A00081` | byte | Music driver A status | `$024D22` |
+| `$A00084` | byte | Music driver A pause/stop flag | `$024D50/$024D64` |
+| `$A00087` | long | Music driver A work pointer, initialised `$0F0000` | `$024C96..$024CB4` |
+| `$A0025E` | byte | Race SFX Z80 image command byte (vestigial; writer `$07018A` has no callers) | `$07018A`, `$0701D4` |
+| `$A00260` | byte | Race SFX Z80 image command queue counter | `$070160`, `$0701AA/$0701CA` |
+| `$A00000` | code | Z80 reset entry: music driver (`F3 31 F0 1F C3 42`) or race SFX image (`C3 10 04`), never both | Runtime Z80 RAM dump after upload |
+
+The port's `BOTH` choice is host-only state; `$FF240E` and `$FF2560` stay in
+their stock `{0,1}` range. The SFX-side policy sites listed in
+`docs/AUDIO.md` see a temporary `0` and the word is restored before the
+dependent branch, so a reader that is not a hooked site always sees the
+stock value.
+
 Race timing fields verified by raw ROM and per-frame native snapshots
 (see `FRAMERATE.md` for cadence measurements):
 
@@ -167,3 +191,4 @@ Auckland (length 1.6 miles, 4 laps): the grid is 1.31 M position units before
 the line, one lap is 9.44 M units, and the results screen's own "TIME" column
 matches the sum of the clock deltas (run-up included). `tools/tg2_race_driver.py`
 reports the run-up separately from the four timed laps.
+
