@@ -8,14 +8,20 @@ ROM, generated C, save state or debug dump that happens to live in the build
 tree cannot leak into a release. tools/release/verify_artifact.py then checks
 the result independently.
 
+macOS releases pass --app-bundle NAME to produce a NAME.app with an Info.plist
+and Contents/Resources, plus the end-user README beside the bundle.
+
 Usage:
     stage_payload.py --binary PATH --target-dir DIR --dest DIR
                      --version V --platform linux-x86_64
                      [--binary-name NAME] [--assets DIR] [--sdl-source DIR]
+                     [--app-bundle TG2Recomp.app --bundle-id ID
+                      --minimum-system-version 11.0]
 """
 import argparse
 import datetime
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,14 +55,23 @@ COMO JOGAR (PORTUGUÊS)
   Se nenhuma ROM compatível for encontrada, o seletor de arquivos abre.
 
 {extra}CONTENTS
-  {exe}                  game executable
+{contents}
+
+Top Gear 2 is a trademark of its respective owners. This port ships no game
+data; the ROM is supplied by the user.
+"""
+
+FLAT_CONTENTS = """  {exe:<22} game executable
   assets/                launcher fonts and images
   licenses/              licences of the bundled/open-source code
   README.txt             this file
   BUILD-INFO.txt         build version and source revision
+"""
 
-Top Gear 2 is a trademark of its respective owners. This port ships no game
-data; the ROM is supplied by the user.
+BUNDLE_CONTENTS = """  {app:<22} game application bundle (macOS)
+  README.txt             this file
+  Inside {app}: Contents/MacOS/{binary}, Contents/Resources/assets,
+  Contents/Resources/licenses and BUILD-INFO.txt.
 """
 
 LINUX_EXTRA = """STEAM DECK / STEAMOS (controller only)
@@ -77,9 +92,11 @@ LINUX_EXTRA = """STEAM DECK / STEAMOS (controller only)
 MACOS_EXTRA = """macOS: FIRST LAUNCH (unsigned build)
   This build is not signed or notarized. macOS quarantines downloaded files,
   so the first launch may be blocked. Either:
-    - right-click {exe} > Open > Open, or
-    - run once: xattr -dr com.apple.quarantine <this folder>
-  Put the ROM next to {exe} (this folder), not inside a .app bundle.
+    - right-click {app_short} > Open > Open, or
+    - run once: xattr -dr com.apple.quarantine {app}
+  Put the ROM next to {app} (in the same folder as the bundle), not inside it.
+  Settings, logs and saves are written next to {app} when that folder is
+  writable, otherwise in ~/Library/Application Support/TG2Recomp/.
 
 """
 
@@ -124,76 +141,36 @@ def main():
     parser.add_argument("--platform", required=True, choices=sorted(EXTRA))
     parser.add_argument("--binary-name")
     parser.add_argument("--sdl-source")
+    parser.add_argument("--app-bundle", help="macOS: create NAME.app instead of a bare folder")
+    parser.add_argument("--icon", help="macOS: .icns icon copied into the bundle")
+    parser.add_argument("--bundle-id", default="io.github.vittau.tg2recomp")
+    parser.add_argument("--bundle-display-name", default="Top Gear 2 Recomp")
+    parser.add_argument("--minimum-system-version", default="11.0")
     args = parser.parse_args()
 
+    if args.app_bundle and args.platform != "macos":
+        raise SystemExit("stage: --app-bundle is only valid with --platform macos")
     binary_name = args.binary_name or ("TG2Recomp.exe" if args.platform == "windows-x64" else "TG2Recomp")
     assets = args.assets or (os.path.join(args.target_dir, "assets") if args.target_dir else None)
     if not os.path.isfile(args.binary):
         raise SystemExit(f"stage: missing executable {args.binary}")
     if not assets or not os.path.isdir(assets):
         raise SystemExit(f"stage: missing launcher assets directory {assets}")
+    if not args.sdl_source:
+        raise SystemExit("stage: --sdl-source is required to ship the SDL2 licence")
+    sdl_license = os.path.join(args.sdl_source, "LICENSE.txt")
+    if not os.path.isfile(sdl_license):
+        raise SystemExit(f"stage: missing SDL2 licence {sdl_license}")
     if os.path.exists(args.dest):
         if os.listdir(args.dest):
             raise SystemExit(f"stage: refusing to stage into non-empty {args.dest}")
     else:
         os.makedirs(args.dest)
 
-    target = os.path.join(args.dest, binary_name)
-    shutil.copy2(args.binary, target)
-    if os.name != "nt":
-        os.chmod(target, 0o755)
-
-    shutil.copytree(assets, os.path.join(args.dest, "assets"))
-
-    licenses = os.path.join(args.dest, "licenses")
-    os.makedirs(licenses)
-    for source, name in LICENSES:
-        path = os.path.join(REPO, source)
-        if os.path.isfile(path):
-            shutil.copy2(path, os.path.join(licenses, name))
-        else:
-            print(f"stage: warning: licence file missing: {source}", file=sys.stderr)
-    if args.sdl_source:
-        sdl_license = os.path.join(args.sdl_source, "LICENSE.txt")
-        if not os.path.isfile(sdl_license):
-            raise SystemExit(f"stage: missing SDL2 licence {sdl_license}")
-        shutil.copy2(sdl_license, os.path.join(licenses, "SDL2-LICENSE.txt"))
+    if args.app_bundle:
+        stage_macos_bundle(args, binary_name, assets, sdl_license)
     else:
-        raise SystemExit("stage: --sdl-source is required to ship the SDL2 licence")
-
-    extra = EXTRA[args.platform].format(exe=binary_name)
-    with open(os.path.join(args.dest, "README.txt"), "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(
-            README.format(
-                version=args.version,
-                platform=args.platform,
-                exe=binary_name,
-                extra=extra,
-            )
-        )
-
-    engine = git_revision(os.path.join(REPO, "segagenesisrecomp"))
-    game = os.environ.get("GITHUB_SHA") or git_revision(REPO)
-    quarantine = ""
-    if args.platform == "macos":
-        quarantine = (
-            "Gatekeeper: the build is unsigned and not notarized; after download run\n"
-            "  xattr -dr com.apple.quarantine <this folder>\n"
-            "or right-click the executable > Open the first time.\n"
-        )
-    with open(os.path.join(args.dest, "BUILD-INFO.txt"), "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(
-            f"game=Top Gear 2 (USA)\n"
-            f"platform={args.platform}\n"
-            f"version={args.version}\n"
-            f"game_revision={game}\n"
-            f"engine_revision={engine}\n"
-            f"packaged_utc={datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
-            f"debug_tcp_server=disabled\n"
-            f"reverse_debug_rings=disabled\n"
-            f"build_type=Release\n"
-            f"{quarantine}"
-        )
+        stage_flat(args, binary_name, assets, sdl_license)
 
     total = sum(
         os.path.getsize(os.path.join(root, name))
@@ -201,6 +178,157 @@ def main():
         for name in names
     )
     print(f"stage: {args.dest} ({total} bytes)")
+
+
+def copy_licenses(licenses_dir, sdl_license):
+    os.makedirs(licenses_dir)
+    for source, name in LICENSES:
+        path = os.path.join(REPO, source)
+        if os.path.isfile(path):
+            shutil.copy2(path, os.path.join(licenses_dir, name))
+        else:
+            print(f"stage: warning: licence file missing: {source}", file=sys.stderr)
+    shutil.copy2(sdl_license, os.path.join(licenses_dir, "SDL2-LICENSE.txt"))
+
+
+def write_text(path, text):
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
+def readme_text(args, binary_name, contents, app=None, app_short=None):
+    extra = EXTRA[args.platform].format(
+        exe=binary_name, app=app or "", app_short=app_short or app or "")
+    # In a bundle the thing the player runs (and drops the ROM beside) is the
+    # .app, not the Mach-O executable inside Contents/MacOS.
+    run_name = app or binary_name
+    return README.format(
+        version=args.version,
+        platform=args.platform,
+        exe=run_name,
+        app=app or "",
+        extra=extra,
+        contents=contents.format(exe=run_name, app=app or "", binary=binary_name),
+    )
+
+
+def build_info_text(args):
+    engine = git_revision(os.path.join(REPO, "segagenesisrecomp"))
+    game = os.environ.get("GITHUB_SHA") or git_revision(REPO)
+    quarantine = ""
+    if args.platform == "macos":
+        quarantine = (
+            "Gatekeeper: the build is unsigned and not notarized; after download run\n"
+            "  xattr -dr com.apple.quarantine TG2Recomp.app\n"
+            "or right-click TG2Recomp.app > Open the first time.\n"
+        )
+    return (
+        f"game=Top Gear 2 (USA)\n"
+        f"platform={args.platform}\n"
+        f"version={args.version}\n"
+        f"game_revision={game}\n"
+        f"engine_revision={engine}\n"
+        f"packaged_utc={datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+        f"debug_tcp_server=disabled\n"
+        f"reverse_debug_rings=disabled\n"
+        f"build_type=Release\n"
+        f"{quarantine}"
+    )
+
+
+def stage_flat(args, binary_name, assets, sdl_license):
+    target = os.path.join(args.dest, binary_name)
+    shutil.copy2(args.binary, target)
+    if os.name != "nt":
+        os.chmod(target, 0o755)
+    shutil.copytree(assets, os.path.join(args.dest, "assets"))
+    copy_licenses(os.path.join(args.dest, "licenses"), sdl_license)
+    write_text(os.path.join(args.dest, "README.txt"),
+               readme_text(args, binary_name, FLAT_CONTENTS))
+    write_text(os.path.join(args.dest, "BUILD-INFO.txt"), build_info_text(args))
+
+
+def numeric_version(version):
+    match = re.match(r"(\d+(?:\.\d+){0,2})", version)
+    return match.group(1) if match else "0.1.0"
+
+
+INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleIdentifier</key>
+    <string>{bundle_id}</string>
+    <key>CFBundleName</key>
+    <string>{display_name}</string>
+    <key>CFBundleDisplayName</key>
+    <string>{display_name}</string>
+    <key>CFBundleExecutable</key>
+    <string>{executable}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleShortVersionString</key>
+    <string>{short_version}</string>
+    <key>CFBundleVersion</key>
+    <string>{short_version}</string>
+    <key>TG2BuildVersion</key>
+    <string>{build_version}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>{minimum_system_version}</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.racing-games</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>SDL_FILESYSTEM_BASE_DIR_TYPE</key>
+    <string>resource</string>
+{icon_entry}    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+</dict>
+</plist>
+"""
+
+
+def stage_macos_bundle(args, binary_name, assets, sdl_license):
+    app = args.app_bundle
+    app_dir = os.path.join(args.dest, app)
+    macos_dir = os.path.join(app_dir, "Contents", "MacOS")
+    resources = os.path.join(app_dir, "Contents", "Resources")
+    os.makedirs(macos_dir)
+    os.makedirs(resources)
+
+    target = os.path.join(macos_dir, binary_name)
+    shutil.copy2(args.binary, target)
+    os.chmod(target, 0o755)
+    shutil.copytree(assets, os.path.join(resources, "assets"))
+    copy_licenses(os.path.join(resources, "licenses"), sdl_license)
+
+    write_text(os.path.join(app_dir, "Contents", "Info.plist"), INFO_PLIST.format(
+        bundle_id=args.bundle_id,
+        display_name=args.bundle_display_name,
+        executable=binary_name,
+        short_version=numeric_version(args.version),
+        build_version=args.version,
+        minimum_system_version=args.minimum_system_version,
+        icon_entry=(f"    <key>CFBundleIconFile</key>\n    <string>{os.path.splitext(os.path.basename(args.icon))[0]}</string>\n"
+                    if args.icon else ""),
+    ))
+    if args.icon:
+        if not os.path.isfile(args.icon):
+            raise SystemExit(f"stage: missing icon {args.icon}")
+        shutil.copy2(args.icon, os.path.join(resources, os.path.basename(args.icon)))
+    readme = readme_text(args, binary_name, BUNDLE_CONTENTS, app=app, app_short=os.path.splitext(app)[0])
+    write_text(os.path.join(args.dest, "README.txt"), readme)
+    write_text(os.path.join(resources, "README.txt"), readme)
+    write_text(os.path.join(resources, "BUILD-INFO.txt"), build_info_text(args))
+
 
 
 if __name__ == "__main__":

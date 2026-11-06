@@ -7,9 +7,9 @@
 #
 # Release profile: Release, native IPO on, TCP debug server and reverse-debug
 # rings disabled, SDL2 linked statically from the pinned source tree. The
-# payload is a plain folder (not a .app bundle) so engine patch 0002's
-# "cartridge next to the executable" search finds a ROM dropped beside it;
-# SDL_GetBasePath() inside a bundle would report Contents/MacOS instead.
+# payload is TG2Recomp.app (Contents/MacOS binary, Contents/Resources assets)
+# plus README.txt; engine patch 0007 searches the folder containing the .app
+# for a dropped cartridge and keeps user data there when writable.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 build="$repo/build-release/macos"
@@ -60,8 +60,24 @@ cmake --build "$build" --target TG2Recomp -j"$jobs"
 
 name="TG2Recomp-macos"
 stage="$out/$name"
+app="TG2Recomp.app"
 rm -rf "$stage"
 mkdir -p "$out"
+
+# Build the .icns from the checked-in 1024px release icon with the tools macOS
+# ships (sips + iconutil), so no image package is needed on the runner.
+iconset="$build/icon.iconset"
+rm -rf "$iconset"
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" "$repo/tools/release/tg2recomp.png" \
+        --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    double=$((size * 2))
+    sips -z "$double" "$double" "$repo/tools/release/tg2recomp.png" \
+        --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$build/TG2Recomp.icns"
+
 python3 "$repo/tools/release/stage_payload.py" \
     --binary "$build/TG2Recomp" \
     --target-dir "$build" \
@@ -69,13 +85,35 @@ python3 "$repo/tools/release/stage_payload.py" \
     --version "$version" \
     --platform macos \
     --binary-name TG2Recomp \
-    --sdl-source "$sdl"
+    --sdl-source "$sdl" \
+    --app-bundle "$app" \
+    --icon "$build/TG2Recomp.icns" \
+    --bundle-id io.github.vittau.tg2recomp \
+    --bundle-display-name "Top Gear 2 Recomp" \
+    --minimum-system-version 11.0
 python3 "$repo/tools/release/verify_artifact.py" --dir "$stage" \
-    --require TG2Recomp --require assets --require licenses --require README.txt
+    --require README.txt \
+    --require "$app/Contents/Info.plist" \
+    --require "$app/Contents/MacOS/TG2Recomp" \
+    --require "$app/Contents/Resources/assets" \
+    --require "$app/Contents/Resources/licenses"
 
-lipo -info "$stage/TG2Recomp"
-rm -f "$out/$name.tar.gz"
-tar -C "$out" -czf "$out/$name.tar.gz" "$name"
-(cd "$out" && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
-echo "Built $out/$name.tar.gz"
-cat "$out/$name.tar.gz.sha256"
+lipo -info "$stage/$app/Contents/MacOS/TG2Recomp"
+# Only system frameworks: the universal2 payload links SDL2 statically, so no
+# host Homebrew dylib may leak into either slice.
+if otool -L "$stage/$app/Contents/MacOS/TG2Recomp" \
+    | tail -n +2 | grep -Ev '/System/Library/|/usr/lib/|:$'; then
+    echo "macOS payload depends on a non-system library" >&2
+    exit 1
+fi
+
+# macOS artifact: the .app plus the end-user README in one zip. Zip keeps the
+# executable bit and the bundle directory structure; the staged folder stays
+# available for inspection in the CI artifact.
+rm -f "$out/TG2Recomp-macos.zip"
+out_abs="$(cd "$out" && pwd)"
+[ -d "$stage/$app" ] && [ -f "$stage/README.txt" ] || { echo "missing $app or README.txt in $stage" >&2; exit 1; }
+(cd "$stage" && zip -qry "$out_abs/$name.zip" "$app" README.txt)
+(cd "$out" && shasum -a 256 "$name.zip" > "$name.zip.sha256")
+echo "Built $out/$name.zip"
+cat "$out/$name.zip.sha256"

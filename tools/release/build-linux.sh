@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Build and stage the Linux x86_64 release payload (Steam Deck / SteamOS 3.x).
+# Build and stage the Linux x86_64 release payload (Steam Deck / SteamOS 3.x),
+# then wrap the same staged files in a single-file AppImage.
 #
 # Usage: tools/release/build-linux.sh --rom PATH --sdl PATH
 #            [--build DIR] [--out DIR] [--version V] [--jobs N]
+#
+# Set TG2_SKIP_GLIBC_CHECK=1 for a development-host build (the AppImage step
+# then skips the 2.35 symbol-floor assertion; CI leaves it enabled).
 #
 # Release profile: Release, native IPO on, TCP debug server and reverse-debug
 # rings disabled, SDL2 linked statically from the pinned source tree, and the
@@ -74,3 +78,13 @@ tar -C "$out" -czf "$out/$name.tar.gz" "$name"
 (cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 echo "Built $out/$name.tar.gz"
 cat "$out/$name.tar.gz.sha256"
+
+# Single-file AppImage next to the tarball; built from the same staged payload
+# so both artifacts carry identical binaries and glibc requirements.
+"$repo/tools/release/build-appimage.sh" \
+    --payload "$stage" \
+    --out "$out" \
+    --tools "$repo/build-release/appimage-tools" \
+    --version "$version" \
+    --binary TG2Recomp \
+    $([ "${TG2_SKIP_GLIBC_CHECK:-0}" = 1 ] && echo --skip-glibc-check)

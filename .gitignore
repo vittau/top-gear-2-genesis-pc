@@ -16,6 +16,7 @@ engine-local/
 *.wav
 *.png
 !/docs/images/*.png
+!/tools/release/tg2recomp.png
 *.log
 run.err
 run.out

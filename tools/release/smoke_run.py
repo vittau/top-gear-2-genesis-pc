@@ -12,6 +12,8 @@ reports a complete benchmark for the requested frame count.
 Usage:
     smoke_run.py --dir PAYLOAD_DIR --exe NAME --rom PATH [--frames 600]
                  [--work DIR] [--keep]
+    smoke_run.py --appimage FILE.AppImage --rom PATH [--frames 600]
+                 [--appimage-extract-and-run]
 """
 import argparse
 import json
@@ -29,18 +31,22 @@ CLEAR_ENV_PREFIXES = ("SDL_", "GENESIS_", "RECOMP_", "RUI_", "LNG_")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dir", required=True, help="staged payload directory")
-    parser.add_argument("--exe", required=True, help="executable name inside the payload")
+    parser.add_argument("--dir", help="staged payload directory")
+    parser.add_argument("--exe", help="executable name inside the payload")
+    parser.add_argument("--appimage", help="single-file AppImage to smoke-test")
     parser.add_argument("--rom", required=True)
     parser.add_argument("--frames", type=int, default=600)
     parser.add_argument("--work")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--appimage-extract-and-run", action="store_true",
+                        help="force the FUSE-less AppImage path")
     args = parser.parse_args()
 
-    payload = os.path.abspath(args.dir)
-    if not os.path.isdir(payload):
-        raise SystemExit(f"smoke: not a directory: {payload}")
+    if bool(args.appimage) == bool(args.dir):
+        raise SystemExit("smoke: pass exactly one of --dir or --appimage")
+    if args.dir and not args.exe:
+        raise SystemExit("smoke: --exe is required with --dir")
     if not os.path.isfile(args.rom):
         raise SystemExit(f"smoke: missing ROM input: {args.rom}")
 
@@ -49,17 +55,42 @@ def main():
     if os.path.exists(run_dir):
         shutil.rmtree(run_dir)
     os.makedirs(workspace, exist_ok=True)
-    shutil.copytree(payload, run_dir)
 
-    executable = os.path.join(run_dir, args.exe)
-    if not os.path.isfile(executable):
-        raise SystemExit(f"smoke: payload has no {args.exe}")
-    if os.name != "nt":
-        os.chmod(executable, 0o755)
+    if args.appimage:
+        appimage = os.path.abspath(args.appimage)
+        if not os.path.isfile(appimage):
+            raise SystemExit(f"smoke: missing AppImage: {appimage}")
+        os.makedirs(run_dir)
+        local = os.path.join(run_dir, os.path.basename(appimage))
+        shutil.copyfile(appimage, local)
+        os.chmod(local, 0o755)
+        executable = local
+        app_args = ["--no-launcher", "--benchmark", str(args.frames)]
+        # The AppImage desktop entry is what a player double-clicks; launching
+        # the file directly exercises the same runtime. Without FUSE the
+        # embedded runtime can extract itself and run from a temporary mount.
+        use_extract = args.appimage_extract_and_run or not os.path.exists("/dev/fuse")
+        prefix = [executable, "--appimage-extract-and-run"] if use_extract else [executable]
+    else:
+        payload = os.path.abspath(args.dir)
+        if not os.path.isdir(payload):
+            raise SystemExit(f"smoke: not a directory: {payload}")
+        shutil.copytree(payload, run_dir)
+        executable = os.path.join(run_dir, args.exe)
+        if not os.path.isfile(executable):
+            raise SystemExit(f"smoke: payload has no {args.exe}")
+        if os.name != "nt":
+            os.chmod(executable, 0o755)
+        app_args = ["--no-launcher", "--benchmark", str(args.frames)]
+        prefix = [executable]
+    # The cartridge must be found by content next to the executable (or next
+    # to the .app, for a macOS bundle whose executable is inside it).
     shutil.copyfile(args.rom, os.path.join(run_dir, DECOY_ROM_NAME))
 
     environment = {k: v for k, v in os.environ.items()
                    if not k.startswith(CLEAR_ENV_PREFIXES)}
+    environment.pop("APPIMAGE", None)
+    environment.pop("APPDIR", None)
     environment.update(
         SDL_VIDEODRIVER="dummy",
         SDL_AUDIODRIVER="dummy",
@@ -72,10 +103,10 @@ def main():
         GENESIS_RUN_DONE="1",
     )
 
-    command = [executable, "--no-launcher", "--benchmark", str(args.frames)]
-    print(f"smoke: running {' '.join(command)} in {run_dir}")
-    try:
-        result = subprocess.run(
+    def run(prefix):
+        command = prefix + app_args
+        print(f"smoke: running {' '.join(command)} in {run_dir}", flush=True)
+        return subprocess.run(
             command,
             cwd=run_dir,
             env=environment,
@@ -85,6 +116,13 @@ def main():
             errors="replace",
             timeout=args.timeout,
         )
+
+    try:
+        result = run(prefix)
+        if (args.appimage and result.returncode in (126, 127)
+                and "--appimage-extract-and-run" not in prefix):
+            print("smoke: FUSE launch failed; retrying with --appimage-extract-and-run", flush=True)
+            result = run([prefix[0], "--appimage-extract-and-run"])
     except subprocess.TimeoutExpired as expired:
         print(expired.stdout or "", flush=True)
         raise SystemExit(f"smoke: timed out after {args.timeout}s")
