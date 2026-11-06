@@ -76,6 +76,8 @@ def timeline(out):
             lines.append(f'WAIT {frame-previous}')
         lines.extend(event)
         previous = frame
+    if previous > a.end_frame:
+        raise ValueError('--end-frame precedes the last route action or capture')
     lines += [f'WAIT {a.end_frame-previous}', 'EXIT 0']
     path = out/'route.input'
     path.write_text('\n'.join(lines)+'\n')

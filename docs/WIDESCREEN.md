@@ -39,15 +39,23 @@ hills and banked curves keep their per-line perspective in the margins.
 
 **Plane B — road and skyline.** Plane B is `$E000`, a 64×64 (512×512) name
 table. Its atlas holds four perspective road sections in rows 0..431, a
-separator, and the authored skyline panorama in rows 432..511.
+ground/separator rows 432..447, and the authored skyline panorama in rows
+448..511.
 
 - The road sections straddle the plane seam at X=0: the road's two halves
   meet across X=0/512, with the exterior ground around X=256. `road_x()`
   unwraps the road around the native view's centre so both halves of *one*
   road are sampled, and clamps to the atlas half-domain `[-256, 255]`.
   Margins therefore never show a second, wrapped road.
-- Rows 432..511 are the skyline: they keep the plane's authored panorama wrap,
+- Rows 448..511 are the skyline: they keep the plane's authored panorama wrap,
   so the skyline continues scrolling through the margins.
+- Rows 432..447 are ground/separators, not panorama. Rows 432..439
+  contain solid ground; rows 440..441 have grass in atlas X=256..511 and
+  transparent tiles in X=0..255. Hills can repeat these rows across many
+  output lines between the water and the road. Each margin continues its
+  native edge sample on these rows, so it cannot wrap from grass into the
+  transparent half and expose the black backdrop. Colours still come from
+  that exact output line's CRAM, preserving the raster grass shades.
 - Each row uses its own H-scroll (plane B register / VSRAM) and V-scroll, so
   the margin continues that exact scanline's perspective.
 
@@ -279,6 +287,32 @@ Its artifacts are under `build/hud/top-band/`: `stock-top.png`,
 The before/after crops are identical because this follow-up adds diagnostics
 and evidence, without changing rendering. The route capture command and its
 logs are retained alongside those artifacts in `capture.py`/`capture.log`.
+
+## Hill margin regression check
+
+`TG2_MARGIN_AUDIT=<private.csv>` records both adjacent margin pixels on every
+eligible race line, before sprites and relocated HUD can hide a gap. Each row
+includes the actual native edge colour, native plane-A/B texels and attributes,
+the margin's plane-B texel, the native B colour from the same per-line CRAM,
+atlas Y and player slope. The same hook receives the synthesized native row
+when 60 fps is enabled; it therefore audits real and intermediate pictures.
+
+`tools/check_margin_artifacts.py` counts black backdrop gaps where the native
+edge has visible scenery. Opaque black panorama art is distinguished from a
+transparent texel exposing the backdrop; plane-A car/effect pixels over an
+already empty native B edge are not classified as scenery. It also checks
+exact ground colour continuity across separator lines and between ground
+texels on ordinary road lines, including palette-bank and grass-stripe phase.
+`tools/verify_widescreen.py --margin-audit` runs it and returns nonzero for any
+violation or an empty capture. Custom controller routes can be supplied with
+`--route` and `--end-frame`; all output remains under the selected build path.
+
+```sh
+TG2_RACE_60FPS=1 TG2_HUD_MODE=edges python3 tools/verify_widescreen.py \
+  --port 4500 --out build/hills/after-edges-60 --modes 16:9,21:9 \
+  --margin-audit --turbo --shots 2685,5135,5140
+# Repeat with TG2_RACE_60FPS=0 and TG2_HUD_MODE=centered as needed.
+```
 
 ## Known artefacts and limitations
 

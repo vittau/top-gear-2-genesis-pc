@@ -208,8 +208,16 @@ static int race(const GVDP *v) {
  * with exterior ground at X=256. Extend that exterior, never another road.
  * The skyline is an authored repeating panorama and retains its wrap. */
 static int road_x(int nx, int scroll, int py) {
-    if ((py & 511) >= 432)
+    py &= 511;
+    if (py >= 448)
         return nx - scroll;
+    /* Rows 432..439 are solid ground; 440..441 contain the hill's
+     * half-width grass strip (the other half is transparent), followed by
+     * blank separator rows. They are not a repeating panorama. Continue
+     * each native edge through these rows without wrapping into the empty
+     * half of the atlas. Keep the real road's unwrapped domain below. */
+    if (py >= 432)
+        return (nx < 0 ? 0 : nx > 255 ? 255 : nx) - scroll;
     int center = 128 + ((scroll - 128 + 256) & 511) - 256;
     int x = nx - center;
     return x < -256 ? -256 : x > 255 ? 255 : x;
@@ -329,28 +337,35 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
 static FILE *margin_audit;
 static int margin_audit_checked;
 static void audit_margins(const GVDP *v, int line, const uint32_t *native,
-                          int nw, const uint32_t *out, int w,
-                          unsigned ba, unsigned bb, int ha, int hb, int va, int vb) {
+                          int nw, const uint32_t *out, int w) {
     if (!margin_audit_checked) {
         margin_audit_checked = 1;
         const char *path = getenv("TG2_MARGIN_AUDIT");
         if (path && *path) {
             margin_audit = fopen(path, "w");
             if (!margin_audit) { perror(path); exit(1); }
-            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope\n");
+            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b\n");
         }
     }
     if (!margin_audit || w <= nw) return;
+    unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
+    unsigned hbase = (v->reg[13] & 63) << 10;
+    int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
+    int ha = word(v->vram, hbase + hi * 4) & 1023, hb = word(v->vram, hbase + hi * 4 + 2) & 1023;
+    int va = v->vsram[0] & 1023, vb = v->vsram[1] & 1023;
     int origin = (w - nw) / 2;
     for (int side = 0; side < 2; ++side) {
         int edge = side ? nw - 1 : 0;
         unsigned aa, ab;
         unsigned ap = pixel(v, ba, edge - ha, line + va, &aa);
         unsigned bp = pixel(v, bb, edge - hb, line + vb, &ab);
-        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d\n",
+        unsigned mb_attr;
+        unsigned mb = pixel(v, bb, road_x(side ? nw : -1, hb, line + vb), line + vb, &mb_attr);
+        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u\n",
                 (unsigned long long)present_frame, line, side, native[edge],
                 out[origin + (side ? nw : -1)], ap, aa, bp, ab,
-                v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0));
+                v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0), mb,
+                genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0));
     }
     if (line == 223) fflush(margin_audit);
 }
@@ -372,6 +387,8 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
     if (!race(v) || !(v->reg[1] & 64)) {
         ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
+        if (nw == 256 && !word(g_ram, 0x189E))
+            audit_margins(v, line, native, nw, out, w);
         return;
     }
     ++wide_lines;
@@ -399,7 +416,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
         unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
         out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
-    audit_margins(v, line, native, nw, out, w, ba, bb, ha, hb, va, vb);
+    audit_margins(v, line, native, nw, out, w);
     /* Reverse allocation order matches the native backward SAT builder. */
     unsigned char covered[4096] = {0};
     for (unsigned n = shown ? shown->count : 0; n > 0; --n) {
