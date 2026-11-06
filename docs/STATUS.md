@@ -26,7 +26,11 @@ submodule pin is upstream `dd520f1`.
 
 ## Still in progress
 
-Nothing. All dispatched tasks are merged; no worktrees remain.
+| Task | Worktree | State |
+|---|---|---|
+| 14 Release packaging polish | `tg2-release-polish` | macOS `.app` (ROM next to the bundle), single-file Linux AppImage for Deck, draft release on `v*` tags (no tag pushed). OpenCode, started 2026-11-06 ~03:40. |
+
+CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platforms.
 
 ## Questions for the owner (queued for 09:00)
 
