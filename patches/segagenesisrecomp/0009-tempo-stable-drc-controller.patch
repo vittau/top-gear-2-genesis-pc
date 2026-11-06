@@ -1,0 +1,220 @@
+diff --git a/runner/audio.c b/runner/audio.c
+index b9a2f9d..3c9acc4 100644
+--- a/runner/audio.c
++++ b/runner/audio.c
+@@ -203,11 +203,22 @@ int audio_init(int psg_sample_rate)
+      * the ring ever running dry, and the added latency stays around 100 ms. */
+     cfg.target_ms      = 100.0;
+     cfg.ring_ms        = 250.0;
+-    /* Smooth the fill measurement well past the ~76 ms beat between a 16.7 ms
+-     * push cadence and a 21.3 ms callback cadence. */
+-    cfg.err_lp_ms      = 300.0;
+-    cfg.deadband_ms    = 2.0;
+-    cfg.slew_pp_per_s  = 0.5;
++    /* Steady-state tempo stability (task 18). The device crystal offset is a
++     * constant ratio; host jitter is not. The steady path is an integral
++     * estimator with a 2 s error low-pass and a 50 ppm/s slew, so the playback
++     * ratio is constant in the short term (no audible speed changes) and equals
++     * the device's real clock offset. A fill excursion beyond 40 ms (through a
++     * 200 ms low-pass, so the 16.7 ms push sawtooth cannot trigger it) is a
++     * hitch, not a clock: the same integrator then runs with a 1 %/s slew and
++     * refills the ring in a few hundred ms, which is inaudible against the
++     * hitch itself. */
++    cfg.err_lp_ms      = 200.0;     /* hitch detection */
++    cfg.err_slow_ms    = 2000.0;    /* steady-state clock estimate */
++    cfg.ki_per_s       = 0.02;
++    cfg.slew_steady_pp_per_s = 0.005;   /* 50 ppm/s: below audibility */
++    cfg.rescue_ms      = 40.0;      /* far outside the fill sawtooth */
++    cfg.deadband_ms    = 3.0;
++    cfg.slew_pp_per_s  = 1.0;       /* rescue path only */
+     /* Sustained pitch/tempo bound: +/-0.5 % = 8.6 cents, the width a real
+      * device crystal needs. The runner keeps the guest clock exact (no display
+      * quantisation, frame_pacer.h) and discards the boot pre-roll at prime, so
+@@ -224,6 +235,12 @@ int audio_init(int psg_sample_rate)
+      * until the ring caps and drops samples one by one - the old behaviour was
+      * a growing delay that ended in a burst of clicks. */
+     cfg.overfull_ms    = 60.0;
++    {   /* Measurement-only A/B: restore the pre-task-18 proportional servo. */
++        const char *e = getenv("GENESIS_AUDIO_DRC_CLASSIC");
++        cfg.classic_servo = (e && *e && *e != '0') ? 1 : 0;
++        if (cfg.classic_servo)
++            fprintf(stderr, "[audio] DRC controller: CLASSIC (measurement only)\n");
++    }
+     if (rab_init(&s_bridge, &cfg) != 0) {
+         fprintf(stderr, "audio: rab_init (DRC bridge) failed\n");
+         SDL_CloseAudioDevice(s_dev); s_dev = 0;
+diff --git a/runner/recomp_audio_drc.h b/runner/recomp_audio_drc.h
+index f38a484..7af82b4 100644
+--- a/runner/recomp_audio_drc.h
++++ b/runner/recomp_audio_drc.h
+@@ -45,6 +45,24 @@ typedef struct {
+     double max_correction;  /* clamp on ratio correction (default 0.005)       */
+     double err_lp_ms;       /* error low-pass time constant ms (default 75)    */
+     double slew_pp_per_s;   /* correction slew, percent-points/sec (default 0.75) */
++    /* Steady-state tempo stability. The device crystal offset is a *constant*
++     * ratio (tens to hundreds of ppm); host jitter is not. The steady path is
++     * therefore an integral estimator with a long time constant: it converges
++     * to the offset and then holds it, while fill jitter cannot modulate the
++     * playback ratio (which would be heard as music speed/pitch wobble).
++     * `err_slow_ms` is the steady error low-pass, `ki_per_s` the integral gain
++     * (per second), `slew_steady_pp_per_s` the audible-limit slew, and
++     * `rescue_ms` the fill excursion above which the fast proportional path
++     * and `slew_pp_per_s` take over so a hitch is still absorbed quickly. */
++    double err_slow_ms;     /* steady-state error low-pass (default 2000)      */
++    double ki_per_s;        /* steady-state integral gain (default 0.02)       */
++    double slew_steady_pp_per_s; /* steady slew limit (default 0.05)           */
++    double rescue_ms;       /* fill excursion that enables the fast path (25)  */
++    /* Measurement-only: 1 restores the pre-task-18 proportional servo (one
++     * P term on the fill through `err_lp_ms`, `slew_pp_per_s`, deadband), so a
++     * before/after capture can be taken from one binary. Never set in
++     * production. */
++    int    classic_servo;
+     double deadband_ms;     /* +/- band around target with no correction (1.0)  */
+     double em_low_ms;       /* below this = underrun emergency (default 12)     */
+     double em_high_ms;      /* above this = overflow emergency (default 105)    */
+@@ -93,8 +111,10 @@ typedef struct rab_bridge {
+ 
+     /* controller */
+     double cur_step;        /* current source frames consumed per output frame */
+-    double err_lp;          /* low-passed normalized error                     */
++    double err_lp;          /* fast low-passed normalized error (hitch path)    */
++    double err_slow;        /* slow low-passed normalized error (clock path)    */
+     double corr;            /* current (slew-limited) correction               */
++    double corr_steady;     /* clock-offset estimate (slow integral)           */
+ 
+     /* fade / emergency */
+     double gain;            /* 0..1 smooth gate for startup/underrun           */
+@@ -187,6 +207,11 @@ void rab_config_defaults(rab_config *c) {
+     c->max_correction = 0.005;
+     c->err_lp_ms      = 75.0;
+     c->slew_pp_per_s  = 0.75;
++    c->err_slow_ms    = 2000.0;
++    c->ki_per_s       = 0.02;
++    c->slew_steady_pp_per_s = 0.05;
++    c->rescue_ms      = 40.0;
++    c->classic_servo  = 0;
+     c->deadband_ms    = 1.0;
+     c->em_low_ms      = 12.0;
+     c->em_high_ms     = 105.0;
+@@ -262,7 +287,9 @@ void rab_reset(rab_bridge *b) {
+     b->out_pos  = (double)(b->half - 1);
+     b->cur_step = b->cfg.source_rate / b->cfg.host_rate;
+     b->err_lp   = 0.0;
++    b->err_slow = 0.0;
+     b->corr     = 0.0;
++    b->corr_steady = 0.0;
+     b->gain     = 0.0;
+     b->primed   = 0;
+     b->prime_ms = (b->cfg.preroll_ms > b->cfg.target_ms)
+@@ -334,8 +361,11 @@ int rab_try_push_prepared(rab_bridge *b, const float *in, int frames) {
+     return 1;
+ }
+ 
+-static void rab__update_controller(rab_bridge *b) {
++static void rab__update_controller(rab_bridge *b, int frames) {
+     rab_config *c = &b->cfg;
++    double dt_ms = 1000.0 * (double)frames / b->cfg.host_rate;
++    if (dt_ms < 1.0) dt_ms = 1.0;
++    if (dt_ms > 100.0) dt_ms = 100.0;
+     double fill_ms = rab_fill_ms(b);
+     b->stats.last_fill_ms = fill_ms;
+ 
+@@ -363,29 +393,67 @@ static void rab__update_controller(rab_bridge *b) {
+         b->err_lp = 0.0;
+     }
+ 
+-    /* one control update per pull; low-pass the normalized error. Use the pull
+-     * block duration as dt (approx via host_rate is unnecessary here -- we fold
+-     * the time constant into a per-update smoothing alpha sized for ~10-20ms). */
+-    double err = (fill_ms - c->target_ms) / c->target_ms;
+-    if (fill_ms > c->target_ms - c->deadband_ms &&
+-        fill_ms < c->target_ms + c->deadband_ms) {
+-        err = 0.0; /* deadband */
++    if (c->classic_servo) {
++        /* Pre-task-18 controller: one proportional term on the fill. Kept for
++         * the A/B listening capture only (GENESIS_AUDIO_DRC_CLASSIC=1). */
++        double err = (fill_ms - c->target_ms) / c->target_ms;
++        if (fill_ms > c->target_ms - c->deadband_ms &&
++            fill_ms < c->target_ms + c->deadband_ms) err = 0.0;
++        double alpha = dt_ms / (c->err_lp_ms + dt_ms);
++        b->err_lp += alpha * (err - b->err_lp);
++        double target_corr = c->kp * b->err_lp;
++        if (target_corr >  c->max_correction) target_corr =  c->max_correction;
++        if (target_corr < -c->max_correction) target_corr = -c->max_correction;
++        double slew = (c->slew_pp_per_s / 100.0) * (dt_ms / 1000.0);
++        double d = target_corr - b->corr;
++        if (d >  slew) d =  slew;
++        if (d < -slew) d = -slew;
++        b->corr += d;
++        b->cur_step = (c->source_rate / c->host_rate) * (1.0 + b->corr);
++        b->stats.last_correction = b->corr;
++        return;
++    }
++
++    /* One control update per pull. The law is deliberately boring:
++     *
++     *   err        = (fill - target) / target, zero inside the deadband
++     *   err_lp     = err through a 2 s low-pass          (kills the sawtooth)
++     *   target     = kp * err_lp   (proportional: when the ring is at target
++     *                the correction returns to zero, so it cannot wind up)
++     *   corr       = target, slew-limited to 50 ppm/s
++     *
++     * The 2 s low-pass keeps the 16.7 ms push / 21.3 ms pull fill sawtooth and
++     * ordinary host jitter out of the playback ratio (a few tens of ppm, i.e.
++     * a fraction of a cent), and the 50 ppm/s slew makes the ratio change
++     * inaudibly slowly. Inside the deadband the correction is *held*, not
++     * zeroed: a proportional law that zeroed it there would turn the deadband
++     * into a slow +/-kp*deadband triangle wobble, and the steady-state droop of
++     * a real device clock offset (a few ms of fill) sits inside the band.
++     * Only an about-to-underrun ring may move the ratio at 1 %/s. */
++    double off_ms = fill_ms - c->target_ms;
++    double err = off_ms / c->target_ms;
++    if (off_ms > -c->deadband_ms && off_ms < c->deadband_ms)
++        err = 0.0;   /* deadband: no push, the correction holds */
++    double a_slow = dt_ms / (c->err_slow_ms + dt_ms);
++    b->err_slow += a_slow * (err - b->err_slow);
++
++    double proposed;
++    if (off_ms > -c->deadband_ms && off_ms < c->deadband_ms)
++        proposed = b->corr;
++    else
++        proposed = c->kp * b->err_slow;
++    if (proposed >  c->max_correction) proposed =  c->max_correction;
++    if (proposed < -c->max_correction) proposed = -c->max_correction;
++
++    {
++        int emergency = b->primed && fill_ms < 0.35 * c->target_ms;
++        double rate = emergency ? c->slew_pp_per_s : c->slew_steady_pp_per_s;
++        double slew = (rate / 100.0) * (dt_ms / 1000.0);
++        double d = proposed - b->corr;
++        if (d >  slew) d =  slew;
++        if (d < -slew) d = -slew;
++        b->corr += d;
+     }
+-    /* smoothing alpha: assume ~one update per host audio block (~10ms typical). */
+-    double dt_ms = 12.0;
+-    double alpha = dt_ms / (c->err_lp_ms + dt_ms);
+-    b->err_lp += alpha * (err - b->err_lp);
+-
+-    double target_corr = c->kp * b->err_lp;
+-    if (target_corr >  c->max_correction) target_corr =  c->max_correction;
+-    if (target_corr < -c->max_correction) target_corr = -c->max_correction;
+-
+-    /* slew limit (percentage points per second -> fraction per update) */
+-    double slew = (c->slew_pp_per_s / 100.0) * (dt_ms / 1000.0);
+-    double d = target_corr - b->corr;
+-    if (d >  slew) d =  slew;
+-    if (d < -slew) d = -slew;
+-    b->corr += d;
+ 
+     /* A high queue (positive error) must be consumed FASTER -> larger step. */
+     b->cur_step = (c->source_rate / c->host_rate) * (1.0 + b->corr);
+@@ -460,7 +528,7 @@ static double rab__find_loop_len(const rab_bridge *b, int64_t end_i) {
+ 
+ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
+     int ch = b->cfg.channels;
+-    rab__update_controller(b);
++    rab__update_controller(b, frames);
+ 
+     double gstep = 1.0 / (b->cfg.host_rate * 0.003); /* ~3ms fade in/out */
+     double step  = b->cur_step;
