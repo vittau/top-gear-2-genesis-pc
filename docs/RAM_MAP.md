@@ -68,6 +68,13 @@ Controller evidence from ROM `$00D7A6..00D872`:
 | `$A00087` | long | Music driver A work pointer, initialised `$0F0000` | `$024C96..$024CB4` |
 | `$A0025E` | byte | Race SFX Z80 image command byte (vestigial; writer `$07018A` has no callers) | `$07018A`, `$0701D4` |
 | `$A00260` | byte | Race SFX Z80 image command queue counter | `$070160`, `$0701AA/$0701CA` |
+| `$A00000` | code | Z80 reset entry: music driver (`F3 31 F0 1F C3 42`) or race SFX image (`C3 10 04`), never both | Runtime Z80 RAM dump after upload |
+
+The port's `BOTH` choice is host-only state; `$FF240E` and `$FF2560` stay in
+their stock `{0,1}` range. The SFX-side policy sites listed in
+`docs/AUDIO.md` see a temporary `0` and the word is restored before the
+dependent branch, so a reader that is not a hooked site always sees the
+stock value.
 
 Race timing fields verified by raw ROM and per-frame native snapshots
 (see `FRAMERATE.md` for cadence measurements):
