@@ -26,6 +26,11 @@ p.add_argument('--out', type=Path, default=ROOT/'build/ws')
 p.add_argument('--port', type=int, default=4400)
 p.add_argument('--modes', default='off,16:9,21:9')
 p.add_argument('--sweep', action='store_true', help='Steer after frame 4501 to exercise margin crossings')
+p.add_argument('--margin-audit', action='store_true', help='check every race line for black margin gaps')
+p.add_argument('--route', type=Path, default=ROOT/'game/baseline-route.json')
+p.add_argument('--end-frame', type=int, default=5600)
+p.add_argument('--shots', default='', help='extra exact-frame PNG captures')
+p.add_argument('--turbo', action='store_true')
 a = p.parse_args()
 a.exe, a.out = a.exe.resolve(), a.out.resolve()
 a.out.mkdir(parents=True, exist_ok=True)
@@ -44,17 +49,20 @@ def stderr_text_tail(out):
 
 def timeline(out):
     actions = {f: [] for f in FRAMES}
-    for action in json.loads((ROOT/'game/baseline-route.json').read_text()):
+    for action in json.loads(a.route.read_text()):
         if 'keys' in action:
             lines = ['RELEASE']
-            if action['keys'] != '0':
-                lines += ['HOLD '+{'80':'START', '2':'DOWN', '10':'B'}[action['keys']]]
+            mask = int(action['keys'], 16)
+            names = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'B', 'C', 'A', 'START']
+            lines += ['HOLD '+name for bit, name in enumerate(names) if mask & (1 << bit)]
             actions.setdefault(action['frame'], []).extend(lines)
     if a.sweep:
         actions[4600] = ['RELEASE', 'HOLD B', 'HOLD RIGHT']
         actions[4900] = ['RELEASE', 'HOLD B', 'HOLD LEFT']
         for frame in range(4600, 5501, 20):
             actions.setdefault(frame, []).append(f'SCREENSHOT {out}/sweep-{frame}.png')
+    for frame in [int(f) for f in a.shots.split(',') if f]:
+        actions.setdefault(frame, []).append(f'SCREENSHOT {out}/frame-{frame}.png')
     for frame in FRAMES:
         actions[frame] += [f'SCREENSHOT {out}/frame-{frame}.png',
                            f'DUMP_RAM {out}/frame-{frame}.ram',
@@ -68,7 +76,7 @@ def timeline(out):
             lines.append(f'WAIT {frame-previous}')
         lines.extend(event)
         previous = frame
-    lines += [f'WAIT {5600-previous}', 'EXIT 0']
+    lines += [f'WAIT {a.end_frame-previous}', 'EXIT 0']
     path = out/'route.input'
     path.write_text('\n'.join(lines)+'\n')
     return path
@@ -80,18 +88,20 @@ for mode in a.modes.split(','):
     script = timeline(out)
     with socket.socket() as check:
         check.bind(('127.0.0.1', a.port))
-    env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_RENDER_DRIVER='software',
+    env = dict(os.environ, SDL_VIDEODRIVER='offscreen' if a.turbo else 'dummy', SDL_RENDER_DRIVER='software',
                SDL_AUDIODRIVER='dummy')
     # A launched native build that inherits a host $APPIMAGE would anchor its
     # debug.ini lookup (and the required TCP server) to the AppImage directory.
     env.pop('APPIMAGE', None)
     argv = [str(a.exe), str(a.rom), '--no-launcher', '--port', str(a.port),
-            '--widescreen', mode, '--input-script', str(script), '--max-frames', '5601',
+            '--widescreen', mode, '--input-script', str(script), '--max-frames', str(a.end_frame+1),
             '--hash-frames', '60', '--fresh-evidence', '--turbo']
+    if a.margin_audit:
+        env['TG2_MARGIN_AUDIT'] = str(out/'margins.csv')
     diagnostics = []
     margin_shots = []
     resize_actions = []
-    if mode == '21:9' and not a.sweep:
+    if mode == '21:9' and not a.sweep and not a.margin_audit:
         for frame, dw, dh, expected in [(4600,1600,900,398), (4700,1234,567,488),
                                         (4800,1000,1000,320), (4900,3840,720,1195)]:
             resize_actions += [(frame, 'configure', (dw,dh)), (frame+20, 'capture', expected)]
@@ -160,13 +170,16 @@ for mode in a.modes.split(','):
         text = (out/name).read_text()
         if not re.search(r'# entries:\s+0\b', text):
             raise AssertionError(f'{mode}: nonempty {name}')
-    summary[mode] = dict(exit=proc.returncode, frames=5600, manifests='all empty')
-    if mode == '21:9' and not a.sweep:
+    summary[mode] = dict(exit=proc.returncode, frames=a.end_frame, manifests='all empty')
+    if a.margin_audit and mode != 'off':
+        from check_margin_artifacts import check
+        summary[mode]['margins'] = check(out/'margins.csv')
+    if mode == '21:9' and not a.sweep and not a.margin_audit:
         assert not resize_actions, resize_actions
         summary[mode]['adaptive_widths_and_disable'] = [398,488,320,1195,256]
     if mode != 'off':
         assert any(d['video'].get('sat_matches', 0)>0 for d in diagnostics), 'captured mappings never matched native SAT pieces'
-        assert margin_shots, 'no captured sprite pixel ever reached the added margins'
+        assert margin_shots or a.margin_audit, 'no captured sprite pixel ever reached the added margins'
         summary[mode]['margin_screenshots'] = margin_shots
         summary[mode]['max_sprite_margin_pixels'] = max(
             d['video'].get('sprite_margin_pixels', 0) for d in diagnostics)
@@ -189,3 +202,6 @@ for mode in a.modes.split(','):
         summary[mode]['canonical_state_and_center'] = 'identical at all 5 capture frames'
     (a.out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
     print(json.dumps({mode:summary[mode]}), flush=True)
+
+if a.margin_audit and any(not s.get('margins', {'passed': True})['passed'] for s in summary.values()):
+    raise SystemExit(1)

@@ -325,6 +325,35 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
         if (shifted[x])
             out[x] = pal[shifted[x]];
 }
+/* Private per-line margin evidence, before sprites and HUD relocation. */
+static FILE *margin_audit;
+static int margin_audit_checked;
+static void audit_margins(const GVDP *v, int line, const uint32_t *native,
+                          int nw, const uint32_t *out, int w,
+                          unsigned ba, unsigned bb, int ha, int hb, int va, int vb) {
+    if (!margin_audit_checked) {
+        margin_audit_checked = 1;
+        const char *path = getenv("TG2_MARGIN_AUDIT");
+        if (path && *path) {
+            margin_audit = fopen(path, "w");
+            if (!margin_audit) { perror(path); exit(1); }
+            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope\n");
+        }
+    }
+    if (!margin_audit || w <= nw) return;
+    int origin = (w - nw) / 2;
+    for (int side = 0; side < 2; ++side) {
+        int edge = side ? nw - 1 : 0;
+        unsigned aa, ab;
+        unsigned ap = pixel(v, ba, edge - ha, line + va, &aa);
+        unsigned bp = pixel(v, bb, edge - hb, line + vb, &ab);
+        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d\n",
+                (unsigned long long)present_frame, line, side, native[edge],
+                out[origin + (side ? nw : -1)], ap, aa, bp, ab,
+                v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0));
+    }
+    if (line == 223) fflush(margin_audit);
+}
 static int synthesizing;
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
@@ -370,6 +399,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
         unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
         out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
+    audit_margins(v, line, native, nw, out, w, ba, bb, ha, hb, va, vb);
     /* Reverse allocation order matches the native backward SAT builder. */
     unsigned char covered[4096] = {0};
     for (unsigned n = shown ? shown->count : 0; n > 0; --n) {
