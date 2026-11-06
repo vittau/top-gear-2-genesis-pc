@@ -117,7 +117,8 @@ class Driver:
         self.shot('setup')
 
 
-    def press_start_until_race(self, limit=2400, label='pre', max_taps=12):
+    def press_start_until_race(self, limit=2400, label='pre', max_taps=12,
+                               prev_clock=None):
         """Advance intro/shop/result screens until the race clock is running.
 
         START is only tapped when the clock has not started for a whole
@@ -132,7 +133,10 @@ class Driver:
         while r.frame() - start < limit:
             st = self.state()
             self.log(st, 0)
-            if st.clock > 0 and st.clock != last:
+            # A finished race leaves its frozen clock in RAM through the menus,
+            # so a *new* race is a non-zero clock smaller than the previous
+            # race's finish clock.
+            if st.clock > 0 and (prev_clock is None or st.clock < prev_clock):
                 return st
             if r.frame() >= next_tap and taps < max_taps:
                 self.shot(f'{label}-tap-{taps:02d}')
@@ -295,7 +299,7 @@ class Driver:
         summary = dict(result=result, races=self.races, shots=self.shots,
                        sp_samples=self.sp_samples, sp_stats=sp_stats,
                        widescreen=self.r.widescreen,
-                       race_60fps=bool(os.environ.get('TG2_RACE_60FPS')),
+                       race_60fps=bool(getattr(self.args, 'fps60', False)),
                        commands=self.r.commands, **extra or {})
         (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         return summary
@@ -367,8 +371,10 @@ def main():
         d = Driver(r, a)
         d.boot_to_setup(two_player=a.two_player)
         shots = {int(x) for x in a.shots.split(',') if x.strip()}
+        prev_finish = None
         for i in range(a.races):
-            st = d.press_start_until_race(label=f'race{i + 1}')
+            st = d.press_start_until_race(label=f'race{i + 1}',
+                                          prev_clock=prev_finish)
             if st is None:
                 result = 'no-race'
                 break
@@ -379,6 +385,7 @@ def main():
                 result = 'timeout'
                 break
             result = 'finished'
+            prev_finish = race.get('finish_clock')
             if i + 1 < a.races and not a.skip_post:
                 _, raced = d.post_race(a, f'race{i + 1}', race['finish_clock'])
                 if not raced:

@@ -60,9 +60,11 @@ def main():
         d = Driver(r, a)
         d.boot_to_setup()
         n = 0
+        prev_finish = None
         while time.monotonic() < deadline and r.proc.poll() is None:
             n += 1
-            st = d.press_start_until_race(limit=2400, label=f'race{n}')
+            st = d.press_start_until_race(limit=2400, label=f'race{n}',
+                                          prev_clock=prev_finish)
             if st is None:
                 # Main menu after a failed qualification: START toggles the
                 # 1P/2P row, so select the START row explicitly and try again.
@@ -79,6 +81,7 @@ def main():
             d.shot(f'race{n}-start')
             race = d.drive_race(a)
             d.races.append(race)
+            prev_finish = race.get('finish_clock')
             if race.get('timeout'):
                 result = 'timeout'
                 break

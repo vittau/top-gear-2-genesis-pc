@@ -74,7 +74,7 @@ not reversed, so tracks are reached by racing the championship.
 |---|---|---|
 | Auckland, Australasia (1.6 mi, 4 laps, 5:43 AM) | race 1 | `build/qual/progress1/after-start-1800.png` |
 | Ayers Rock, Australasia (1.2 mi, 5 laps, 9:15 PM) | race 2, **night race** | intro `build/qual/progress1/race1-post-05.png`; the finished night race: `build/qual/soak-60/race2-post-01.png` (dark palette, LAP 5/5) and `build/qual/soak-60/race-3060.png` |
-| championship track 3+ | soak run restart cycle | `build/qual/soak-32/raceN-start.png`, `race-*.png` |
+| championship track 3+ | not reached | every attempt ended on the Ayers Rock qualification gate; the soak restarts the championship from the menu (evidence: `build/qual/soak-33/raceN-start.png`) |
 
 A race must be **qualified** (roughly top ten) to advance; finishing 14th on
 Ayers Rock ended the championship and returned the game to the main menu. The
@@ -136,9 +136,34 @@ A stray START during the countdown pauses the game (the 2P countdown is reached
 after the menu presses), so the tool exposes `--unpause-at`; the exported frame
 in the screenshots above is unpaused.
 
-## 5. Long-run soak
+## 5. Long-run soak (16:9 + 60 fps)
 
-See the final section after the run.
+`python3 tools/tg2_soak.py --port 4470 --out build/qual/soak-33 --widescreen
+16:9 --60fps --minutes 33 --launch-delay 300 --periodic-shots`
+(`build/qual/soak-33/summary.json`).
+
+| Measurement | Result |
+|---|---|
+| Wall time | **2021 s (33.7 min)**, one process, one port |
+| Races started / completed | 10 / 7 (each Ayers Rock failure restarts the championship from the menu) |
+| Frames simulated | finish of the last race at wall frame 121 127 |
+| Exit | 0, clean shutdown (`[rewind] shutdown`), no watchdog exit |
+| Stack pointer (`A7`) | 153 samples every 600 frames: **min = max = `$FFFFFA`** — no drift |
+| Manifests | dispatch 0, floor 0, interior 0, unsafe 0 |
+| Screenshots | 233 PNGs under `build/qual/soak-33/` |
+
+Race-by-race lap times (seconds; the last short entry in some races is the
+finish crossing that also increments the lap counter):
+
+| # | Frames | Track (laps) | Lap times |
+|---:|---|---|---|
+| 1 | 3063-13585 | Auckland | 39.60, 39.20, 39.20, 43.03 |
+| 2 | 15067-31049 | Ayers Rock (night) | 54.53, 54.47, 50.90, 54.50, 39.83 |
+| 3 | 38717-49291 | Auckland | 40.50, 38.60, 40.00, 44.70 |
+| 4 | 56959-67675 | Auckland | 40.77, 41.00, 41.40, 42.00 |
+| 5 | 75343-85869 | Auckland | 41.57, 37.80, 41.10, 40.91 |
+| 6 | 87447-104607 | Ayers Rock | 52.50, 54.17, 56.13, 53.07, 58.73 |
+| 7 | 106225-121127 | Ayers Rock | 61.67, 57.93, 60.30, 56.59 |
 
 ## Reproduce
 
@@ -177,10 +202,13 @@ discovery seeds were needed, so `game/game.toml` is unchanged by this task.
 
 ## Gaps / follow-ups
 
-* Two-player split-screen is unqualified (needs a second pad or a virtual-pad
-  harness).
-* Password reverse-engineering was not attempted; track coverage depends on
-  championship progression.
+* Only two of the sixteen championship tracks were reached (Auckland and Ayers
+  Rock). Advancing needs a top-ten finish, and the reactive driver is not fast
+  enough on Ayers Rock's tighter layout (14th, ~52 s laps vs Auckland ~40 s), so
+  the championship ends there and restarts from Auckland. A faster lane-keeping
+  controller, or reversing the password encoding, is the way to the rest.
+* Rain remains untested for the same reason (weather is per track).
+* No nitro input was found (see section 3).
 * The open-loop replay of a *reactive* route diverges once the car touches the
   grass; the deterministic comparison that is valid today is same-mode
   repeatability (exact) and same-script Off/16:9 (exact). A tuned feed-forward
