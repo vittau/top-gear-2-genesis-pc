@@ -333,6 +333,51 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
         if (shifted[x])
             out[x] = pal[shifted[x]];
 }
+/* Window coordinates are unscrolled, with a 32-cell stride in H32. Only
+ * extend an opaque, solid native edge: transparent window texels can expose
+ * authored panorama detail that must keep its ordinary continuation. */
+static int window_at(const GVDP *v, int line, int x) {
+    unsigned wx = v->reg[17], wy = v->reg[18];
+    return ((wy & 128) ? line >= (wy & 31) * 8 : line < (wy & 31) * 8) ||
+           ((wx & 128) ? x >= (wx & 31) * 16 : x < (wx & 31) * 16);
+}
+static int edge_solid(const uint32_t *native, int nw, int side) {
+    int edge = side ? nw - 1 : 0, step = side ? -1 : 1;
+    for (int i = 1; i < 8; ++i)
+        if (native[edge + step * i] != native[edge]) return 0;
+    return 1;
+}
+static int window_band_edge(const GVDP *v, int line, const uint32_t *native,
+                            int nw, int side) {
+    int edge = side ? nw - 1 : 0, step = side ? -1 : 1;
+    if (!window_at(v, line, edge) || !edge_solid(native, nw, side)) return 0;
+    unsigned base = (v->reg[3] & 63) << 10;
+    for (int i = 0; i < 8; ++i) {
+        int x = edge + step * i;
+        if (!window_at(v, line, x)) return 0;
+        unsigned attr = word(v->vram, base + ((line / 8) * 32 + x / 8) * 2);
+        if (!(attr & 0x8000)) return 0;
+        unsigned px = x & 7, py = line & 7;
+        if (attr & 0x800) px ^= 7;
+        if (attr & 0x1000) py ^= 7;
+        unsigned data = v->vram[((attr & 2047) * 32 + py * 4 + px / 2) & 65535];
+        unsigned c = px & 1 ? data & 15 : data >> 4;
+        if (!c || genesis_dac_cram_to_argb(v->cram[((attr >> 9) & 48) | c], 0) != native[edge])
+            return 0;
+    }
+    return 1;
+}
+static unsigned window_margins(const GVDP *v, int line, const uint32_t *native,
+                           int nw, uint32_t *out, int w) {
+    int origin = (w - nw) / 2;
+    unsigned mask = window_band_edge(v, line, native, nw, 0) |
+                    (window_band_edge(v, line, native, nw, 1) << 1);
+    if (mask & 1)
+        for (int x = 0; x < origin; ++x) out[x] = native[0];
+    if (mask & 2)
+        for (int x = origin + nw; x < w; ++x) out[x] = native[nw - 1];
+    return mask;
+}
 /* Private per-line margin evidence, before sprites and HUD relocation. */
 static FILE *margin_audit;
 static int margin_audit_checked;
@@ -344,7 +389,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         if (path && *path) {
             margin_audit = fopen(path, "w");
             if (!margin_audit) { perror(path); exit(1); }
-            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b\n");
+            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band\n");
         }
     }
     if (!margin_audit || w <= nw) return;
@@ -361,11 +406,21 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         unsigned bp = pixel(v, bb, edge - hb, line + vb, &ab);
         unsigned mb_attr;
         unsigned mb = pixel(v, bb, road_x(side ? nw : -1, hb, line + vb), line + vb, &mb_attr);
-        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u\n",
+        int solid = edge_solid(native, nw, side);
+        int backdrop = solid && native[edge] == genesis_dac_cram_to_argb(v->cram[v->reg[7] & 63], 0);
+        for (int i = 0; backdrop && i < 8; ++i) {
+            int x = edge + (side ? -i : i);
+            unsigned attr;
+            if ((v->reg[1] & 64) &&
+                (pixel(v, ba, x - ha, line + va, &attr) ||
+                 pixel(v, bb, x - hb, line + vb, &attr))) backdrop = 0;
+        }
+        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d\n",
                 (unsigned long long)present_frame, line, side, native[edge],
                 out[origin + (side ? nw : -1)], ap, aa, bp, ab,
                 v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0), mb,
-                genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0));
+                genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0),
+                solid, window_band_edge(v, line, native, nw, side), backdrop);
     }
     if (line == 223) fflush(margin_audit);
 }
@@ -388,8 +443,10 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
     if (!race(v) || !(v->reg[1] & 64)) {
         ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
-        if (audit_race_frame)
+        if (audit_race_frame) {
+            window_margins(v, line, native, nw, out, w);
             audit_margins(v, line, native, nw, out, w);
+        }
         return;
     }
     ++wide_lines;
@@ -417,6 +474,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
         unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
         out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
+    unsigned window_mask = window_margins(v, line, native, nw, out, w);
     if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
     /* Reverse allocation order matches the native backward SAT builder. */
     unsigned char covered[4096] = {0};
@@ -441,6 +499,8 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
             covered[ox] = 1;
             unsigned b;
             unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
+            if (!(s->attr & 0x8000) && (window_mask & (nx < 0 ? 1 : 2)))
+                continue; /* solid high-priority window, as in the native compositor */
             if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
                 ++frame_margin_pixels;

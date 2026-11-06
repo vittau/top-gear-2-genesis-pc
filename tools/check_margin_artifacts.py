@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def check(path):
-    totals = dict(rows=0, frames=0, black_violations=0, ground_colour_violations=0, examples=[])
+    totals = dict(rows=0, frames=0, black_violations=0, ground_colour_violations=0, band_colour_violations=0, solid_band_samples=0, examples=[])
     frames, slopes, lines = {}, set(), set()
     with Path(path).open() as source:
         for record in csv.DictReader(source):
@@ -29,11 +29,17 @@ def check(path):
                       and (432 <= row['atlas_y'] < 448
                            or row['margin_bp'] in (5, 15, 21, 31))
                       and row['margin'] != row['native_b'])
+            band = row['edge_solid'] and (row['window_band'] or row['backdrop_band'])
+            totals['solid_band_samples'] += int(bool(band))
+            band_bad = band and row['margin'] != row['native']
+            totals['band_colour_violations'] += int(bool(band_bad))
             totals['ground_colour_violations'] += int(ground)
             if black:
                 totals['black_violations'] += 1
-            if (black or ground) and len(totals['examples']) < 20:
-                row['source'] = ('road' if row['atlas_y'] < 432 else
+            if (black or ground or band_bad) and len(totals['examples']) < 20:
+                row['source'] = ('window' if row['window_band'] else
+                                 'backdrop' if row['backdrop_band'] else
+                                 'road' if row['atlas_y'] < 432 else
                                  'ground/separator' if row['atlas_y'] < 448 else 'panorama')
                 totals['examples'].append(row)
     totals['frames'] = len(frames)
@@ -47,7 +53,8 @@ def check(path):
     totals['passed'] = (totals['rows'] > 0 and not totals['missing_frames']
                         and not totals['incomplete_frames']
                         and not totals['black_violations']
-                        and not totals['ground_colour_violations'])
+                        and not totals['ground_colour_violations']
+                        and not totals['band_colour_violations'])
     return totals
 
 
