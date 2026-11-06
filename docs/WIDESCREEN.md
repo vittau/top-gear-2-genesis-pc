@@ -38,16 +38,24 @@ hills and banked curves keep their per-line perspective in the margins.
 ## What each layer does
 
 **Plane B — road and skyline.** Plane B is `$E000`, a 64×64 (512×512) name
-table. Its atlas holds four perspective road sections in rows 0..431, a
-separator, and the authored skyline panorama in rows 432..511.
+table. Its atlas holds four perspective road sections in rows 0..431,
+ground/separator rows 432..447, and the authored skyline panorama in rows
+448..511.
 
 - The road sections straddle the plane seam at X=0: the road's two halves
   meet across X=0/512, with the exterior ground around X=256. `road_x()`
   unwraps the road around the native view's centre so both halves of *one*
   road are sampled, and clamps to the atlas half-domain `[-256, 255]`.
   Margins therefore never show a second, wrapped road.
-- Rows 432..511 are the skyline: they keep the plane's authored panorama wrap,
+- Rows 448..511 are the skyline: they keep the plane's authored panorama wrap,
   so the skyline continues scrolling through the margins.
+- Rows 432..447 are ground/separators, not panorama. Rows 432..439
+  contain solid ground; rows 440..441 have grass in atlas X=256..511 and
+  transparent tiles in X=0..255. Hills can repeat these rows across many
+  output lines between the water and the road. Each margin continues its
+  native edge sample on these rows, so it cannot wrap from grass into the
+  transparent half and expose the black backdrop. Colours still come from
+  that exact output line's CRAM, preserving the raster grass shades.
 - Each row uses its own H-scroll (plane B register / VSRAM) and V-scroll, so
   the margin continues that exact scanline's perspective.
 
@@ -279,6 +287,123 @@ Its artifacts are under `build/hud/top-band/`: `stock-top.png`,
 The before/after crops are identical because this follow-up adds diagnostics
 and evidence, without changing rendering. The route capture command and its
 logs are retained alongside those artifacts in `capture.py`/`capture.log`.
+
+### Solid window and backdrop margin bands
+
+The top window spans native rows 0..7, but the earlier margin compositor
+sampled plane B on row 0 and exposed grey/green scenery beside the black
+native window. Solid, opaque high-priority window edges now continue their
+native colour through the margins. The native centre, including its existing
+red/orange window pixels, is preserved. Low-priority margin sprites respect
+the window priority; high-priority sprites retain the native compositor order.
+
+Classification uses each row's live window registers and unscrolled H32
+window name table. All eight native edge pixels must have one colour, and
+all eight window texels must be opaque, high priority, and match that displayed
+colour. Transparent windows and nonuniform panorama detail retain ordinary
+scenery continuation. There is no hard-coded row-0 colour or fixed black fill.
+
+The margin CSV also exports `edge_solid`, `window_band` and `backdrop_band`.
+The checker counts `band_colour_violations` whenever an adjacent margin differs
+from the native edge of a qualified solid window/backdrop band, including the
+reverse of a black gap: coloured pixels leaking beside a black native band.
+Qualified window edges are excluded from the ground/black-gap rules, whose
+plane-B samples are hidden behind the window.
+Backdrop qualification requires a uniform eight-column edge matching the
+backdrop colour with transparent underlying planes (or disabled display).
+Scenery pixels are still checked before sprite/HUD occlusion, so legitimate
+actors and panorama details are not treated as band errors.
+
+The extended check fails the pre-window-fix 16:9 / Edges / 60 fps On route
+with **5838 band-colour violations**, while the existing black-gap and ground
+counters stay 0 (`build/hills/window-before-check.json`, expected exit 1).
+After correction, all **eight** 16:9/21:9 × Centered/Edges × 60 fps Off/On
+combinations pass with **0 band-colour, 0 black-gap and 0 ground-colour
+violations**. Each covers 2933 complete frames and 1,313,984 edge samples;
+the total is **10,511,872**, including **989,012 qualified solid-band
+samples** (123,600 per Off combination, 123,653 per On combination).
+`build/hills/window-matrix.json` and `window-results.json` retain the counts;
+all **40** manifests in the nine passing runs plus the pre-fix countercheck
+have zero entries. The stock Off hashes and all five Centered/Off native
+centre/RAM/VRAM comparisons still pass.
+
+At frame 5135, every combination changes only margin pixels on native line 0;
+the 16:9 pair changes **142 pixels**, and the native centre remains identical.
+All eight top margin rows are black. See `build/hills/window-before-5135-2x.png`,
+`window-after-5135-2x.png`, `window-reproduction.json`,
+`window-source-lines-5135.json` and `window-pixel-checks.json`. These are separate
+from the earlier hill-fix PNG pair, which is retained as historical evidence.
+
+## Hill margin regression check
+
+`TG2_MARGIN_AUDIT=<private.csv>` records both adjacent margin pixels on every
+eligible race line, before sprites and relocated HUD can hide a gap. Each row
+includes the actual native edge colour, native plane-A/B texels and attributes,
+the margin's plane-B texel, the native B colour from the same per-line CRAM,
+atlas Y and player slope. The same hook receives the synthesized native row
+when 60 fps is enabled; it therefore audits real and intermediate pictures.
+
+`tools/check_margin_artifacts.py` counts black backdrop gaps where the native
+edge has visible scenery. Opaque black panorama art is distinguished from a
+transparent texel exposing the backdrop; plane-A car/effect pixels over an
+already empty native B edge are not classified as scenery. It also checks
+exact ground colour continuity across separator lines and between ground
+texels on ordinary road lines, including palette-bank and grass-stripe phase.
+`tools/verify_widescreen.py --margin-audit` runs it and returns nonzero for any
+violation or an empty capture. Custom controller routes can be supplied with
+`--route` and `--end-frame`; all output remains under the selected build path.
+
+```sh
+TG2_RACE_60FPS=1 TG2_HUD_MODE=edges python3 tools/verify_widescreen.py \
+  --port 4500 --out build/hills/after-edges-60 --modes 16:9,21:9 \
+  --margin-audit --turbo --shots 2685,5135,5140
+# Repeat with TG2_RACE_60FPS=0 and TG2_HUD_MODE=centered as needed.
+```
+
+### Qualified Auckland hill evidence
+
+The baseline controller route covers flat ground and both slope signs
+(`$FF18E0` ranges **−190..128**), with moving horizon/ground separator rows.
+At wall frame **5135** (audit frame 5134), native line **125** samples plane-B
+atlas Y=441, tile attribute `$0273`, index **15** on both edges. Plane A is
+transparent there. The previous margin sampler reaches index **0** and exposes
+the black backdrop; the corrected sampler keeps index 15 and that line's
+CRAM colour **RGB (87,119,49)**.
+
+Before/after 2× PNGs: `build/hills/before-5135-2x.png` and
+`build/hills/after-5135-2x.png`. Only margin pixels on native lines **123..133**
+change; **1556** black margin pixels recover scenery, and the entire native
+256×224 centre is byte-identical. `build/hills/reproduction.json` and
+`before-source-lines-5135.json` retain the pixel/source evidence.
+
+All eight combinations below cover **2933 complete race frames**, every line
+**0..223**, both edges: **1,313,984** samples per combination, with no missing
+frames or incomplete rows. Reports and commands are under `build/hills/`;
+`matrix.json` links the four paired aspect runs. Every final runtime manifest
+has zero entries.
+
+| HUD | 60 fps | 16:9 black / ground-colour violations | 21:9 black / ground-colour violations |
+|---|---|---:|---:|
+| Centered | Off | 0 / 0 | 0 / 0 |
+| Edges | Off | 0 / 0 | 0 / 0 |
+| Centered | On | 0 / 0 | 0 / 0 |
+| Edges | On | 0 / 0 | 0 / 0 |
+
+The old renderer, rebuilt with the identical complete audit, fails with
+**11,100 black-backdrop gaps and 11,100 ground-colour violations in each
+aspect** (`before-complete/summary.json`, expected exit 1). It has the same
+2933 frames and complete row coverage; the fixed renderer returns exit 0.
+
+The existing 60 fps road artefact check also passes unchanged:
+**2503** audit frames, **1511** synthesized frames and **83,732** tested road
+lines, with every edge/stripe/discrete-row/translation/snapshot violation
+counter **0** (`road-after/road-artifacts.json`, exit 0). The two 12-frame
+visual strips remain under `road-after/road-strip-{3600,4500}-2x.png`.
+
+With both options Off, frame 60 remains **`2A0B972960C5E325`** and frame 300
+**`1131D937D70234FD`**. With 60 fps Off and Centered HUD, the canonical RAM,
+VRAM and native-centre comparisons pass at all five baseline capture frames
+in both widths (`after-centered-0/summary.json`).
 
 ## Known artefacts and limitations
 
