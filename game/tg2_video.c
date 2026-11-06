@@ -408,8 +408,28 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
  * Full per-row VDP copies also preserve mid-frame raster and palette changes.
  * They are never passed to the bus, scheduler or serialized machine state. */
 enum { PRESENT_HISTORY = 8, PRESENT_ROWS = 224, PRESENT_DELAY = 3 };
+typedef struct { int left, right, valid; } RoadGeometry;
+/* Atlas palette nibbles: 6 = border, 13 = lane marks, 14 = asphalt.
+ * Banks 0/1 and the four row ranges encode discrete stripe/ground phases.
+ * Measure the authored silhouette instead of interpolating atlas addresses. */
+static RoadGeometry road_geometry(const GVDP *v, int line) {
+    RoadGeometry result = {256, -257, 0};
+    unsigned py = (line + v->vsram[1]) & 511;
+    if (py >= 432) return result; /* panorama, not a road template */
+    unsigned base = (v->reg[4] & 7) << 13;
+    for (int x = -256; x < 256; ++x) {
+        unsigned attr, nib = pixel(v, base, x, py, &attr) & 15;
+        if (nib == 6 || nib == 13 || nib == 14) {
+            if (x < result.left) result.left = x;
+            result.right = x;
+            result.valid = 1;
+        }
+    }
+    return result;
+}
 typedef struct {
     GVDP row[PRESENT_ROWS];
+    RoadGeometry road[PRESENT_ROWS];
     Scene scene;
     uint64_t frame;
     int valid;
@@ -421,6 +441,53 @@ static Picture *from_picture, *to_picture;
 static unsigned phase_num, phase_den;
 static Scene mixed_scene;
 static GVDP mixed_vdp;
+/* Optional read-only qualification stream. Each row owns three complete
+ * plane-B index strips: the two real endpoints and the actual presented row.
+ * Export before sprites/HUD so occlusion cannot hide broken road topology. */
+static FILE *road_audit;
+static void audit_u32(unsigned value) {
+    unsigned char bytes[4] = {value, value >> 8, value >> 16, value >> 24};
+    fwrite(bytes, 1, sizeof bytes, road_audit);
+}
+static void audit_begin(void) {
+    const char *dir = getenv("TG2_ROAD_AUDIT_DIR");
+    if (!dir || !*dir || !from_picture) return;
+    char path[1024];
+    snprintf(path, sizeof path, "%s/frame-%06llu.road", dir,
+             (unsigned long long)present_frame);
+    road_audit = fopen(path, "wb");
+    if (!road_audit) { perror(path); exit(1); }
+    fwrite("TG2ROAD1", 1, 8, road_audit);
+    unsigned header[] = {(unsigned)present_frame, (unsigned)from_picture->frame,
+        (unsigned)to_picture->frame, phase_num, phase_den, (unsigned)-384,
+        1024, 140, 73};
+    for (unsigned i = 0; i < sizeof header / sizeof *header; ++i) audit_u32(header[i]);
+}
+static unsigned hscroll(const GVDP *v, int line, int plane) {
+    unsigned base = (v->reg[13] & 63) << 10;
+    int mode = v->reg[11] & 3;
+    int y = mode == 0 ? 0 : mode == 2 ? line & ~7 : line;
+    return word(v->vram, base + y * 4 + plane * 2) & 1023;
+}
+static void audit_row(int line, const GVDP *a, const GVDP *b, const GVDP *image) {
+    if (!road_audit || line < 140 || line > 212) return;
+    const GVDP *sources[] = {a, b, image};
+    for (int i = 0; i < 3; ++i) {
+        const GVDP *v = sources[i];
+        unsigned py = (line + v->vsram[1]) & 511;
+        unsigned hs = hscroll(v, line, 1), base = (v->reg[4] & 7) << 13;
+        audit_u32(py);
+        audit_u32(hs);
+        unsigned char row[1024];
+        for (int x = 0; x < 1024; ++x) {
+            unsigned attr;
+            row[x] = pixel(v, base, road_x(x - 384, hs, py), py, &attr);
+        }
+        if (fwrite(row, 1, sizeof row, road_audit) != sizeof row) {
+            perror("road audit write"); exit(1);
+        }
+    }
+}
 static void presentation_clear(void) {
     if (pictures)
         for (int i = 0; i < PRESENT_HISTORY; ++i) pictures[i].valid = 0;
@@ -429,12 +496,15 @@ static void presentation_clear(void) {
     picture_key = 0;
 }
 void tg2_video_frame(uint64_t frame, int on) {
+    if (road_audit) { fclose(road_audit); road_audit = NULL; }
     if (on != race60 || frame < present_frame) presentation_clear();
     race60 = on;
     present_frame = frame;
 }
+static int mix_reverse;
 static int mix(int a, int b) {
-    return a + (int)lround((double)(b - a) * phase_num / phase_den);
+    unsigned num = mix_reverse ? phase_den - phase_num : phase_num;
+    return a + (int)lround((double)(b - a) * num / phase_den);
 }
 static unsigned mix_wrap(unsigned a, unsigned b, unsigned mask) {
     int delta = (int)((b - a + (mask + 1) / 2) & mask) - (int)((mask + 1) / 2);
@@ -527,7 +597,11 @@ static void presentation_begin(const GVDP *v) {
     phase_den = (unsigned)(to_picture->frame - from_picture->frame);
     phase_num = (unsigned)(target - from_picture->frame);
     if (!phase_den) { phase_den = 1; phase_num = 0; }
-    mix_pieces(&from_picture->scene, &to_picture->scene);
+    mix_reverse = phase_num * 2 >= phase_den;
+    mix_pieces(mix_reverse ? &to_picture->scene : &from_picture->scene,
+               mix_reverse ? &from_picture->scene : &to_picture->scene);
+    mix_reverse = 0;
+    audit_begin();
 }
 static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                      uint32_t *out, int w) {
@@ -538,27 +612,53 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     }
     /* Capture every row of an eligible picture, including transient raster
      * bands that use the original row producer below. */
-    if (capture_picture && pictures && line < PRESENT_ROWS)
+    if (capture_picture && pictures && line < PRESENT_ROWS) {
         pictures[picture_index].row[line] = *v;
+        pictures[picture_index].road[line] = road_geometry(v, line);
+    }
     if (!race60 || line >= PRESENT_ROWS || nw != 256 || !race(v) || !from_picture) {
         draw_scanline(v, line, native, nw, out, w);
         return;
     }
-    mixed_vdp = from_picture->row[line];
-    const GVDP *b = &to_picture->row[line];
-    /* Raster vertical offsets encode road perspective, horizontal offsets
-     * encode road centre/skyline. Wrap interpolation follows the short arc. */
-    for (int i = 0; i < 2; ++i)
-        mixed_vdp.vsram[i] = mix_wrap(mixed_vdp.vsram[i], b->vsram[i], 1023);
-    unsigned ha = (mixed_vdp.reg[13] & 63) << 10, hb = (b->reg[13] & 63) << 10;
-    int ma = mixed_vdp.reg[11] & 3, mb = b->reg[11] & 3;
-    int ya = ma == 0 ? 0 : ma == 2 ? line & ~7 : line;
-    int yb = mb == 0 ? 0 : mb == 2 ? line & ~7 : line;
-    for (int i = 0; i < 2; ++i) {
-        unsigned a = ha + ya * 4 + i * 2, q = hb + yb * 4 + i * 2;
-        put_word(mixed_vdp.vram, a, mix_wrap(word(mixed_vdp.vram, a), word(b->vram, q), 1023));
+    const GVDP *a = &from_picture->row[line], *b = &to_picture->row[line];
+    int nearer_b = phase_num * 2 >= phase_den;
+    const GVDP *source = nearer_b ? b : a;
+    mixed_vdp = *source;
+    /* VSRAM selects a row in one of four authored road atlases, carrying
+     * width, stripe phase, palette bank and ground type together. Keep that
+     * entire discrete row, VRAM, CRAM and register state from ONE endpoint.
+     * Only translate its geometry horizontally; never interpolate atlas Y. */
+    unsigned hs = mix_wrap(hscroll(a, line, 1), hscroll(b, line, 1), 511);
+    RoadGeometry ga = from_picture->road[line], gb = to_picture->road[line];
+    if (ga.valid && gb.valid) {
+        RoadGeometry shape = nearer_b ? gb : ga;
+        int ca = 128 + ((hscroll(a, line, 1) + 128) & 511) - 256;
+        int cb = 128 + ((hscroll(b, line, 1) + 128) & 511) - 256;
+        int center = 128 + ((hs + 128) & 511) - 256;
+        int la = ca + ga.left, lb = cb + gb.left;
+        int ra = ca + ga.right, rb = cb + gb.right;
+        int lo_l = (la < lb ? la : lb) - shape.left;
+        int lo_r = (ra < rb ? ra : rb) - shape.right;
+        int hi_l = (la > lb ? la : lb) - shape.left;
+        int hi_r = (ra > rb ? ra : rb) - shape.right;
+        int lower = lo_l > lo_r ? lo_l : lo_r, upper = hi_l < hi_r ? hi_l : hi_r;
+        /* The selected endpoint's centre is always feasible. Clamp only the
+         * translation so both edges stay in their neighbours' envelopes;
+         * stripe topology and width remain an authored, unmixed road row. */
+        if (center < lower) center = lower;
+        if (center > upper) center = upper;
+        hs = (unsigned)center & 511;
+    } else if (ga.valid != gb.valid) {
+        hs = hscroll(source, line, 1); /* horizon/segment boundary: snap row */
     }
-    mix_sprites(&mixed_vdp, b);
+    unsigned base = (mixed_vdp.reg[13] & 63) << 10;
+    int hm = mixed_vdp.reg[11] & 3;
+    int hy = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
+    put_word(mixed_vdp.vram, base + hy * 4 + 2, hs);
+    mix_reverse = nearer_b;
+    mix_sprites(&mixed_vdp, nearer_b ? a : b);
+    mix_reverse = 0;
+    audit_row(line, a, b, &mixed_vdp);
     uint8_t indices[GVDP_MAX_WIDTH];
     uint32_t pixels[GVDP_MAX_WIDTH];
     int count = gvdp_render_scanline(&mixed_vdp, line, indices);
