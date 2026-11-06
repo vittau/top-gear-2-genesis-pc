@@ -111,7 +111,9 @@ fi
 # executable bit and the bundle directory structure; the staged folder stays
 # available for inspection in the CI artifact.
 rm -f "$out/TG2Recomp-macos.zip"
-(cd "$out" && zip -qry "$name.zip" "$app" README.txt)
+out_abs="$(cd "$out" && pwd)"
+[ -d "$stage/$app" ] && [ -f "$stage/README.txt" ] || { echo "missing $app or README.txt in $stage" >&2; exit 1; }
+(cd "$stage" && zip -qry "$out_abs/$name.zip" "$app" README.txt)
 (cd "$out" && shasum -a 256 "$name.zip" > "$name.zip.sha256")
 echo "Built $out/$name.zip"
 cat "$out/$name.zip.sha256"
