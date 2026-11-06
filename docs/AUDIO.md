@@ -297,10 +297,11 @@ So while the page is open the host flag is set but the cartridge word is still
 0.  Every path that reaches a race without the menu scene teardown — a guest
 reset, a state load, or any future route that starts a race from another scene
 — left the word at 0, `both_active()` false, and the eight hooked SFX-side
-sites alone meant **stock SOUND EFFECTS**: music stopped, no file change
-visible anywhere.  The same hole existed on the music side, unseen: the old
-build left the five music-side reads unhooked, so with the word at 0 the music
-gate `$025088` skipped the race track entirely.
+sites alone meant **stock SOUND EFFECTS**: the music driver stopped and only
+the 68k SFX engine ran.  The same hole existed on the music side, unseen: the
+old build left the three music-side reads unhooked, so with the word at 0 the
+music gate `$025088` skipped the race track entirely and even a BOTH selection
+that did engage could lose its music.
 
 Two more real-play defects followed from the same mistake:
 
@@ -381,32 +382,41 @@ frames of each run, which is the race.
 
 ### Engagement on every route
 
-Release-config build (`build-rel/TG2Recomp`, `GEN_ENABLE_TRACE=OFF`, the
-owner's configuration), `--widescreen 16:9`, `TG2_RACE_60FPS=1`, same
-open-loop input script per row:
+`build/` is the trace-enabled build (TCP route driver, 4:3); `build-rel/` is
+the release-config build the owner plays (`GEN_ENABLE_TRACE=OFF`,
+`--widescreen 16:9`, `TG2_RACE_60FPS=1`, driven by the same route as a runner
+input script).  The write dump is windowed to the race.
 
-| Route | Menu value | `$FF240E` in the race | 68k chip writes | Z80 chip writes | Both engines |
-|---|---|---:|---:|---:|---|
-| menu → SOUND → RACE SOUND → BOTH → leave (B) → 1P race | BOTH | 1 | 12,600 | 226,910 | yes |
-| same, MUSIC | MUSIC | 1 | 0 | 236,711 | music only (stock) |
-| same, SOUND EFFECTS | SFX | 0 | 12,614 | 117,708 | SFX only (stock) |
-| menu route, leave with **A** instead of B, BOTH | BOTH | 1 | 16,800 | 302,187 | yes |
-| password / CONTINUE route, BOTH | BOTH | 1 | 2,805 | 54,165 | yes |
-| second race after finishing the first, BOTH | BOTH | 1 | 12,614 | 234,130 | yes |
-| **direct** (never opens the SOUND pages; BOTH persisted) | BOTH | **0** | **12,600** | **226,910** | **yes** |
+| Build | Route | Menu value | `$FF240E` in the race | 68k chip writes | Z80 chip writes | Both engines |
+|---|---|---|---:|---:|---:|---|
+| rel | menu → SOUND → RACE SOUND → BOTH → leave (B) → 1P race | BOTH | 1 | 12,600 | 226,910 | yes |
+| rel | same, MUSIC | MUSIC | 1 | 0 | 236,711 | music only (stock) |
+| rel | same, SOUND EFFECTS | SFX | 0 | 12,614 | 117,708 | SFX only (stock) |
+| rel | **direct** (never opens the SOUND pages; BOTH persisted) | BOTH | **0** | **12,600** | **226,910** | **yes** |
+| dev | menu route, leave with **A** instead of B, BOTH | BOTH | 1 | 16,800 | 302,187 | yes |
+| dev | password / CONTINUE route, BOTH | BOTH | 1 | 2,805 | 54,165 | yes |
+| dev | second race after finishing the first, BOTH | BOTH | 1 | 12,614 | 234,130 | yes |
 
-The password row counts the 400 sound frames of its race start (that capture
-run was stopped by the tool's wall-clock limit before its WAV was closed; the
-mode word and the 68k chip writes are the evidence).  The second-race row is
-race 2 of `build/both/race2-both`, whose two WAVs (`race1.wav` peak 9491,
+The dev counts are larger because that capture holds the throttle for 40 s of
+wall frame samples after the race starts, while the release scripts stop at a
+fixed frame; the ratio between the two builds is not the point, the presence of
+68k-origin writes on every BOTH row is.
+
+The password row counts the 400 sound frames of its race start: that capture
+run was stopped by the tool's wall-clock limit before its WAV was closed, so
+the mode word and the 68k chip writes are its evidence.  The second-race row
+is race 2 of `build/both/race2-both`, whose two WAVs (`race1.wav` peak 9491,
 `race2.wav` peak 11396) and write dump both show the mode surviving the
 finish/results/next-race flow.
 
-The last row is the fix: with `TG2_RACE_SOUND=both` the host mode is BOTH from
-boot, the player walks straight to START, the cartridge word is never written
-and still reads 0 at the race, and both engines run anyway.  The previous
-implementation required that word to be 1 and would have played stock SOUND
+The **direct** row is the fix: with `TG2_RACE_SOUND=both` the host mode is BOTH
+from boot, the player walks straight to START, the cartridge word is never
+written and still reads 0 at the race, and both engines run anyway.  The
+previous implementation required that word to be 1 and played stock SOUND
 EFFECTS on this path.
+
+Per-mode WAVs on the identical dev route (`--mode music|sfx|both`, 4:3) and on
+the release route (16:9 + 60 fps) are listed under *Three-mode captures*.
 
 ### Stock modes are sample-identical
 
@@ -437,7 +447,11 @@ frames later.  `_both-169` is the same BOTH run with 16:9 + 60 fps on.
 | `route-music` | 7855 | 1369.85 | 0 |
 | `route-sfx` | 6060 | 1471.19 | 16,814 |
 | `route-both` | **10017** | **1602.62** | 16,800 |
-| `route-both-169` | _b169_peak_ | _b169_rms_ | _b169_writes_ |
+| `route-both-169` (16:9 + 60 fps) | 9529 | 1601.93 | 16,800 |
+
+The release-config 16:9 + 60 fps runs of the same route are whole-run WAVs
+(`build/final-rel-{music,sfx,both}`, 107 s each); they are the files in the
+sample-identity table below.
 
 BOTH is the loudest of the three and carries the SFX band energy on top of the
 music.  Per-band 20 ms envelope RMS (`tools/tg2_audio_compare.py`):
