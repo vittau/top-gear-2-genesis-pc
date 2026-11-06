@@ -7,33 +7,45 @@
  *   1 = "RACE SOUND: MUSIC"         - keep the boot music driver, start a
  *       race track, do not tick or start the SFX engine.
  *
- * This adapter adds a third menu state, "BOTH".  The cartridge's own value
- * word stays 1 (MUSIC) so every stock menu/state-machine read is in range;
- * a host flag records that the player picked BOTH.  In races the SFX-side
- * policy reads are forced to 0 while the music-side reads keep seeing 1,
- * which runs both engines.  The race-time SFX Z80 image upload is skipped:
- * that image is never commanded after upload (verified with a write log),
- * and it would overwrite the music driver in Z80 RAM.
+ * This adapter adds a third menu state, "BOTH".  The choice lives in host
+ * state (`s_mode`) so it survives every path a player can take: the value
+ * page, the menu teardown, a race start, a second race and a guest reset.
+ * The cartridge's own word is only ever written in its stock range
+ * (0 = SOUND EFFECTS, 1 = MUSIC); BOTH presents 1 to the music-side reads
+ * and 0 to the SFX-side reads, at the instruction, for the duration of that
+ * instruction only.  Present/restore is therefore re-entrant-safe: the word
+ * always ends the instruction with the value the cartridge itself stored.
+ *
+ * The race-time SFX Z80 image upload is skipped while BOTH is live; that
+ * image is never commanded after upload and would overwrite the music
+ * driver in Z80 RAM.
  *
  * The SOUND menu text is rendered from dynamic 8x16 glyph tiles.  While the
  * player is on the RACE SOUND page with BOTH selected, the value row's glyph
- * tiles are repainted as "BOTH " from the host.  Nothing in the ROM or in
- * generated C is modified.
+ * tiles are repainted as "BOTH" in the menu font (see paint_row()).  Nothing
+ * in the ROM or in generated C is modified.
  */
 #include "genesis_runtime.h"
 #include "game_spec.h"
 #include "genesis_machine.h"
 
+/* game/tg2_options.c: the RACE SOUND choice is a player option. */
+extern void tg2_options_race_sound_changed(int mode);
+
 /* Work-RAM addresses (see docs/RAM_MAP.md / docs/AUDIO.md). */
 #define RAM_SOUND_MODE   0x240Eu   /* word: 0 = SFX, 1 = MUSIC            */
-#define RAM_MENU_VALUE   0x2560u   /* RACE SOUND page value word (A4+$0C) */
 
-/* Host selection flag: the player picked BOTH on the RACE SOUND page. */
-static int s_both;
-/* Set while a sound-mode word patch is outstanding. */
-static int s_patched;
-/* True while the RACE SOUND page handler has been observed this visit. */
-static int s_page_seen;
+/* RACE SOUND choices.  SFX and MUSIC are the cartridge's own 0/1; BOTH is
+ * host-only and never reaches guest RAM as a number. */
+enum { TG2_SOUND_SFX = 0, TG2_SOUND_MUSIC = 1, TG2_SOUND_BOTH = 2 };
+
+static int s_mode = TG2_SOUND_SFX;  /* player's choice; stock default */
+static int s_patched;               /* present/restore nesting depth */
+static int s_page_seen;             /* RACE SOUND page handler observed */
+/* One saved cartridge value per nesting level, so an SFX-side read nested
+ * inside a music-side read (or vice versa) restores exactly. */
+#define PATCH_DEPTH 8
+static uint16_t s_patch_stack[PATCH_DEPTH];
 
 static uint16_t ram_read16(uint32_t addr)
 {
@@ -48,32 +60,47 @@ static void ram_write16(uint32_t addr, uint16_t v)
     g_ram[(uint16_t)(o + 1)] = (uint8_t)v;
 }
 
-/* BOTH is live only when the cartridge's own word still says MUSIC. */
+/* What the value page shows: the cartridge has two states, BOTH reuses the
+ * MUSIC state so every stock reader stays in range. */
+static uint16_t page_value(void)
+{
+    return (uint16_t)(s_mode == TG2_SOUND_SFX ? 0 : 1);
+}
+
 static int both_active(void)
 {
-    return s_both && ram_read16(0xFF0000u + RAM_SOUND_MODE) == 1;
+    return s_mode == TG2_SOUND_BOTH;
 }
 
-static void present_sfx(void)
+/* ---- Value presentation hooks -------------------------------------------
+ * Both helpers are no-ops unless BOTH is selected.  A present remembers the
+ * cartridge's own value on a small stack so the instruction sees the
+ * presented value and the next instruction sees the stock one again, even
+ * when an SFX-side read happens inside a music-side one. */
+static void present_value(uint16_t want)
 {
-    if (both_active() && !s_patched) {
-        ram_write16(0xFF0000u + RAM_SOUND_MODE, 0);
-        s_patched = 1;
-    }
+    if (!both_active()) return;
+    uint16_t cur = ram_read16(0xFF0000u + RAM_SOUND_MODE);
+    if (s_patched < PATCH_DEPTH) s_patch_stack[s_patched++] = cur;
+    if (cur != want) ram_write16(0xFF0000u + RAM_SOUND_MODE, want);
 }
 
-static void restore_mode(void)
+static void restore_value(void)
 {
-    if (s_patched) {
-        ram_write16(0xFF0000u + RAM_SOUND_MODE, 1);
-        s_patched = 0;
-    }
+    if (s_patched <= 0) return;
+    uint16_t prev = s_patch_stack[--s_patched];
+    if (ram_read16(0xFF0000u + RAM_SOUND_MODE) != prev)
+        ram_write16(0xFF0000u + RAM_SOUND_MODE, prev);
 }
+
+static void present_sfx(void)   { present_value(0); }   /* SFX-side read */
+static void present_music(void) { present_value(1); }   /* music-side read */
 
 /* ---- RACE SOUND page value handler ($01F0D4) replacement -----------------
  * d0 = active-low button mask (bit0 up, bit1 down, bits 4-6 A/B/C, bit7
- * start).  The stock handler cycles 0..1; this one adds BOTH above MUSIC
- * without ever storing an out-of-range value. */
+ * start).  The stock handler cycles 0..1; this one adds BOTH above MUSIC.
+ * The page value stays in {0,1} so the page's own state machine, the sprite
+ * builder and every stock reader keep working. */
 static int menu_value_handler(void)
 {
     uint32_t d0 = g_cpu.D[0] & 0xFFu;
@@ -84,31 +111,46 @@ static int menu_value_handler(void)
 
     s_page_seen = 1;
 
-    if (d0 == 0) { g_cpu.D[0] = 0; g_cpu.SR = (uint16_t)((g_cpu.SR & ~(SR_N|SR_Z|SR_V|SR_C)) | SR_Z); return 1; }
+    /* The page must show the session's choice even when the cartridge word is
+     * stale: a fresh boot with BOTH persisted, or a guest reset, leaves the
+     * word at the boot value 0 while the host mode is BOTH. */
+    uint16_t page = ram_read16(a4 + 0x0Cu);
+    if (page > 1) page = 1;            /* never trust an out-of-range value */
+    if (both_active() && page != 1u) {
+        page = 1;
+        ram_write16(a4 + 0x0Cu, page);
+        ram_write16(a4 + 0x02u, (uint16_t)(ram_read16(a4 + 0x02u) + 1));
+        ram_write16(a4 + 0x18u, 2);
+    }
+
+    if (d0 == 0) {
+        g_cpu.D[0] = 0;
+        g_cpu.SR = (uint16_t)((g_cpu.SR & ~(SR_N|SR_Z|SR_V|SR_C)) | SR_Z);
+        return 1;
+    }
 
     ram_write16(a4 + 0x14u, (uint16_t)d0);
 
-    uint16_t val = ram_read16(a4 + 0x0Cu);
-    if (val > 1) val = 1;
+    int mode = s_mode;
     int changed = 0;
 
-    if (d0 & 0x01u) {                 /* up */
-        if (s_both) {
-            s_both = 0;               /* BOTH -> MUSIC */
-            changed = 1;              /* redraw state only; text is MUSIC */
-        } else if (val == 1) {
-            val = 0;                  /* MUSIC -> SOUND EFFECTS */
+    if (d0 & 0x01u) {                  /* up */
+        if (mode == TG2_SOUND_BOTH) {
+            mode = TG2_SOUND_MUSIC;    /* BOTH -> MUSIC (page value unchanged) */
+            changed = 1;
+        } else if (page == 1) {
+            mode = TG2_SOUND_SFX;      /* MUSIC -> SOUND EFFECTS */
             changed = 1;
         }
-    } else if (d0 & 0x02u) {          /* down */
-        if (val == 0) {
-            val = 1;                  /* SOUND EFFECTS -> MUSIC */
+    } else if (d0 & 0x02u) {           /* down */
+        if (page == 0) {
+            mode = TG2_SOUND_MUSIC;    /* SOUND EFFECTS -> MUSIC */
             changed = 1;
-        } else if (!s_both) {
-            s_both = 1;               /* MUSIC -> BOTH */
+        } else if (mode != TG2_SOUND_BOTH) {
+            mode = TG2_SOUND_BOTH;     /* MUSIC -> BOTH */
             changed = 1;
         }
-    } else if (d0 & 0x70u) {          /* A/B/C: leave the page */
+    } else if (d0 & 0x70u) {           /* A/B/C: leave the page */
         ram_write16(a4 + 0x02u, 3);
         s_page_seen = 0;
         g_cpu.D[0] = 0;
@@ -117,7 +159,9 @@ static int menu_value_handler(void)
     }
 
     if (changed) {
-        ram_write16(a4 + 0x0Cu, val);
+        s_mode = mode;
+        tg2_options_race_sound_changed(mode);
+        ram_write16(a4 + 0x0Cu, page_value());
         ram_write16(a4 + 0x02u, (uint16_t)(ram_read16(a4 + 0x02u) + 1));
         ram_write16(a4 + 0x18u, 2);
     }
@@ -149,6 +193,16 @@ int tg2_audio_hook(uint32_t pc)
         present_sfx();
         return 0;
 
+    /* --- music-side policy sites: present 1 while BOTH is live ---
+     * The stock code only reaches these with word == 1; forcing it keeps
+     * music running even if the cartridge word is stale (0) at the moment
+     * a race starts or a guest reset reloads the boot value. */
+    case 0x025088u:                    /* music start/refresh gate */
+    case 0x025200u:                    /* race track start */
+    case 0x02523Au:
+        present_music();
+        return 0;
+
     /* --- restore before the dependent branch executes (flags already set) */
     case 0x006538u:
     case 0x0048EAu:
@@ -158,7 +212,10 @@ int tg2_audio_hook(uint32_t pc)
     case 0x02504Eu:
     case 0x02529Eu:
     case 0x0252D0u:
-        restore_mode();
+    case 0x02508Cu:
+    case 0x025204u:
+    case 0x02523Eu:
+        restore_value();
         return 0;
 
     default:
@@ -168,109 +225,49 @@ int tg2_audio_hook(uint32_t pc)
 
 /* ---- "BOTH" text overlay -------------------------------------------------
  * The menu draws text as 8x16 glyphs split over two 8x8 VRAM tiles.  We
- * repaint the value-row tiles in place, so sprite positions, palette and
- * priority remain the game's own.  Only presentation memory is touched. */
-static const uint8_t s_glyph_b[16][8] = {
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,3,3,3,3,1,1,1}, {1,3,3,3,3,3,1,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,3,3,3,1,1},
-    {1,3,3,3,3,1,1,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,3,3,3,1,1}, {1,3,3,3,3,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
+ * repaint the value row's tiles in place, so sprite positions, palette and
+ * priority remain the game's own.  Only presentation memory is touched.
+ *
+ * Glyph construction matches the menu font exactly: 8x16 cell, 2-pixel
+ * strokes on an 8-pixel grid, a one-pixel outline in palette entry 1 around
+ * every stroke, and the stroke body split into palette entry 3 on the top
+ * half and 2 on the bottom half.  O and T are the menu font's own glyph
+ * shapes (from the RACE SOUND page's "SOUND EFFECTS" value, tiles 457 and
+ * 475); B is that font's D bowl plus the E middle bar and H is that font's
+ * two stems plus the M crossbar - the parts the font itself uses for those
+ * letters on other pages.  docs/AUDIO.md records the derivation.
+ *
+ * The row is painted as one continuous pixel band, not per glyph, so the
+ * four letters can sit centred on x = 160 even though the game's column grid
+ * is 5 pixels off that centre. */
+static const uint8_t s_glyph_b[16] = {
+    0x00, 0x7C, 0x7E, 0x66, 0x66, 0x66, 0x7E, 0x7E,
+    0x66, 0x66, 0x66, 0x66, 0x7E, 0x7C, 0x00, 0x00,
 };
-static const uint8_t s_glyph_o[16][8] = {
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,3,3,3,3,1,1}, {1,3,3,3,3,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,3,3,3,3,1}, {1,1,3,3,3,3,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
+static const uint8_t s_glyph_o[16] = {
+    0x00, 0x3C, 0x7E, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x7E, 0x3C, 0x00, 0x00,
 };
-static const uint8_t s_glyph_t[16][8] = {
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {3,3,3,3,3,3,3,3}, {3,3,3,3,3,3,3,3},
-    {1,1,3,3,3,3,1,1}, {1,1,3,3,3,3,1,1},
-    {1,1,3,3,3,3,1,1}, {1,1,3,3,3,3,1,1},
-    {1,1,3,3,3,3,1,1}, {1,1,3,3,3,3,1,1},
-    {1,1,3,3,3,3,1,1}, {1,1,3,3,3,3,1,1},
-    {1,1,3,3,3,3,1,1}, {1,1,3,3,3,3,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
+static const uint8_t s_glyph_t[16] = {
+    0x00, 0x7E, 0x7E, 0x18, 0x18, 0x18, 0x18, 0x18,
+    0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x00,
 };
-static const uint8_t s_glyph_h[16][8] = {
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,3,3,3,3,1},
-    {1,3,3,3,3,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,3,3,1,1,3,3,1}, {1,3,3,1,1,3,3,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-};
-static const uint8_t s_glyph_blank[16][8] = {
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1}, {1,1,1,1,1,1,1,1},
+static const uint8_t s_glyph_h[16] = {
+    0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x7E, 0x7E,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x00, 0x00,
 };
 
-/* Paint one half of an 8x16 glyph.  Source pixels are 3 = white glyph and
- * anything else = empty.  The menu font draws a one-pixel palette-1 (blue)
- * outline around white strokes, so synthesize the same outline here. */
-static void vram_tile(uint8_t *vram, unsigned tile, const uint8_t px[16][8], int half)
-{
-    uint8_t t[16][8];
-    for (int r = 0; r < 16; r++)
-        for (int c = 0; c < 8; c++)
-            t[r][c] = px[r][c] == 3 ? 3 : 0;
-    for (int r = 0; r < 16; r++) {
-        for (int c = 0; c < 8; c++) {
-            if (t[r][c]) continue;
-            int adj = 0;
-            for (int dr = -1; dr <= 1 && !adj; dr++) {
-                int rr = r + dr;
-                if (rr < 0 || rr >= 16) continue;
-                for (int dc = -1; dc <= 1; dc++) {
-                    int cc = c + dc;
-                    if (cc < 0 || cc >= 8) continue;
-                    if (px[rr][cc] == 3) { adj = 1; break; }
-                }
-            }
-            if (adj) t[r][c] = 1;
-        }
-    }
-    uint8_t *dst = vram + (size_t)tile * 32u;
-    for (int r = 0; r < 8; r++) {
-        const uint8_t *src = t[half * 8 + r];
-        dst[r * 4 + 0] = (uint8_t)((src[0] << 4) | src[1]);
-        dst[r * 4 + 1] = (uint8_t)((src[2] << 4) | src[3]);
-        dst[r * 4 + 2] = (uint8_t)((src[4] << 4) | src[5]);
-        dst[r * 4 + 3] = (uint8_t)((src[6] << 4) | src[7]);
-    }
-}
+#define BOTH_COLS   4
+#define ROW_COLS   16
 
-struct col { int x; unsigned top; };
-static void sort_cols(struct col *c, int n)
-{
-    for (int i = 1; i < n; i++)
-        for (int j = i; j > 0 && c[j - 1].x > c[j].x; j--) {
-            struct col t = c[j]; c[j] = c[j - 1]; c[j - 1] = t;
-        }
-}
+static const uint8_t *const s_both_glyphs[BOTH_COLS] = {
+    s_glyph_b, s_glyph_o, s_glyph_t, s_glyph_h,
+};
 
-/* Original value-row glyph tiles, saved the first frame BOTH is painted so
- * that cycling BOTH -> MUSIC can put the game's own "MUSIC" tiles back.  The
- * page value does not change between MUSIC (1) and BOTH (1), so the menu does
- * not redraw that row by itself. */
-static uint8_t s_saved[5][2][32];
-static int s_saved_n;
+struct col {
+    int x;              /* screen x of the column */
+    unsigned top;       /* top VRAM tile of the 8x16 glyph */
+};
 
 /* Locate the value row of the RACE SOUND page from the sprite table. */
 static int value_cols(struct col *cols)
@@ -294,11 +291,11 @@ static int value_cols(struct col *cols)
         if (y == 0x00D4u && x == 0x0130u && tile == 439u)
             header = 1;
 
-        if (y == 0x0104u && ((w2 >> 13) & 3u) == 3u && ncols < 8) {
+        if (y == 0x0104u && ((w2 >> 13) & 3u) == 3u && ncols < ROW_COLS) {
             unsigned hsz = ((sz >> 2) & 3u) + 1u;
             unsigned vsz = (sz & 3u) + 1u;
             if (vsz < 2) vsz = 2;
-            for (unsigned c = 0; c < hsz && ncols < 8; c++) {
+            for (unsigned c = 0; c < hsz && ncols < ROW_COLS; c++) {
                 cols[ncols].x = (int)(x - 128u) + (int)c * 8;
                 cols[ncols].top = tile + c * vsz;
                 ncols++;
@@ -306,67 +303,135 @@ static int value_cols(struct col *cols)
         }
     }
 
-    if (!header || ncols < 4) return 0;
-    sort_cols(cols, ncols);
+    if (!header || ncols < BOTH_COLS) return 0;
+    /* sort by screen x (the sprite list is not ordered) */
+    for (int i = 1; i < ncols; i++)
+        for (int j = i; j > 0 && cols[j - 1].x > cols[j].x; j--) {
+            struct col t = cols[j]; cols[j] = cols[j - 1]; cols[j - 1] = t;
+        }
     return ncols;
+}
+
+/* Original value-row tiles, saved the first frame BOTH is painted so that
+ * cycling BOTH -> MUSIC (page value unchanged, no game redraw) can put the
+ * game's own glyphs back.  The row is re-captured whenever the game rebuilds
+ * it, which changes its column count or its tile numbers. */
+static uint8_t s_saved_tiles[ROW_COLS][2][32];
+static unsigned s_saved_top[ROW_COLS];
+static int s_saved_n;
+static unsigned s_sig;          /* row signature: columns + first tile */
+
+/* Paint the four letters across the row and blank the columns after them. */
+static void paint_row(uint8_t *vram, const struct col *cols, int ncols)
+{
+    enum { MAXW = ROW_COLS * 8 };
+    static uint8_t shape[16][MAXW];
+    static uint8_t px[16][MAXW];
+    const int width = ncols * 8;
+    const int gx = (160 - (BOTH_COLS * 8) / 2) - cols[0].x;
+
+    for (int r = 0; r < 16; r++)
+        for (int x = 0; x < width; x++) shape[r][x] = 0;
+
+    for (int g = 0; g < BOTH_COLS; g++) {
+        for (int r = 0; r < 16; r++) {
+            for (int c = 0; c < 8; c++) {
+                if (!((s_both_glyphs[g][r] >> (7 - c)) & 1)) continue;
+                int x = gx + g * 8 + c;
+                if (x >= 0 && x < width) shape[r][x] = 1;
+            }
+        }
+    }
+
+    for (int r = 0; r < 16; r++) {
+        for (int x = 0; x < width; x++) {
+            if (shape[r][x]) { px[r][x] = (uint8_t)(r < 8 ? 3 : 2); continue; }
+            int adj = 0;
+            for (int dr = -1; dr <= 1 && !adj; dr++) {
+                int rr = r + dr;
+                if (rr < 0 || rr >= 16) continue;
+                for (int dc = -1; dc <= 1; dc++) {
+                    int xx = x + dc;
+                    if (xx < 0 || xx >= width) continue;
+                    if (shape[rr][xx]) { adj = 1; break; }
+                }
+            }
+            px[r][x] = (uint8_t)(adj ? 1 : 0);
+        }
+    }
+
+    for (int i = 0; i < ncols; i++) {
+        unsigned top = cols[i].top & 0x7FFu;
+        unsigned bot = (top + 1u) & 0x7FFu;
+        for (int r = 0; r < 16; r++) {
+            unsigned tile = (r < 8 ? top : bot);
+            uint8_t *dst = vram + (size_t)tile * 32u + (size_t)(r & 7) * 4u;
+            const uint8_t *src = &px[r][i * 8];
+            dst[0] = (uint8_t)((src[0] << 4) | src[1]);
+            dst[1] = (uint8_t)((src[2] << 4) | src[3]);
+            dst[2] = (uint8_t)((src[4] << 4) | src[5]);
+            dst[3] = (uint8_t)((src[6] << 4) | src[7]);
+        }
+    }
 }
 
 static void paint_both(void)
 {
     uint8_t *vram = g_machine.vdp.vram;
-    struct col cols[8];
+    struct col cols[ROW_COLS];
     int ncols = value_cols(cols);
-    if (!ncols) return;
+    if (ncols < BOTH_COLS) return;
 
-    static const uint8_t (*const glyphs[])[8] = {
-        (const uint8_t (*)[8])s_glyph_b,
-        (const uint8_t (*)[8])s_glyph_o,
-        (const uint8_t (*)[8])s_glyph_t,
-        (const uint8_t (*)[8])s_glyph_h,
-        (const uint8_t (*)[8])s_glyph_blank,
-    };
-    int n = ncols < 5 ? ncols : 5;
+    unsigned sig = (unsigned)ncols * 2048u + (cols[0].top & 0x7FFu);
+    if (s_saved_n && sig != s_sig) s_saved_n = 0;   /* game rebuilt the row */
+
     if (!s_saved_n) {
-        for (int i = 0; i < n; i++) {
+        s_sig = sig;
+        s_saved_n = ncols;
+        for (int i = 0; i < ncols; i++) {
             unsigned top = cols[i].top & 0x7FFu;
-            unsigned bot = (top + 1u) & 0x7FFu;
+            s_saved_top[i] = top;
             for (int b = 0; b < 32; b++) {
-                s_saved[i][0][b] = vram[top * 32u + (unsigned)b];
-                s_saved[i][1][b] = vram[bot * 32u + (unsigned)b];
+                s_saved_tiles[i][0][b] = vram[top * 32u + (unsigned)b];
+                s_saved_tiles[i][1][b] =
+                    vram[((top + 1u) & 0x7FFu) * 32u + (unsigned)b];
             }
         }
-        s_saved_n = n;
     }
-    for (int i = 0; i < n; i++) {
-        unsigned top = cols[i].top & 0x7FFu;
-        unsigned bot = (top + 1u) & 0x7FFu;
-        vram_tile(vram, top, glyphs[i], 0);
-        vram_tile(vram, bot, glyphs[i], 1);
-    }
+
+    paint_row(vram, cols, ncols);
 }
 
-/* Put back the stock value-row glyphs when BOTH is deselected. */
-static void restore_value(void)
+/* Put back the stock value-row glyphs when BOTH goes away.  The cached tile
+ * numbers are used directly: the row may have been rebuilt in between, so
+ * re-deriving it now would miss the tiles we actually overwrote. */
+static void restore_row(void)
 {
     uint8_t *vram = g_machine.vdp.vram;
-    struct col cols[8];
-    int ncols = value_cols(cols);
-    int n = ncols < s_saved_n ? ncols : s_saved_n;
-    for (int i = 0; i < n; i++) {
-        unsigned top = cols[i].top & 0x7FFu;
-        unsigned bot = (top + 1u) & 0x7FFu;
+    for (int i = 0; i < s_saved_n; i++) {
+        unsigned top = s_saved_top[i] & 0x7FFu;
         for (int b = 0; b < 32; b++) {
-            vram[top * 32u + (unsigned)b] = s_saved[i][0][b];
-            vram[bot * 32u + (unsigned)b] = s_saved[i][1][b];
+            vram[top * 32u + (unsigned)b] = s_saved_tiles[i][0][b];
+            vram[((top + 1u) & 0x7FFu) * 32u + (unsigned)b] = s_saved_tiles[i][1][b];
         }
     }
     s_saved_n = 0;
 }
 
-/* Guest reset or state load: forget the host-only BOTH selection. */
+/* ---- Host selection surface --------------------------------------------- */
+int tg2_audio_race_sound(void) { return s_mode; }
+
+void tg2_audio_set_race_sound(int mode)
+{
+    if (mode < TG2_SOUND_SFX || mode > TG2_SOUND_BOTH) return;
+    if (mode == s_mode) return;
+    s_mode = mode;
+}
+
+/* Guest reset or state load: the cartridge reloads its boot value; the
+ * player's choice is a host preference and survives it. */
 void tg2_audio_reset(void)
 {
-    s_both = 0;
     s_patched = 0;
     s_page_seen = 0;
     s_saved_n = 0;
@@ -375,10 +440,13 @@ void tg2_audio_reset(void)
 void tg2_frame_post(uint64_t frame_count)
 {
     (void)frame_count;
-    if (!s_page_seen) return;
-    if (s_both) {
+    if (!s_page_seen) {
+        if (s_saved_n) restore_row();   /* page closed while BOTH was shown */
+        return;
+    }
+    if (s_mode == TG2_SOUND_BOTH) {
         paint_both();
         return;
     }
-    if (s_saved_n) restore_value();
+    if (s_saved_n) restore_row();
 }

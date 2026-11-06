@@ -50,9 +50,28 @@ typedef struct Tg2Option {
 static int s_race60 = 1;        /* task default: 60 fps races On */
 static int s_hud_edges = 0;     /* task default: HUD Centered */
 static int s_hide_overscan = 1; /* task default: Hide overscan On */
+static int s_racesound = 0;     /* 0 = SOUND EFFECTS (stock), 1 = MUSIC, 2 = BOTH */
 
 static const char *const s_hud_choices[] = { "centered", "edges" };
 static const char *const s_hud_labels[]  = { "Centered", "Edges" };
+
+static const char *const s_sound_choices[] = { "sfx", "music", "both" };
+static const char *const s_sound_labels[]  = { "Sound effects", "Music", "Both" };
+
+extern int  tg2_audio_race_sound(void);
+extern void tg2_audio_set_race_sound(int mode);
+
+static void apply_race_sound(int value)
+{
+    tg2_audio_set_race_sound(value);
+}
+
+/* The in-game RACE SOUND page owns the choice while playing; keep the
+ * option in step so it is what settings.ini receives. */
+void tg2_options_race_sound_changed(int mode)
+{
+    if (mode >= 0 && mode <= 2) s_racesound = mode;
+}
 
 static const Tg2Option s_options[] = {
     /* Another option is one more row here. */
@@ -79,6 +98,14 @@ static const Tg2Option s_options[] = {
       "Hidden", "Shown",
       1, &s_hide_overscan, TG2_OPT_BOOL, NULL, NULL, 0,
       tg2_video_set_hide_overscan },
+    { "racesound", "mods.racesound", "mode",
+      "RACE SOUND", "RACE SOUND", "Sound",
+      "Stock Top Gear 2 races play either music or sound effects. Both runs "
+      "both: the cartridge's music driver stays resident while the race SFX "
+      "engine also runs. The in-game SOUND menu offers the same choice.",
+      "Both", "Sound effects",
+      0, &s_racesound, TG2_OPT_CHOICE, s_sound_choices, s_sound_labels, 3,
+      apply_race_sound },
 };
 #define TG2_OPTION_COUNT ((int)(sizeof s_options / sizeof s_options[0]))
 
@@ -271,6 +298,14 @@ void tg2_options_apply_env(void)
                             overscan[0] == 'N' || overscan[0] == 'f' ||
                             overscan[0] == 'F');
     tg2_video_set_hide_overscan(s_hide_overscan);
+    const char *sound = getenv("TG2_RACE_SOUND");
+    if (sound) {
+        int mode = 0;
+        if (!strcmp(sound, "both") || !strcmp(sound, "2")) mode = 2;
+        else if (!strcmp(sound, "music") || !strcmp(sound, "1")) mode = 1;
+        s_racesound = mode;
+        tg2_audio_set_race_sound(mode);
+    }
 }
 
 /* ── In-game overlay rows ─────────────────────────────────────────────────── */
@@ -292,6 +327,11 @@ static const RecompRuntimeUiItem s_runtime_items[] = {
       "area a CRT hid in overscan. Presentation only; the simulation and "
       "every other scanline are unchanged. Off shows the stock band.",
       RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
+    { "mods.racesound.mode", "Sound", "RACE SOUND",
+      "Stock Top Gear 2 races play either music or sound effects. Both runs "
+      "both: the cartridge's music driver stays resident while the race SFX "
+      "engine also runs. The in-game SOUND menu offers the same choice.",
+      RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, s_sound_labels, 3, NULL },
 };
 #endif
 
@@ -388,9 +428,11 @@ void tg2_options_ui_command(int id, const char *json)
     char out[192];
     snprintf(out, sizeof out,
              "{\"id\":%d,\"ok\":%s,\"action\":\"%s\",\"race60\":%d,"
-             "\"hud_edges\":%d,\"hide_overscan\":%d,\"menu_open\":%d}",
+             "\"hud_edges\":%d,\"hide_overscan\":%d,\"race_sound\":%d,"
+             "\"menu_open\":%d}",
              id, key != SDLK_UNKNOWN ? "true" : "false", action, s_race60,
-             s_hud_edges, s_hide_overscan, runner_runtime_ui_open());
+             s_hud_edges, s_hide_overscan, tg2_audio_race_sound(),
+             runner_runtime_ui_open());
     cmd_send_response(out);
 }
 
