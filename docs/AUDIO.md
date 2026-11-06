@@ -700,6 +700,15 @@ domain would not have fixed it.
 `patches/segagenesisrecomp/0010-ym-timer-b-free-running-phase.patch` - arm the
 deadline only on the 0 -> 1 transition of the load bit. Three lines.
 
+The fix deliberately changes the offline WAV: the music is 7 % faster in the
+menus, which is what the owner asked for. Video is untouched - frame 60
+`2A0B972960C5E325`, frame 300 `1131D937D70234FD`, and the miss/floor manifests
+(`dispatch_misses.toml`, `floor_coverage.toml`,
+`interior_label_misses.toml`, `floor_unsafe.toml`) are empty after the run.
+Nothing else in the guest is affected: the patch only changes when the
+CPU-visible timer-B overflow flag is raised, and this game is the only software
+reading it.
+
 **The residual +0.19 %.** It is constant in time (all 1 s windows between
 +0.18 % and +0.20 %, rms residual 0.0 ms), so it is a scale, not a wobble.
 The rip's own steady-state grid is 19.867 ms (its sections 10-51 s average
