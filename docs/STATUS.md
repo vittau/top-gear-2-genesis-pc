@@ -19,6 +19,7 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 | Performance + audio pacing | Release build at 16:9+Edges+60 fps uses p95 60.5% of the frame budget on a Ryzen 5 3500U. Guest clock is exact (late frames repay their tick; overdue frames drop 60 fps synthesis, never guest time). Music is sequenced by a free-running Z80 program, so tempo follows guest time: under two CPU burners, -6.8 ms audio drift per 60 s, 0 underruns. DRC bounded to ±0.2%. Logs/settings/saves now go next to the executable (they used to go to `~/.local/bin`). Engine patches 0004-0006. | `PERFORMANCE.md` |
 | Options | Widescreen / 60 fps / HUD / Hide overscan in the launcher and the in-game overlay (gamepad: Back+RB), persisted in `settings.ini [mods.*]`. | `RELEASING.md` |
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
+| Release packaging | macOS `TG2Recomp.app` (universal2; finds the ROM beside the `.app`), single-file Linux `TG2Recomp-x86_64.AppImage` plus tarball, Windows zip. `v*` tags build a **draft** release with SHA256SUMS. Validated on CI run 42222837085: every platform smoke-ran 600 frames with the ROM auto-detected. | `RELEASING.md` |
 | ROM | Auto-detected by CRC next to the executable, whatever the file name. | `BRINGUP.md` |
 
 Engine changes live as patches in `patches/segagenesisrecomp/`. The
@@ -26,11 +27,7 @@ submodule pin is upstream `dd520f1`.
 
 ## Still in progress
 
-| Task | Worktree | State |
-|---|---|---|
-| 14 Release packaging polish | branch `vittau/tg2-release-polish` (8380998), worktree removed | **Implemented, NOT merged; waiting for CI.** macOS `.app` with ROM beside the bundle (engine patch 0007), single-file AppImage (verified locally: ROM beside it, 600 frames, exit 0), draft release job on `v*` tags, CI cost control (non-main branches build Linux only). When minutes are available: rebase on main **keeping main's manual/tag-only triggers** (the branch's own cost-control edit to `build.yml` is superseded), dispatch once with platforms=all and dry_run=true, and merge if green. |
-
-CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platforms.
+Nothing. All tasks are merged.
 
 ## Questions for the owner (queued for 09:00)
 
@@ -45,7 +42,7 @@ CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platf
 ## Open items
 
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
-  macOS (unsigned; the payload is a folder, not a `.app`).
+  macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
 - Each country's second championship race is still unvisited (it needs
   progression).
 - First public release: the owner decides when to make the repo public.
