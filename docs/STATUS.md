@@ -30,6 +30,7 @@ submodule pin is upstream `dd520f1`.
 
 | Task | Worktree | State |
 |---|---|---|
+| 18 Music tempo vs reference (owner bug) | `tg2-music-tempo` | After task 15 the owner hears no pops, but music feels always slightly slow, with occasional speed changes. Recording a reference from an accurate emulator and a VGM render, measuring tempo and pitch, and fixing H1 (Z80 cycle/BUSREQ timing) or H2 (DRC wobble). A/B listening files go to `~/Music/tg2-ab/`. |
 | 16 BOTH in real play (owner bug) | `tg2-both-fix` | The owner selected BOTH and heard only music; the "BOTH" text looks off. Reproducing the real menu flow; rendering BOTH with the game's own font. |
 
 ## Questions for the owner (queued for 09:00)
