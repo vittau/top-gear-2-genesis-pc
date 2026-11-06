@@ -45,6 +45,8 @@ submodule pin is upstream `dd520f1`.
 
 ## Open items
 
+- **Final phase (deferred by the owner):** widescreen for *every* extendable non-race screen (track intro with scrolling scenery, menus, shop, results...). Spec: `docs/tasks/17-widescreen-menu-screens.md`.
+
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
 - Each country's second championship race is still unvisited (it needs

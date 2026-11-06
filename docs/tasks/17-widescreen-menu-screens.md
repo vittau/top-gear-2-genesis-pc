@@ -1,4 +1,8 @@
-# Task 17: widescreen for the pre-race track intro screen (and similar menu screens)
+# Task 17: widescreen for every extendable non-race screen (DEFERRED to the final phase)
+
+> **Deferred.** The owner asked on 2026-11-06 to schedule this for the end.
+> Scope, also from the owner: **every screen that can be extended must be
+> extended.** The track intro screen is the first example.
 
 Read `AGENTS.md` (follow its "CI budget" rules: never trigger CI),
 `docs/WIDESCREEN.md` and `game/tg2_video.c`.
@@ -45,8 +49,9 @@ When widescreen is on, the track intro screen fills the whole window:
 - **Info panel, map and text.** These stay centred and pixel-identical
   to the native image.
 
-Then survey the other non-race screens, compare them, and extend those
-where it's clearly correct; pillarbox the rest:
+Then survey **every** other non-race screen and extend every one that can
+be extended correctly (owner requirement); pillarbox only what truly can't
+be:
 - title / "TOP GEAR 2" menu background;
 - RACE/PLAYER/GEARS/SPEED/CONTROL setup;
 - shop/upgrades;
