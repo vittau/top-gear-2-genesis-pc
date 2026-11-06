@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Replay a recorded pad route deterministically, one presentation mode per run.
+
+`tools/tg2_race_driver.py` writes `route.json` (frame -> pad mask changes). This
+tool turns it into the runner's exact-wall-frame input script, launches one
+headless process, samples race state over TCP, and reports lap times plus the
+runtime manifests.
+
+Because the input timeline is frame-exact, the same route run in Off, 16:9 and
+16:9+60 fps isolates presentation differences from input jitter.
+
+  python3 tools/tg2_replay_route.py --route build/qual/race-off/route.json \
+      --out build/qual/replay-off --widescreen off
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from tg2_runner import Runner, RaceState, BUTTON_ORDER  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def route_to_input_script(route, path: Path, shift: int = 0):
+    lines = []
+    previous = 1
+    for entry in sorted(route, key=lambda e: e['frame']):
+        frame = int(entry['frame']) + shift
+        mask = int(entry['keys'], 16)
+        if frame <= previous:
+            frame = previous
+        body = ['RELEASE'] + [f'HOLD {name}' for bit, name in enumerate(BUTTON_ORDER)
+                              if mask & (1 << bit)]
+        lines.extend([f'WAIT {frame - previous}', *body])
+        previous = frame
+    # keep the script alive a little past the last event
+    lines.append('WAIT 600')
+    path.write_text('\n'.join(lines) + '\n')
+    return previous
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--route', type=Path, required=True)
+    p.add_argument('--port', type=int, default=4470)
+    p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
+    p.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
+    p.add_argument('--widescreen', default='off')
+    p.add_argument('--60fps', dest='fps60', action='store_true')
+    p.add_argument('--turbo', action='store_true', default=True)
+    p.add_argument('--no-turbo', dest='turbo', action='store_false')
+    p.add_argument('--hash-frames', type=int, default=60,
+                   help='emit framebuffer hashes every N wall frames (1 = cadence counting)')
+    p.add_argument('--dump-frames', default='',
+                   help='comma-separated frames at which to dump full 64KB WRAM')
+    p.add_argument('--screenshot-frames', default='',
+                   help='comma-separated frames at which to write a PNG')
+    p.add_argument('--shift', type=int, default=0,
+                   help='shift every input event by N frames (latency calibration)')
+    p.add_argument('--grace', type=int, default=2400,
+                   help='frames to keep monitoring past the last route event')
+    p.add_argument('--monitor-every', type=int, default=1,
+                   help='pause N frames between state polls (keeps turbo replay fast)')
+    p.add_argument('--timeout', type=float, default=1800.0)
+    a = p.parse_args()
+
+    out = a.out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    route = json.loads(a.route.read_text())
+    last = route_to_input_script(route, out / 'route.input', a.shift)
+    env = {'TG2_RACE_60FPS': '1'} if a.fps60 else {}
+    args = ['--hash-frames', str(a.hash_frames), '--input-script',
+            str((out / 'route.input').resolve())]
+    if a.turbo:
+        args.append('--turbo')
+    r = Runner(port=a.port, out=out, exe=a.exe, rom=a.rom, widescreen=a.widescreen,
+               max_frames=last + a.grace + 600, env_extra=env, extra_args=args,
+               video_driver='offscreen' if a.turbo else 'dummy')
+    trace, races = [], []
+    result = 'error'
+    dump_frames = {int(x) for x in a.dump_frames.split(',') if x.strip()}
+    shot_frames = {int(x) for x in a.screenshot_frames.split(',') if x.strip()}
+    try:
+        r.start()
+        deadline = time.monotonic() + a.timeout
+        prev_clock = None
+        prev_lap = None
+        prev_lat = None
+        stall = 0
+        race = dict(start_frame=None, finish_frame=None, finish_clock=None,
+                    lap_boundaries=[])
+        while True:
+            if time.monotonic() > deadline:
+                result = 'timeout'
+                break
+            if r.proc.poll() is not None:
+                break
+            st = r.state_and_frame()
+            if st.frame in dump_frames:
+                r.dump_ram_file(out / f'ram-{st.frame}.ram')
+                dump_frames.discard(st.frame)
+            if st.frame in shot_frames:
+                r.screenshot(str(out / f'frame-{st.frame}.png'))
+                shot_frames.discard(st.frame)
+            trace.append(dict(frame=st.frame, clock=st.clock, phase=st.phase,
+                              lap=st.lap, pos=st.pos, lat=round(st.lat_units, 3),
+                              speed=st.speed, curv=st.curv, slope=st.slope,
+                              two_p=st.two_p))
+            if race['start_frame'] is None and st.clock > 0:
+                race['start_frame'] = st.frame
+            if prev_lap is None:
+                prev_lap = st.lap
+            if st.lap != prev_lap:
+                race['lap_boundaries'].append(dict(lap=st.lap, frame=st.frame,
+                                                   clock=st.clock))
+                prev_lap = st.lap
+            stall = stall + 1 if st.clock == prev_clock and st.clock > 0 else 0
+            prev_clock = st.clock
+            prev_lat = st.lat_units
+            if st.clock > 0 and stall >= 12 and st.speed == 0:
+                race['finish_frame'] = st.frame
+                race['finish_clock'] = st.clock
+                result = 'finished'
+                r.screenshot(str(out / 'finish.png'))
+                break
+            if st.frame > last + a.grace:
+                result = 'route-ended'
+                break
+            if a.monitor_every > 1:
+                time.sleep(a.monitor_every / 60.0)
+        races.append(race)
+        lap_times = []
+        prev = 0
+        boundaries = race['lap_boundaries']
+        final_lap = (boundaries[-1]['lap'] + 1) if boundaries else 1
+        for b in boundaries + ([dict(lap=final_lap, frame=race['finish_frame'],
+                                     clock=race['finish_clock'])]
+                               if race['finish_clock'] else []):
+            if b['clock'] is None:
+                continue
+            ticks = b['clock'] - prev
+            if ticks <= 0:
+                continue
+            lap_times.append(dict(lap=b['lap'], ticks=ticks,
+                                  seconds=round(ticks / 65536.0 / 50.0, 4),
+                                  frame=b['frame']))
+            prev = b['clock']
+        race['lap_times'] = lap_times
+        (out / 'trace.csv').write_text(
+            'frame,clock,phase,lap,pos,lat,speed,curv,slope,two_p\n' +
+            '\n'.join(','.join(str(t[k]) for k in
+                               ('frame', 'clock', 'phase', 'lap', 'pos', 'lat',
+                                'speed', 'curv', 'slope', 'two_p')) for t in trace) + '\n')
+        summary = dict(result=result, route=str(a.route), races=races,
+                       widescreen=a.widescreen, race_60fps=bool(a.fps60),
+                       turbo=a.turbo, input_script=str(out / 'route.input'))
+        (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+        print(json.dumps(lap_times, indent=2))
+        print('result', result)
+    finally:
+        code = r.stop()
+        from tg2_race_driver import manifests
+        m = manifests(out)
+        path = out / 'summary.json'
+        summary = json.loads(path.read_text()) if path.exists() else {}
+        summary.update(exit_code=code, manifests=m)
+        path.write_text(json.dumps(summary, indent=2) + '\n')
+        print('exit', code, 'manifests', m)
+
+
+if __name__ == '__main__':
+    main()

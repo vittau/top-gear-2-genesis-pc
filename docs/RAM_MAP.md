@@ -106,3 +106,38 @@ VRAM layout in the race mode (VDP registers 2/4/5/13 = `$30`/`$07`/`$5F`/`$2E`):
 sprite attribute table `$BE00` (640 bytes), H-scroll table `$B800` (896
 bytes), plane A `$C000`, plane B `$E000`.
 
+
+## Closed-loop driving fields (qualification driver)
+
+Found and verified while writing the automated race driver
+(`tools/tg2_race_driver.py`, `tools/tg2_runner.py`). Every value below was read
+over TCP during real races and cross-checked against the raw-ROM routines named
+in the evidence column; the driver only ever writes controller input.
+
+| Address | Size | Meaning | Evidence |
+|---|---|---|---|
+| `$FF1690` | long | Lateral clamp minimum, read by `$00D5B8` (`cmp.w` on the swapped accumulator) | Constant `-288` during the Auckland race; car sits on the left grass at that value |
+| `$FF1694` | long | Lateral clamp maximum, read by `$00D5C2` | Constant `+288`; car sits on the right grass at that value |
+| `$FF18CA`+`$04` | long | Player lateral position, 16.16; `0` is the road centre, `RIGHT` raises it, `LEFT` lowers it | `$00D4C6` integration (`$D51A` steering term, `$D59C` curve term), `$00D5B6..D5D2` clamp; measured 1 frame of steering moves it ~1.7 units, 288 = grass |
+| `$FF18CA`+`$20` | word | Surface flag A: cleared each frame by `$00CE18`, set to 1 when the sampled surface code is 2 | `$00CE34..CE44`; stayed 0 for every on-road frame of the qualification races |
+| `$FF18CA`+`$22` | word | Surface flag B: set to 1 when the sampled surface code is 3 | `$00CE46..CE56`; also 0 on the asphalt |
+| `$FF18CA`+`$14` | word | Track curvature at the sampled segment (physics copy; picture snapshot copy is `+$86`) | `$00D644`→`$00D65E` stores `+$14`; identical to `+$86` in every sampled race frame |
+| `$FF18CA`+`$CA` | word | Lap counter: `-1` on the grid, `+1` at every start/finish crossing; the *finishing* crossing does not increment it | `$00DAB2..DAB8`; four complete races showed `-1,0,1,2,3` then the finish freeze with the counter still at 3 |
+| `$FF23B8` | long | Race clock, 16.16 50 Hz ticks; freezes when the player's race ends | `$00DF40`; lap boundaries land at exact `$D555`-multiples and the value stops changing on the results screen |
+
+Race phase (`$FF1866`) runs negative through the countdown, reaches 0 at "GO",
+then advances by 1 per V-int and wraps at `$0200`. The driver starts the race
+schedule when the clock (`$FF23B8`) first becomes non-zero, which is one frame
+after "GO".
+
+The player record's A4/A3 base was confirmed at runtime: `get_registers`
+returns A3 = `$FF8408` during a race, which reproduces every `A3-$xxxx`
+displacement used above.
+
+### Race length and lap timing
+
+A race is four laps after the initial run from the grid to the line. Measured on
+Auckland (length 1.6 miles, 4 laps): the grid is 1.31 M position units before
+the line, one lap is 9.44 M units, and the results screen's own "TIME" column
+matches the sum of the clock deltas (run-up included). `tools/tg2_race_driver.py`
+reports the run-up separately from the four timed laps.
