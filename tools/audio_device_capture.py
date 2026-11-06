@@ -111,6 +111,9 @@ def main():
                    help='extra environment K=V (measurement knobs)')
     p.add_argument('--tap', action='store_true',
                    help='also record the in-process device tap (lab builds only)')
+    p.add_argument('--route', type=Path, default=None,
+                   help='input script to copy instead of the baseline route '
+                        '(e.g. the SOUND/MUSIC route that plays race music)')
     p.add_argument('--extra', nargs='*', default=[])
     a = p.parse_args()
 
@@ -119,7 +122,10 @@ def main():
     exe = a.exe.resolve()
     rom = Path.home() / 'roms/genesis/tg2.bin'
     script = out / 'route.input'
-    script.write_text(route_script(a.frames))
+    if a.route:
+        script.write_text(a.route.read_text())
+    else:
+        script.write_text(route_script(a.frames))
     app_name = exe.name
 
     env = dict(os.environ)
