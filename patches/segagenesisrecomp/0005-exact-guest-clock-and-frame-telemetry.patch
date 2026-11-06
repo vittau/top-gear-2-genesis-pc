@@ -1,0 +1,533 @@
+--- a/runner/frame_pacer.h
++++ b/runner/frame_pacer.h
+@@ -51,18 +51,24 @@
+     p->active = 0;
+ }
+ 
+-/* Called when a frame is ready to present. A small scheduling delay retains
+- * the cadence; a full frame overrun (including a pause) starts a fresh cadence
+- * instead of issuing a burst of catch-up frames. Turbo resets this schedule. */
++/* Called when a frame is ready to present. The schedule is absolute: a late
++ * caller does NOT reset it, so guest time is never dropped. A lag beyond
++ * FRAME_PACER_RESYNC_US means a genuine discontinuity (pause, minimize,
++ * debugger) rather than a jittery frame, and starts a fresh cadence. */
++#define FRAME_PACER_RESYNC_US 250000ull
++
++static inline void frame_pacer_resync(FramePacer *p, uint64_t now)
++{
++    p->next = now;
++    p->remainder = 0.0;
++    p->phase = 0;
++    p->active = 1;
++}
++
+ static inline uint64_t frame_pacer_deadline(FramePacer *p, uint64_t now)
+ {
+     uint64_t deadline;
+-    if (!p->active || (now > p->next && now - p->next > p->period)) {
+-        p->next = now;
+-        p->remainder = 0.0;
+-        p->phase = 0;
+-        p->active = 1;
+-    }
++    if (!p->active) frame_pacer_resync(p, now);
+     deadline = p->next;
+     p->next += p->period;
+     if (p->phase_den) {
+@@ -81,6 +87,24 @@
+     return deadline;
+ }
+ 
++/* How far past its deadline this frame is, in microseconds. Zero when the
++ * deadline is still ahead. Callers use this to decide between paying the
++ * deadline wait (and presenting) and running guest frames back-to-back to
++ * repay a stall — the guest clock is authoritative, pictures are not. */
++static inline uint64_t frame_pacer_overdue_us(uint64_t deadline, uint64_t now,
++                                              uint64_t frequency)
++{
++    if (!frequency || now <= deadline) return 0;
++    return (now - deadline) * 1000000ull / frequency;
++}
++
++/* Resync threshold in microseconds; beyond this the caller treats the gap as
++ * a pause rather than a late frame. */
++static inline double frame_pacer_resync_us(void)
++{
++    return (double)FRAME_PACER_RESYNC_US;
++}
++
+ /* A second clock enumerates display deadlines inside each guest interval.
+  * Never round display/guest to an integer: 144 Hz needs alternating two/three
+  * presentations per NTSC tick. This clock cannot advance the simulation. */
+--- a/runner/host_timing.h
++++ b/runner/host_timing.h
+@@ -6,22 +6,73 @@
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#if !defined(_WIN32)
++#include <time.h>
++#else
++#include <windows.h>
++#endif
+ #include "audio.h"
++#include <SDL2/SDL.h>
+ 
+ #define HOST_HITCH_CAP 128
++
++/* Thread CPU time in microseconds: the cost measure that survives ambient
++ * load on a shared machine. Wall phases still record stall/present time. */
++static inline uint64_t genesis_thread_cpu_us(void)
++{
++#if defined(_WIN32)
++    return (uint64_t)GetTickCount64() * 1000ull; /* coarse fallback; unused on CI */
++#else
++    struct timespec ts;
++#if defined(CLOCK_THREAD_CPUTIME_ID)
++    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0)
++        return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
++#endif
++    return 0;
++#endif
++}
++
+ typedef struct {
+     uint32_t frame, interval_us, phase_us[9];
+     AudioHostTiming audio;
+ } HostHitch;
++
++/* Always-on, host-only per-frame record. The window covers ~400 s at 60 Hz,
++ * enough to hold a whole measured race plus its lead-in, so a probe can ask
++ * for percentiles and a DRC time series after the fact instead of arming a
++ * capture first (PRINCIPLES.md #17). Nothing here enters simulation. */
++#define HOST_FRAME_STATS_CAP 24576
++typedef struct {
++    uint32_t frame;
++    uint64_t wall_us;       /* absolute pacer-clock stamp at record time */
++    uint32_t interval_us;   /* wall time between consecutive loop tops */
++    uint32_t wait_us;       /* pacer deadline wait */
++    uint32_t present_us;    /* SDL_RenderPresent (vsync / compositor block) */
++    uint32_t phase_us[9];   /* wall time per phase */
++    uint32_t phase_cpu_us[9]; /* thread CPU time per phase: load-independent */
++    uint32_t wait_cpu_us;   /* CPU burned in the pacer spin (excluded from work) */
++    int32_t  corr_ppm;      /* DRC ratio correction */
++    uint32_t fill_us;       /* DRC ring fill */
++    uint64_t underruns;
++    uint64_t conceals;
++    uint64_t pushed;        /* bridge source frames (223721 Hz) */
++    uint64_t pulled;        /* device frames (host rate) */
++} HostFrameStat;
++
+ typedef struct {
+     HostHitch ring[HOST_HITCH_CAP];
+     uint32_t count, max_interval_us;
+     uint64_t previous_conceals;
++    HostFrameStat *stats;       /* HOST_FRAME_STATS_CAP entries, lazily allocated */
++    uint32_t stats_count;
+ } HostTiming;
+ 
+ static void host_timing_record(HostTiming *t, uint32_t frame,
+                                uint32_t interval_us, const uint32_t phase_us[9],
+-                               const AudioHostTiming *audio)
++                               const AudioHostTiming *audio,
++                               uint32_t wait_us, uint32_t present_us,
++                               const uint32_t phase_cpu_us[9],
++                               uint32_t wait_cpu_us)
+ {
+     if (interval_us > t->max_interval_us) t->max_interval_us = interval_us;
+     if (interval_us >= 50000 || audio->conceal_events != t->previous_conceals) {
+@@ -30,6 +81,141 @@
+         for (unsigned i = 0; i < 9; ++i) h->phase_us[i] = phase_us[i];
+     }
+     t->previous_conceals = audio->conceal_events;
++
++    if (!t->stats) {
++        const char *want = getenv("GENESIS_FRAME_STATS");
++        if (!want || !*want || *want == '0') return;
++        t->stats = (HostFrameStat *)calloc(HOST_FRAME_STATS_CAP, sizeof(HostFrameStat));
++        if (!t->stats) return;
++    }
++    HostFrameStat *s = &t->stats[t->stats_count % HOST_FRAME_STATS_CAP];
++    s->frame       = frame;
++    s->wall_us     = (uint64_t)((double)SDL_GetPerformanceCounter() * 1e6 /
++                                (double)SDL_GetPerformanceFrequency());
++    s->interval_us = interval_us;
++    s->wait_us     = wait_us;
++    s->present_us  = present_us;
++    for (unsigned i = 0; i < 9; ++i) s->phase_us[i] = phase_us[i];
++    for (unsigned i = 0; i < 9; ++i) s->phase_cpu_us[i] = phase_cpu_us[i];
++    s->wait_cpu_us  = wait_cpu_us;
++    s->corr_ppm    = audio->corr_ppm;
++    s->fill_us     = audio->fill_us;
++    s->underruns   = audio->underrun_events;
++    s->conceals    = audio->conceal_events;
++    s->pushed      = audio->pushed_frames;
++    s->pulled      = audio->pulled_frames;
++    t->stats_count++;
++}
++
++static int cmp_u32(const void *a, const void *b)
++{
++    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
++    return x < y ? -1 : (x > y ? 1 : 0);
++}
++
++static uint32_t pct_u32(uint32_t *sorted, uint32_t n, double p)
++{
++    if (!n) return 0;
++    double idx = p * (double)(n - 1) + 0.5;
++    uint32_t i = (uint32_t)idx;
++    if (i >= n) i = n - 1;
++    return sorted[i];
++}
++
++/* Write the retained per-frame window plus a percentile summary. Columns:
++ * frame,interval_us,wait_us,present_us,phase0..8,corr_ppm,fill_us,underruns,
++ * conceals. The summary goes to stderr as a parseable JSON line. */
++static void host_frame_stats_dump(const HostTiming *t)
++{
++    if (!t->stats || !t->stats_count) return;
++    const uint32_t cap = HOST_FRAME_STATS_CAP;
++    uint32_t n = t->stats_count < cap ? t->stats_count : cap;
++    uint32_t start = t->stats_count - n;
++    uint32_t *tmp = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)n);
++    uint32_t p50[8] = {0}, p95[8] = {0}, p99[8] = {0}, mean[8] = {0}, mx[8] = {0};
++    int32_t cmin = 0, cmax = 0;
++    uint32_t fmin = UINT32_MAX, fmax = 0;
++    uint64_t usum = 0, csum = 0;
++    if (!tmp) return;
++    for (int col = 0; col < 8; ++col) {
++        for (uint32_t i = 0; i < n; ++i) {
++            const HostFrameStat *s = &t->stats[(start + i) % cap];
++            uint32_t v;
++            switch (col) {
++                case 0: v = s->interval_us; break;
++                case 1: v = s->wait_us; break;
++                case 2: v = s->present_us; break;
++                case 3: v = s->phase_us[1]; break;   /* simulation */
++                case 4: v = s->phase_us[7]; break;   /* layout/post-drain */
++                case 5: v = s->phase_us[4]; break;   /* audio flush */
++                case 6: v = s->phase_us[5]; break;   /* persistence */
++                default: v = s->phase_us[0]; break;  /* input/command */
++            }
++            tmp[i] = v; usum += v;
++            if (v > mx[col]) mx[col] = v;
++        }
++        qsort(tmp, n, sizeof(uint32_t), cmp_u32);
++        p50[col] = pct_u32(tmp, n, 0.50);
++        p95[col] = pct_u32(tmp, n, 0.95);
++        p99[col] = pct_u32(tmp, n, 0.99);
++        mean[col] = (uint32_t)(usum / n);
++        usum = 0;
++    }
++    for (uint32_t i = 0; i < n; ++i) {
++        const HostFrameStat *s = &t->stats[(start + i) % cap];
++        if (i == 0 || s->corr_ppm < cmin) cmin = s->corr_ppm;
++        if (i == 0 || s->corr_ppm > cmax) cmax = s->corr_ppm;
++        if (i == 0 || s->fill_us < fmin) fmin = s->fill_us;
++        if (i == 0 || s->fill_us > fmax) fmax = s->fill_us;
++        csum += (uint64_t)(uint32_t)(s->corr_ppm < 0 ? -s->corr_ppm : s->corr_ppm);
++    }
++    const char *path = getenv("GENESIS_FRAME_STATS");
++    if (path && *path && *path != '0') {
++        FILE *out = fopen(path, "w");
++        if (out) {
++            fprintf(out, "frame,wall_us,interval_us,wait_us,present_us,"
++                         "phase0_input,phase1_sim,phase2,phase3,phase4_audio,"
++                         "phase5_persist,phase6,phase7_layout,phase8_present_pacer,"
++                         "corr_ppm,fill_us,underruns,conceals,pushed_frames,pulled_frames,"
++                         "cpu0_input,cpu1_sim,cpu2,cpu3,cpu4_audio,cpu5_persist,"
++                         "cpu6,cpu7_layout,cpu8_present_pacer,cpu_wait_us\n");
++            for (uint32_t i = 0; i < n; ++i) {
++                const HostFrameStat *s = &t->stats[(start + i) % cap];
++                fprintf(out, "%u,%llu,%u,%u,%u", s->frame,
++                        (unsigned long long)s->wall_us, s->interval_us,
++                        s->wait_us, s->present_us);
++                for (int p = 0; p < 9; ++p) fprintf(out, ",%u", s->phase_us[p]);
++                fprintf(out, ",%d,%u,%llu,%llu,%llu,%llu", s->corr_ppm,
++                        s->fill_us, (unsigned long long)s->underruns,
++                        (unsigned long long)s->conceals,
++                        (unsigned long long)s->pushed,
++                        (unsigned long long)s->pulled);
++                for (int p = 0; p < 9; ++p)
++                    fprintf(out, ",%u", s->phase_cpu_us[p]);
++                fprintf(out, ",%u\n", s->wait_cpu_us);
++            }
++            fclose(out);
++        }
++    }
++    fprintf(stderr,
++            "[FRAME-STATS] {\"frames\":%u,\"columns\":"
++            "[\"interval\",\"wait\",\"present\",\"sim\",\"layout\",\"audio\",\"persist\",\"input\"],"
++            "\"p50\":[%u,%u,%u,%u,%u,%u,%u,%u],"
++            "\"p95\":[%u,%u,%u,%u,%u,%u,%u,%u],"
++            "\"p99\":[%u,%u,%u,%u,%u,%u,%u,%u],"
++            "\"mean\":[%u,%u,%u,%u,%u,%u,%u,%u],"
++            "\"max\":[%u,%u,%u,%u,%u,%u,%u,%u],"
++            "\"corr_ppm_min\":%d,\"corr_ppm_max\":%d,"
++            "\"corr_ppm_abs_mean\":%.2f,\"fill_us_min\":%u,\"fill_us_max\":%u}\n",
++            n,
++            p50[0],p50[1],p50[2],p50[3],p50[4],p50[5],p50[6],p50[7],
++            p95[0],p95[1],p95[2],p95[3],p95[4],p95[5],p95[6],p95[7],
++            p99[0],p99[1],p99[2],p99[3],p99[4],p99[5],p99[6],p99[7],
++            mean[0],mean[1],mean[2],mean[3],mean[4],mean[5],mean[6],mean[7],
++            mx[0],mx[1],mx[2],mx[3],mx[4],mx[5],mx[6],mx[7],
++            (int)cmin, (int)cmax, n ? (double)csum / (double)n : 0.0,
++            fmin == UINT32_MAX ? 0 : fmin, fmax);
++    free(tmp);
+ }
+ 
+ static int host_timing_dump_requested(void)
+--- a/runner/include/genesis_runtime.h
++++ b/runner/include/genesis_runtime.h
+@@ -120,6 +120,12 @@
+ /* call_by_address interpreter fallback — runs interpreter when dispatch misses */
+ void hybrid_call_interpret(uint32_t target_pc);
+ 
++/* Nonzero while the host frame pacer is repaying an overdue guest tick: the
++ * presentation for this frame will be dropped, so a game renderer may skip
++ * its optional presentation work (interpolation/synthesis) without changing
++ * guest state. Zero on every presented frame. */
++int genesis_frame_overdue(void);
++
+ /* ---- Fiber yield (Step 2) ---- */
+ void glue_yield_for_vblank(void);
+ void glue_yield_for_interrupt_poll(void);
+--- a/runner/local_states.c
++++ b/runner/local_states.c
+@@ -155,6 +155,13 @@
+ {
+     if (!pixels || stride < width || width <= 0 || height <= 0 || s_mode)
+         return;
++    if (!s_ring) return;
++    /* The downscale is only needed when a checkpoint is actually captured:
++     * doing it every frame cost ~0.1 ms/frame for a picture that is replaced
++     * before it is read. A manual slot save may therefore use a thumbnail up
++     * to one snapshot interval old (83 ms at the default 60/6), which is a
++     * cosmetic property of the host overlay only. */
++    if (++s_cadence < s_interval) return;
+     int tw=THUMB_W,th=(int)((int64_t)height*tw/width);
+     if(th>THUMB_H){th=THUMB_H;tw=(int)((int64_t)width*th/height);}
+     if(tw<1)tw=1;if(th<1)th=1;
+@@ -162,7 +169,6 @@
+     for(int y=0;y<th;++y)for(int x=0;x<tw;++x)
+         s_live_thumb[(y+(THUMB_H-th)/2)*THUMB_W+x+(THUMB_W-tw)/2]=
+             pixels[(size_t)(y*height/th)*(size_t)stride+x*width/tw]|0xFF000000u;
+-    if (!s_ring || ++s_cadence < s_interval) return;
+     s_cadence = 0;
+     const GameVideo *video=g_game_spec.video;
+     size_t presentation_size=video && video->presentation_state_save?
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -54,6 +54,13 @@
+  * ========================================================================= */
+ 
+ static char s_exe_dir[512] = "";
++/* Set while this frame is repaying an overdue guest tick (see frame_pacer.h).
++ * The picture for such a frame is not presented, so optional presentation
++ * work can be skipped without touching guest state or audio. */
++static int s_frame_overdue;
++int genesis_frame_overdue(void) { return s_frame_overdue; }
++static int s_rate_lock_logged;
++
+ static char s_data_dir[512] = "";
+ 
+ static double benchmark_process_cpu_seconds(void)
+@@ -2457,6 +2475,7 @@
+      * lockstep â€” making wall-frame N a meaningful sync key in addition
+      * to the state-marker sync compare_runs.py uses by default. */
+     double target_fps_cli = 0.0;
++    int volume_cli = -1;   /* --volume: host output level for measurements */
+ 
+     /* --mem-write-log=ADDR1,ADDR2,...[@FRAMES]  â€” arm at boot so we catch
+      * gm=0 writes that TCP arming misses due to startup latency. */
+@@ -2560,6 +2579,13 @@
+             mem_write_log_spec = argv[++i];
+         } else if (strcmp(argv[i], "--wav") == 0 && i + 1 < argc) {
+             wav_path = argv[++i];
++        } else if (strcmp(argv[i], "--volume") == 0 && i + 1 < argc) {
++            /* Host output level override for measurements (0 = keep the real
++             * device clock but stay silent). Applied after settings.ini is
++             * loaded; not a guest/game setting and never persisted. */
++            int v = atoi(argv[++i]);
++            if (v < 0) v = 0; else if (v > 100) v = 100;
++            volume_cli = v;
+         } else if (strcmp(argv[i], "--pacing") == 0 && i + 1 < argc) {
+             pacing_cli = argv[++i];
+         } else if (strncmp(argv[i], "--pacing=", 9) == 0) {
+@@ -2646,6 +2672,7 @@
+                 g_game_spec.video_default);
+     app_config_defaults();
+     app_config_load(settings_ini);   /* also seeds g_input_map controller bindings */
++    if (volume_cli >= 0) g_app_config.volume = volume_cli;
+     if (g_game_spec.load_settings) g_game_spec.load_settings(settings_ini);
+ #if GENESIS_HAS_RECOMP_NET && RECOMP_LAUNCHER
+     {
+@@ -3488,7 +3515,7 @@
+     frame_pacer_init(&frame_pacer, perf_frequency, target_fps);
+     PresentationClock presentation_clock={0};
+     uint32_t *interpolation_image=NULL;size_t interpolation_capacity=0;
+-    uint64_t presentation_count=0,interpolation_count=0;
++    uint64_t presentation_count=0,interpolation_count=0,presentation_skipped=0;
+     int presentation_vsync=-1;
+     SDL_RendererInfo initial_renderer_info={0};SDL_GetRendererInfo(renderer,&initial_renderer_info);
+     int original_vsync=(initial_renderer_info.flags&SDL_RENDERER_PRESENTVSYNC)!=0;
+@@ -3511,8 +3538,13 @@
+ #endif
+         Uint64 phase_start=SDL_GetPerformanceCounter();
+         Uint64 frame_start=phase_start;
+-        uint32_t phase_us[9]={0};
+-#define FRAME_PHASE(n) do { Uint64 now=SDL_GetPerformanceCounter(); phase_us[n]=(uint32_t)((now-phase_start)*1000000ull/host_perf_freq); phase_start=now; } while (0)
++        uint64_t cpu_start=genesis_thread_cpu_us();
++        uint32_t phase_us[9]={0}, phase_cpu_us[9]={0};
++        uint32_t frame_wait_us=0, frame_present_us=0, frame_wait_cpu_us=0;
++#define FRAME_PHASE(n) do { Uint64 now=SDL_GetPerformanceCounter(); uint64_t cpu_now=genesis_thread_cpu_us(); \
++            phase_us[n]=(uint32_t)((now-phase_start)*1000000ull/host_perf_freq); \
++            phase_cpu_us[n]=(uint32_t)(cpu_now-cpu_start); \
++            phase_start=now; cpu_start=cpu_now; } while (0)
+ 
+         runner_sram_complete(1); /* before guest progress or session/input changes */
+ 
+@@ -3756,6 +3788,29 @@
+ #endif
+ 
+         FRAME_PHASE(0);
++        /* Frame schedule first: the guest clock is authoritative and pictures
++         * are not. Deciding this before the guest tick lets an overdue frame
++         * skip presentation-only work (60 fps synthesis) and repay the guest
++         * time immediately; the decision never changes guest state. */
++        Uint64 guest_deadline=SDL_GetPerformanceCounter();
++        int catch_up=0;
++        if (turbo || runtime_uncapped) {
++            frame_pacer_reset(&frame_pacer);
++        } else {
++            Uint64 frame_now=guest_deadline;
++            guest_deadline=frame_pacer_deadline(&frame_pacer,frame_now);
++            uint64_t overdue=frame_pacer_overdue_us(guest_deadline,frame_now,perf_frequency);
++            uint64_t period_us=(uint64_t)(1000000.0/target_fps);
++            if((double)overdue>frame_pacer_resync_us()) {
++                /* A real discontinuity (pause/minimize/debugger), not a jittery
++                 * frame: start a fresh cadence rather than replaying seconds. */
++                frame_pacer_resync(&frame_pacer,frame_now);
++                guest_deadline=frame_pacer_deadline(&frame_pacer,frame_now);
++            } else if(overdue*2>=period_us) {
++                catch_up=1;
++            }
++        }
++        s_frame_overdue=catch_up;
+         /* Zero accum buffers before Iterate(): PSG_Update (and FM_OutputSamples)
+          * use += to accumulate into the provided buffer, not overwrite.
+          * Without this, each frame adds to the previous frame's leftovers,
+@@ -4004,8 +4059,11 @@
+             }
+             if (input_script_should_exit()) {
+                 if(presentation_trace)fclose(presentation_trace);
+-    if(g_app_config.presentation_rate)fprintf(stderr,"[presentation] guest_ticks=%u presents=%llu interpolated=%llu counter_frequency=%llu\n",
+-        frame_num,(unsigned long long)presentation_count,(unsigned long long)interpolation_count,(unsigned long long)perf_frequency);
++    if(g_app_config.presentation_rate)fprintf(stderr,"[presentation] guest_ticks=%u presents=%llu skipped=%llu interpolated=%llu counter_frequency=%llu\n",
++        frame_num,(unsigned long long)presentation_count,(unsigned long long)presentation_skipped,(unsigned long long)interpolation_count,(unsigned long long)perf_frequency);
++    if(presentation_skipped)
++        fprintf(stderr,"[pacer] skipped_presents=%llu (overdue guest ticks repaid without a picture)\n",
++                (unsigned long long)presentation_skipped);
+     free(interpolation_image);
+     host_timing_dump(&host_timing, stderr);
+                 fprintf(stderr, "[input_script] exiting per script directive (code=%d)\n",
+@@ -4206,13 +4264,33 @@
+             SDL_DisplayMode dm;int display=SDL_GetWindowDisplayIndex(window);
+             display_rate=display>=0 && SDL_GetCurrentDisplayMode(display,&dm)==0 && dm.refresh_rate>0?dm.refresh_rate:target_fps;
+         }
+-        int want_vsync=high_refresh?0:original_vsync;
++        /* When the display runs at (almost) the guest rate, PRESENTVSYNC
++         * quantises every frame to the display's vblank and silently forces
++         * the guest clock to the display rate (60.00 Hz for a 59.94 fps
++         * guest): the audio then has to be resampled by that 0.1 % for ever,
++         * and the pacer's own deadlines keep sliding against the vblank.
++         * In that case the deadline pacer owns the guest clock and presents
++         * without waiting; a compositor still composites on its own vblank
++         * (no tearing on Wayland/Gamescope), and one present is superseded
++         * every ~17 s, which is invisible at 60 Hz. */
++        double display_hz=0.0;
++        {
++            SDL_DisplayMode dm;
++            int display=SDL_GetWindowDisplayIndex(window);
++            if(display>=0 && SDL_GetCurrentDisplayMode(display,&dm)==0) display_hz=dm.refresh_rate;
++        }
++        int rate_locked=!high_refresh && !turbo && !runtime_uncapped &&
++                        display_hz>0.0 && target_fps>0.0 &&
++                        display_hz>target_fps*0.99 && display_hz<target_fps*1.01;
++        if(rate_locked && !s_rate_lock_logged) {
++            fprintf(stderr,"[pacer] vsync off: display %.2f Hz vs target %.4f fps; "
++                    "the deadline pacer owns the guest clock\n",display_hz,target_fps);
++            s_rate_lock_logged=1;
++        }
++        int want_vsync=(high_refresh||rate_locked)?0:original_vsync;
+         if(want_vsync!=presentation_vsync) {
+             if(SDL_RenderSetVSync(renderer,want_vsync)==0)presentation_vsync=want_vsync;
+         }
+-        Uint64 guest_deadline=SDL_GetPerformanceCounter();
+-        if(turbo || runtime_uncapped)frame_pacer_reset(&frame_pacer);
+-        else guest_deadline=frame_pacer_deadline(&frame_pacer,guest_deadline);
+         if(high_refresh) {
+             size_t need=(size_t)s_frame_stride*MAX_SCREEN_HEIGHT;
+             if(need>interpolation_capacity) {
+@@ -4239,8 +4317,14 @@
+                 SDL_UpdateTexture(texture,&active,pixels,s_frame_stride*(int)sizeof(uint32_t));
+                 SDL_RenderClear(renderer);SDL_RenderCopy(renderer,texture,&src,NULL);
+                 now=SDL_GetPerformanceCounter();
+-                if(now<at)genesis_host_wait_until(at,perf_frequency);
+-                SDL_RenderPresent(renderer);
++                if(now<at) {
++                    Uint64 wait_begin=now;
++                    genesis_host_wait_until(at,perf_frequency);
++                    frame_wait_us+=(uint32_t)((SDL_GetPerformanceCounter()-wait_begin)*1000000ull/perf_frequency);
++                }
++                { Uint64 present_begin=SDL_GetPerformanceCounter();
++                  SDL_RenderPresent(renderer);
++                  frame_present_us+=(uint32_t)((SDL_GetPerformanceCounter()-present_begin)*1000000ull/perf_frequency); }
+                 ++presentation_count;interpolation_count+=interpolated!=0;
+                 if(presentation_trace) {
+                     uint64_t hash=14695981039346656037ull;
+@@ -4257,9 +4341,23 @@
+         } else {
+             presentation_clock_reset(&presentation_clock);
+             Uint64 now=SDL_GetPerformanceCounter();
+-            if(!turbo && !runtime_uncapped && now<guest_deadline)
++            if(catch_up) {
++                /* Repay the overdue guest frame without a picture: no deadline
++                 * wait and no present, so the next iteration starts at once. */
++                ++presentation_skipped;
++            } else {
++            if(!turbo && !runtime_uncapped && now<guest_deadline) {
++                Uint64 wait_begin=SDL_GetPerformanceCounter();
++                uint64_t cpu_begin=genesis_thread_cpu_us();
+                 genesis_host_wait_until(guest_deadline,perf_frequency);
+-            SDL_RenderPresent(renderer);++presentation_count;
++                frame_wait_cpu_us=(uint32_t)(genesis_thread_cpu_us()-cpu_begin);
++                frame_wait_us=(uint32_t)((SDL_GetPerformanceCounter()-wait_begin)*1000000ull/perf_frequency);
++            }
++            { Uint64 present_begin=SDL_GetPerformanceCounter();
++              SDL_RenderPresent(renderer);
++              frame_present_us=(uint32_t)((SDL_GetPerformanceCounter()-present_begin)*1000000ull/perf_frequency); }
++            ++presentation_count;
++            }
+         }
+         FRAME_PHASE(8);
+ #if GENESIS_HAS_RECOMP_NET
+@@ -4288,7 +4386,8 @@
+             audio_get_host_timing(&audio_timing);
+             host_timing_record(&host_timing, frame_num - 1,
+                               (uint32_t)((phase_start - frame_start) * 1000000ull / host_perf_freq),
+-                              phase_us, &audio_timing);
++                              phase_us, &audio_timing, frame_wait_us, frame_present_us,
++                              phase_cpu_us, frame_wait_cpu_us);
+         }
+ #undef FRAME_PHASE
+     }
+@@ -4301,6 +4400,7 @@
+         frame_num,(unsigned long long)presentation_count,(unsigned long long)interpolation_count,(unsigned long long)perf_frequency);
+     free(interpolation_image);
+     runner_sram_complete(1); /* settle last-frame ACK before final state/report */
++    host_frame_stats_dump(&host_timing);
+     host_timing_dump(&host_timing, stderr);
+     if (!window_close_requested || host_timing_dump_requested())
+         fprintf(stderr, "[session] loop ended: running=%d frame=%u\n", running, (unsigned)frame_num);
