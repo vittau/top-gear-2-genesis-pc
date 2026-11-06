@@ -28,7 +28,7 @@ submodule pin is upstream `dd520f1`.
 
 | Task | Worktree | State |
 |---|---|---|
-| 14 Release packaging polish | `tg2-release-polish` | macOS `.app` (ROM next to the bundle), single-file Linux AppImage for Deck, draft release on `v*` tags (no tag pushed). OpenCode, started 2026-11-06 ~03:40. |
+| 14 Release packaging polish | branch `vittau/tg2-release-polish` (8380998), worktree removed | **Implemented, NOT merged; waiting for CI.** macOS `.app` with ROM beside the bundle (engine patch 0007), single-file AppImage (verified locally: ROM beside it, 600 frames, exit 0), draft release job on `v*` tags, CI cost control (non-main branches build Linux only). After billing is fixed: dispatch `build.yml` on this branch with platforms=all and dry_run=true; merge if green. |
 
 CI on main `9d579d1` (with engine patches 0004-0006) is green on all three platforms.
 
