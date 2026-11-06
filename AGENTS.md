@@ -56,6 +56,26 @@ renderer) and adapt it. Don't copy its game-specific addresses.
   There is no passwordless sudo. Ask before anything that needs it.
 - Commit often in small, described commits and push your branch to origin (private repo). Never commit ROM-derived artifacts.
 
+## CI budget (GitHub Free, private repo)
+
+The owner does not pay for GitHub. The private repo gets **2000 Actions
+minutes/month**, and macOS minutes count **10x** and Windows **2x**. A full
+3-platform run costs roughly 15x a Linux-only run. Running every push burned
+the monthly quota on 2026-11-06.
+
+- CI **never** runs on ordinary pushes or pull requests. `build.yml` runs
+  only on manual `workflow_dispatch` (default `platforms=linux`) and on
+  release tags `v*`. `rom-access.yml` is manual only.
+- Validate locally first: `tools/build-linux.sh`, probes, hashes, audits.
+  CI is for cross-platform proof and releases, not for iteration.
+- Workers must **never** trigger CI (dispatch, tag, re-run) or change these
+  triggers. Only the coordinator dispatches CI, at most a few runs a week.
+  Use `platforms=all` only to qualify a release candidate or a change that
+  touches platform-specific code (Windows/macOS paths, packaging).
+- Never push `v*` tags without the owner's go-ahead.
+- If the quota is exhausted, wait for the monthly reset. Don't work around
+  it, e.g. with new repos or accounts.
+
 ## Reporting
 
 Finish with evidence: commands run, exit codes, frame hashes or screenshot
