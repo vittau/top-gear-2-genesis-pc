@@ -96,6 +96,9 @@ DRC correction is bounded to ±0.2 %, and beyond that the bridge conceals
 
 ## 4. Frame-time measurements
 
+All measurements below were repeated after merging `origin/main` (task 11's
+widescreen margins); the section header says which tree each row is from.
+
 Method: `tools/probe_perf.py` drives the committed baseline route through the
 runner's exact-wall-frame input script (no TCP, so release builds measure the
 same as dev builds) and post-processes the always-on ring. "CPU work" is thread
@@ -111,10 +114,15 @@ recorded per run, and the quiet runs are marked.
 
 | Window | CPU p50 | CPU p95 | CPU p99 | p95 / budget | wall p50 | wall p95 |
 |---|---:|---:|---:|---:|---:|---:|
-| 16:9 + Edges + 60 fps (quiet, load 2.6) | **6.47 ms** | **9.57 ms** | 11.51 ms | **57.4 %** | 6.60 ms | 9.89 ms |
+| 16:9 + Edges + 60 fps (quiet, load 1.5, merged tree) | **6.01 ms** | **10.09 ms** | 11.89 ms | **60.5 %** | 6.2 ms | 10.3 ms |
+| 16:9 + Edges + 60 fps (quiet, load 2.6, before the task-11 margin merge) | 6.47 ms | 9.57 ms | 11.51 ms | 57.4 % | 6.60 ms | 9.89 ms |
 | 16:9 + Edges + 60 fps (load 3.5-4.3) | 9.65 ms | 15.40 ms | 17.72 ms | 92.3 % | 10.0 ms | 16.76 ms |
 | Widescreen off, HUD centered, 60 fps on | 5.97 ms | 9.63 ms | 11.34 ms | 57.7 % | — | 10.41 ms |
 | 16:9 + Edges, 60 fps **off** | 4.93 ms | 6.39 ms | 7.21 ms | 38.3 % | — | 7.22 ms |
+
+(This branch was merged with `origin/main` after the task-11 widescreen-margin
+work landed; the margin code adds a small amount of per-row work, which is the
+difference between the first two rows.)
 
 The 60 fps synthesis roughly doubles the per-row VDP work (it renders the mixed
 row in addition to the guest row), which is the whole difference between the
@@ -124,14 +132,15 @@ last two rows.
 
 | Window | CPU p50 | CPU p95 | p95 / budget | guest clock | conceals |
 |---|---:|---:|---:|---:|---:|
-| 3100-3600 | 8.15 ms | 12.97 ms | 77.7 % | -26 ppm | 0 |
-| 3600-4100 | 6.69 ms | 10.65 ms | 63.8 % | +82 ppm | 0 |
-| 4100-4600 | 7.55 ms | 11.43 ms | 68.5 % | -7 ppm | 0 |
-| 4600-5100 | 7.23 ms | 11.20 ms | 67.1 % | +47 ppm | 0 |
-| 5100-5600 | 7.85 ms | 11.12 ms | 66.6 % | -41 ppm | 0 |
-| whole race | 7.57 ms | 11.60 ms | 69.5 % | -5 ppm | 0 |
+| 3100-3600 | 6.31 ms | 11.48 ms | 68.8 % | -6 ppm | 0 |
+| 3600-4100 | 6.65 ms | 11.05 ms | 66.2 % | -13 ppm | 0 |
+| 4100-4600 | 6.66 ms | 11.32 ms | 67.9 % | -13 ppm | 0 |
+| 4600-5100 | 6.29 ms | 9.94 ms | 59.6 % | -50 ppm | 0 |
+| 5100-5600 | 6.72 ms | 10.30 ms | 61.7 % | +45 ppm | 0 |
+| whole race | 6.56 ms | 10.88 ms | 65.2 % | -0.6 ppm | 0 |
 
-This is the windowed race run under ambient load 2.9-6.2. There is no cliff in
+This is the windowed race run on the merged tree under ambient load 4.5-5.5.
+There is no cliff in
 any section: the cost tracks how much of the picture is synthesized, not the
 track geometry. Note the route is the committed baseline route; it covers
 frames 3096-5600 of Auckland (the run ends with the car stopped). Tunnel and
@@ -143,7 +152,8 @@ labelled — the per-window table is the honest statement of coverage.
 | Run | CPU p50 | CPU p95 | p95 / budget | DRC ratio | conceals |
 |---|---:|---:|---:|---|---:|
 | before (pre-fix behaviour, telemetry only) | 7.03 ms | 10.67 ms | 63.9 % | -1482…+1009 ppm | 1 |
-| after (quiet) | 9.00 ms | 16.93 ms | 101.5 % | -2000…+2000 ppm (at bound) | 1 |
+| after, quiet (load 2.6) | 8.99 ms | 16.93 ms | 101.5 % | -2000…+2000 ppm (at bound) | 1 |
+| after, merged tree (load 6.1) | 12.32 ms | 20.25 ms | 121.4 % | -2000…+1399 ppm | 1 |
 
 The dev build is ~40 % more expensive per frame (TCP server, frame rings,
 reverse-debug store ring) and under ambient load its tail exceeds the budget;
@@ -171,16 +181,16 @@ burners running in parallel** on a machine already shared with other work:
 
 | Metric | Value |
 |---|---|
-| guest clock vs wall | **+11 ppm** (59.9406 fps measured) |
-| audio produced vs wall | -99 ppm |
-| audio device clock vs wall | -605 ppm (host audio clock, absorbed by the bridge) |
-| audio drift (produced seconds - wall) | **-1.9 ms** over 19.2 s |
-| DRC ratio | -1066 … +514 ppm (abs mean 358 ppm) |
-| ring fill | 34.1 … 74.0 ms |
+| guest clock vs wall | **-2.2 ppm** (59.9400 fps measured) |
+| audio produced vs wall | -113 ppm |
+| audio device clock vs wall | -619 ppm (host audio clock, absorbed by the bridge) |
+| audio drift (produced seconds - wall) | **-2.2 ms** over 19.2 s |
+| DRC ratio | -1012 … +404 ppm (abs mean 413 ppm) |
+| ring fill | 41.8 … 74.4 ms |
 | underruns / conceal events | **0 / 0** |
-| CPU work p50 / p95 | 7.43 ms / 11.43 ms (68.5 % budget) |
+| CPU work p50 / p95 | 7.36 ms / 10.56 ms (63.3 % budget) |
 
-The raw series is `build/perf/rel-load60b/frame-stats.csv` (one row per frame:
+The raw series is `build/perf/merge-load60/frame-stats.csv` (one row per frame:
 interval, wait, present, nine wall phases, nine CPU phases, DRC ratio, fill,
 underrun/conceal counters, pushed/pulled sample counts).
 
@@ -235,7 +245,11 @@ Every change is host-side; guest-visible output is unchanged.
 
 The audit exports endpoint and presented plane-B rows per synthesized line and
 checks edge envelopes, stripe runs, atlas rows and byte-exact translation
-(`tools/check_road_artifacts.py`, `--road-audit`).
+(`tools/check_road_artifacts.py`, `--road-audit`). Every row of the table above
+was re-run on the merged tree (merging task 11's widescreen margins), except the
+On "before/after" hash pair, which is the controlled A/B of the renderer
+change itself: the same capture was taken with and without the per-row copy
+removal and compared frame by frame.
 
 ## 8. Feedback-replay and base-directory bug
 
@@ -270,9 +284,10 @@ set, which is what the replay-diagnostic tooling uses):
 
 ## 9. What is not verified
 
-* The 60 % p95 target was met on a quiet machine (**57.4 %**) and in the
-  38 % / 58 % option rows; under the ambient load of this shared workstation
-  (other agents building and running games) the same window measured 63-92 %.
+* The 60 % p95 target was met on a quiet machine (**57.4 %** before the margin
+  merge, **60.5 %** after it) and in the 38 % / 58 % option rows; under the
+  ambient load of this shared workstation (other agents building and running
+  games) the same window measured 63-92 %.
   The owner's own machine at rest is expected between those; the release build
   keeps the guest clock exact and never drops audio even in the loaded runs.
 * Tunnel/hill sections are covered only as part of the committed baseline route
