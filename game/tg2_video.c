@@ -204,12 +204,20 @@ static int race(const GVDP *v) {
            (op == 0x2C9D || op == 0x601E || op == 0x6042);
 }
 /* The 512x512 B atlas holds four road templates in rows 0..431,
- * followed by the skyline. The road's center is the atlas seam (X=0),
+ * followed by ground separators and the skyline. The road's center is the atlas seam (X=0),
  * with exterior ground at X=256. Extend that exterior, never another road.
  * The skyline is an authored repeating panorama and retains its wrap. */
 static int road_x(int nx, int scroll, int py) {
-    if ((py & 511) >= 432)
+    py &= 511;
+    if (py >= 448)
         return nx - scroll;
+    /* Rows 432..439 are solid ground; 440..441 contain the hill's
+     * half-width grass strip (the other half is transparent), followed by
+     * blank separator rows. They are not a repeating panorama. Continue
+     * each native edge through these rows without wrapping into the empty
+     * half of the atlas. Keep the real road's unwrapped domain below. */
+    if (py >= 432)
+        return (nx < 0 ? 0 : nx > 255 ? 255 : nx) - scroll;
     int center = 128 + ((scroll - 128 + 256) & 511) - 256;
     int x = nx - center;
     return x < -256 ? -256 : x > 255 ? 255 : x;
@@ -332,10 +340,102 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
         if (shifted[x])
             out[x] = pal[shifted[x]];
 }
-static int synthesizing;
+/* Window coordinates are unscrolled, with a 32-cell stride in H32. Only
+ * extend an opaque, solid native edge: transparent window texels can expose
+ * authored panorama detail that must keep its ordinary continuation. */
+static int window_at(const GVDP *v, int line, int x) {
+    unsigned wx = v->reg[17], wy = v->reg[18];
+    return ((wy & 128) ? line >= (wy & 31) * 8 : line < (wy & 31) * 8) ||
+           ((wx & 128) ? x >= (wx & 31) * 16 : x < (wx & 31) * 16);
+}
+static int edge_solid(const uint32_t *native, int nw, int side) {
+    int edge = side ? nw - 1 : 0, step = side ? -1 : 1;
+    for (int i = 1; i < 8; ++i)
+        if (native[edge + step * i] != native[edge]) return 0;
+    return 1;
+}
+static int window_band_edge(const GVDP *v, int line, const uint32_t *native,
+                            int nw, int side) {
+    int edge = side ? nw - 1 : 0, step = side ? -1 : 1;
+    if (!window_at(v, line, edge) || !edge_solid(native, nw, side)) return 0;
+    unsigned base = (v->reg[3] & 63) << 10;
+    for (int i = 0; i < 8; ++i) {
+        int x = edge + step * i;
+        if (!window_at(v, line, x)) return 0;
+        unsigned attr = word(v->vram, base + ((line / 8) * 32 + x / 8) * 2);
+        if (!(attr & 0x8000)) return 0;
+        unsigned px = x & 7, py = line & 7;
+        if (attr & 0x800) px ^= 7;
+        if (attr & 0x1000) py ^= 7;
+        unsigned data = v->vram[((attr & 2047) * 32 + py * 4 + px / 2) & 65535];
+        unsigned c = px & 1 ? data & 15 : data >> 4;
+        if (!c || genesis_dac_cram_to_argb(v->cram[((attr >> 9) & 48) | c], 0) != native[edge])
+            return 0;
+    }
+    return 1;
+}
+static unsigned window_margins(const GVDP *v, int line, const uint32_t *native,
+                           int nw, uint32_t *out, int w) {
+    int origin = (w - nw) / 2;
+    unsigned mask = window_band_edge(v, line, native, nw, 0) |
+                    (window_band_edge(v, line, native, nw, 1) << 1);
+    if (mask & 1)
+        for (int x = 0; x < origin; ++x) out[x] = native[0];
+    if (mask & 2)
+        for (int x = origin + nw; x < w; ++x) out[x] = native[nw - 1];
+    return mask;
+}
+/* Private per-line margin evidence, before sprites and HUD relocation. */
+static FILE *margin_audit;
+static int margin_audit_checked;
+static void audit_margins(const GVDP *v, int line, const uint32_t *native,
+                          int nw, const uint32_t *out, int w) {
+    if (!margin_audit_checked) {
+        margin_audit_checked = 1;
+        const char *path = getenv("TG2_MARGIN_AUDIT");
+        if (path && *path) {
+            margin_audit = fopen(path, "w");
+            if (!margin_audit) { perror(path); exit(1); }
+            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band\n");
+        }
+    }
+    if (!margin_audit || w <= nw) return;
+    unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
+    unsigned hbase = (v->reg[13] & 63) << 10;
+    int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
+    int ha = word(v->vram, hbase + hi * 4) & 1023, hb = word(v->vram, hbase + hi * 4 + 2) & 1023;
+    int va = v->vsram[0] & 1023, vb = v->vsram[1] & 1023;
+    int origin = (w - nw) / 2;
+    for (int side = 0; side < 2; ++side) {
+        int edge = side ? nw - 1 : 0;
+        unsigned aa, ab;
+        unsigned ap = pixel(v, ba, edge - ha, line + va, &aa);
+        unsigned bp = pixel(v, bb, edge - hb, line + vb, &ab);
+        unsigned mb_attr;
+        unsigned mb = pixel(v, bb, road_x(side ? nw : -1, hb, line + vb), line + vb, &mb_attr);
+        int solid = edge_solid(native, nw, side);
+        int backdrop = solid && native[edge] == genesis_dac_cram_to_argb(v->cram[v->reg[7] & 63], 0);
+        for (int i = 0; backdrop && i < 8; ++i) {
+            int x = edge + (side ? -i : i);
+            unsigned attr;
+            if ((v->reg[1] & 64) &&
+                (pixel(v, ba, x - ha, line + va, &attr) ||
+                 pixel(v, bb, x - hb, line + vb, &attr))) backdrop = 0;
+        }
+        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d\n",
+                (unsigned long long)present_frame, line, side, native[edge],
+                out[origin + (side ? nw : -1)], ap, aa, bp, ab,
+                v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0), mb,
+                genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0),
+                solid, window_band_edge(v, line, native, nw, side), backdrop);
+    }
+    if (line == 223) fflush(margin_audit);
+}
+static int synthesizing, audit_race_frame;
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     int origin = (w - nw) / 2;
+    if (!line) audit_race_frame = nw == 256 && race(v);
     if (line < 8) {
         memcpy(top_rows[line].reg, v->reg, sizeof top_rows[line].reg);
         memcpy(top_rows[line].vsram, v->vsram, sizeof top_rows[line].vsram);
@@ -350,6 +450,10 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
     if (!race(v) || !(v->reg[1] & 64)) {
         ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
+        if (audit_race_frame) {
+            window_margins(v, line, native, nw, out, w);
+            audit_margins(v, line, native, nw, out, w);
+        }
         return;
     }
     ++wide_lines;
@@ -377,6 +481,8 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
         unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
         out[x] = pal[bp ? bp : v->reg[7] & 63];
     }
+    unsigned window_mask = window_margins(v, line, native, nw, out, w);
+    if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
     /* Reverse allocation order matches the native backward SAT builder. */
     static unsigned char covered[4096];
     memset(covered, 0, sizeof covered);
@@ -401,6 +507,8 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
             covered[ox] = 1;
             unsigned b;
             unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
+            if (!(s->attr & 0x8000) && (window_mask & (nx < 0 ? 1 : 2)))
+                continue; /* solid high-priority window, as in the native compositor */
             if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
                 ++frame_margin_pixels;
@@ -423,7 +531,7 @@ typedef struct { int left, right, valid; } RoadGeometry;
 static RoadGeometry road_geometry(const GVDP *v, int line) {
     RoadGeometry result = {256, -257, 0};
     unsigned py = (line + v->vsram[1]) & 511;
-    if (py >= 432) return result; /* panorama, not a road template */
+    if (py >= 432) return result; /* ground separator/panorama, not a road template */
     unsigned base = (v->reg[4] & 7) << 13;
     for (int x = -256; x < 256; ++x) {
         unsigned attr, nib = pixel(v, base, x, py, &attr) & 15;
