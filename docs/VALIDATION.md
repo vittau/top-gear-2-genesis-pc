@@ -85,6 +85,12 @@ qualification, which is also what makes a 30-minute continuous session possible.
 track intro panel (sun icon on Auckland and Ayers Rock); only those two tracks
 were reached before the championship ended, so rain remains untested.
 
+Two attempts to widen coverage failed: the main menu's DIFFICULTY row was
+stepped left (`--difficulty-steps -3`,
+`build/qual/progress-easy/race2-post-02.png`) and the Ayers Rock result got
+worse (17th), so the row's value direction is not established and it was left at
+its default afterwards.
+
 ## 3. Rain, night, nitro, crash, pit
 
 | Scenario | Status | Evidence |
@@ -203,10 +209,11 @@ discovery seeds were needed, so `game/game.toml` is unchanged by this task.
 ## Gaps / follow-ups
 
 * Only two of the sixteen championship tracks were reached (Auckland and Ayers
-  Rock). Advancing needs a top-ten finish, and the reactive driver is not fast
-  enough on Ayers Rock's tighter layout (14th, ~52 s laps vs Auckland ~40 s), so
-  the championship ends there and restarts from Auckland. A faster lane-keeping
-  controller, or reversing the password encoding, is the way to the rest.
+  Rock), not the three further tracks the task asked for. Advancing needs a
+  top-ten finish; the reactive driver is not fast enough on Ayers Rock's tighter
+  layout (~52-56 s laps, 14th-17th) even though it qualifies on Auckland
+  (3rd-4th). A faster lane-keeping controller, a working difficulty setting, or
+  reversing the password encoding is the way to the rest.
 * Rain remains untested for the same reason (weather is per track).
 * No nitro input was found (see section 3).
 * The open-loop replay of a *reactive* route diverges once the car touches the

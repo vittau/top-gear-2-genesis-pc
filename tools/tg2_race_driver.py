@@ -106,9 +106,22 @@ class Driver:
             self.tap('START', 8)           # 1P GAME -> 2P GAME
             r.wait_frame(1150)
             self.shot('main-menu-2p')
-        for i in range(down_rows):      # 1P GAME -> START
+        if self.args.difficulty_steps:
+            # DIFFICULTY row: negative = LEFT (easier), positive = RIGHT.
             self.tap('DOWN', 8)
-            r.wait_frame(1000 + i * 55)
+            r.wait_frame(1120)
+            button = 'LEFT' if self.args.difficulty_steps < 0 else 'RIGHT'
+            for _ in range(abs(self.args.difficulty_steps)):
+                self.tap(button, 8)
+                r.wait_frame(r.frame() + 90)
+            self.shot('main-menu-difficulty')
+            for i in range(down_rows - 1):   # DIFFICULTY -> START
+                self.tap('DOWN', 8)
+                r.wait_frame(1300 + i * 55)
+        else:
+            for i in range(down_rows):      # 1P GAME -> START
+                self.tap('DOWN', 8)
+                r.wait_frame(1000 + i * 55)
         r.wait_frame(1300)
         self.shot('menu-start')
         r.wait_frame(1400)
@@ -350,6 +363,8 @@ def main():
                    help='sample the 68K stack pointer (A7) every N wall frames')
     p.add_argument('--stage-dumps', action='store_true',
                    help='dump full 64KB WRAM next to every stage screenshot')
+    p.add_argument('--difficulty-steps', type=int, default=0,
+                   help='menu DIFFICULTY changes (negative = LEFT/easier)')
     p.add_argument('--launch-delay', type=int, default=0,
                    help='hold no throttle for N frames after the race clock starts')
     p.add_argument('--hash-every', type=int, default=0,
