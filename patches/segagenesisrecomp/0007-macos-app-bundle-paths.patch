@@ -1,0 +1,175 @@
+diff --git a/runner/app_paths.h b/runner/app_paths.h
+new file mode 100644
+index 0000000..4e67631
+--- /dev/null
++++ b/runner/app_paths.h
+@@ -0,0 +1,120 @@
++/* Locations of user data in a packaged macOS release.
++ *
++ * A plain folder keeps the historical rule: settings, logs, saves and assets
++ * live beside the executable. A .app bundle breaks that rule:
++ *
++ *   X.app/Contents/MacOS/X
++ *       SDL_GetBasePath() reports Contents/Resources for a bundled app, which
++ *       is where the assets ship, but the folder the player sees and drops the
++ *       cartridge into is the one containing X.app. User data therefore goes
++ *       beside the .app when that folder is writable, otherwise to
++ *       ~/Library/Application Support/TG2Recomp/.
++ *
++ * The helpers are compiled on macOS only; other platforms keep the plain
++ * folder layout in runner/main.c. Windowed Linux AppImages are anchored by
++ * the existing $APPIMAGE handling in init_exe_dir().
++ */
++#ifndef GENESIS_APP_PATHS_H
++#define GENESIS_APP_PATHS_H
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#if defined(__APPLE__) || defined(GENESIS_APP_PATHS_TEST)
++
++static void genesis_path_strip_trailing_separators(char *path)
++{
++    size_t n;
++    if (!path) return;
++    n = strlen(path);
++    while (n > 1 && (path[n - 1] == '/' || path[n - 1] == '\\'))
++        path[--n] = '\0';
++}
++
++/* Absolute directory of the running image, with a trailing separator. */
++#if defined(__APPLE__)
++#include <mach-o/dyld.h>   /* _NSGetExecutablePath: no /proc/self/exe */
++#include <unistd.h>
++#include <sys/stat.h>
++
++static int genesis_macos_executable_dir(char *out, size_t cap)
++{
++    char raw[4096];
++    char resolved[4096];
++    char *separator;
++    uint32_t size = sizeof raw;
++    if (!out || cap < 3) return 0;
++    if (_NSGetExecutablePath(raw, &size) != 0 || !raw[0]) return 0;
++    if (!realpath(raw, resolved))
++        snprintf(resolved, sizeof resolved, "%s", raw);
++    separator = strrchr(resolved, '/');
++    if (separator) separator[1] = '\0';
++    else snprintf(resolved, sizeof resolved, "./");
++    snprintf(out, cap, "%s", resolved);
++    return 1;
++}
++#endif
++
++/* Write the X.app bundle root (".../X.app/") when exe_dir is its
++ * Contents/MacOS directory. */
++static int genesis_macos_bundle_root(const char *exe_dir, char *out, size_t cap)
++{
++    char buffer[1024];
++    char *macos;
++    char *contents;
++    if (!exe_dir || !*exe_dir || !out || cap < 2) return 0;
++    snprintf(buffer, sizeof buffer, "%s", exe_dir);
++    genesis_path_strip_trailing_separators(buffer);
++    macos = strrchr(buffer, '/');
++    if (!macos || strcmp(macos + 1, "MacOS") != 0) return 0;
++    *macos = '\0';
++    contents = strrchr(buffer, '/');
++    if (!contents || strcmp(contents + 1, "Contents") != 0) return 0;
++    *contents = '\0';
++    /* A bundle folder is conventionally *.app; refuse lookalikes such as
++     * .../Contents/MacOS that are not actually inside an application. */
++    {
++        size_t length = strlen(buffer);
++        if (length < 5 || strcmp(buffer + length - 4, ".app") != 0) return 0;
++    }
++    snprintf(out, cap, "%s/", buffer);
++    return 1;
++}
++
++/* Write the folder containing X.app (".../") for a bundled executable. */
++static int genesis_macos_bundle_parent(const char *exe_dir, char *out, size_t cap)
++{
++    char root[1024];
++    char *slash;
++    if (!genesis_macos_bundle_root(exe_dir, root, sizeof root)) return 0;
++    genesis_path_strip_trailing_separators(root);
++    slash = strrchr(root, '/');
++    if (!slash) {
++        snprintf(out, cap, "./");
++        return 1;
++    }
++    slash[1] = '\0';
++    snprintf(out, cap, "%s", root);
++    return 1;
++}
++
++#if defined(__APPLE__)
++static int genesis_path_is_writable(const char *path)
++{
++    if (!path || !*path) return 0;
++    return access(path, W_OK | X_OK) == 0;
++}
++
++/* ~/Library/Application Support/TG2Recomp/ (created on demand). */
++static int genesis_macos_app_support(char *out, size_t cap)
++{
++    const char *home = getenv("HOME");
++    if (!home || !*home || !out || cap < 2) return 0;
++    snprintf(out, cap, "%s/Library/Application Support/TG2Recomp/", home);
++    mkdir(out, 0700);   /* EEXIST is fine; Library/Application Support exists */
++    return 1;
++}
++#endif
++
++#endif
++#endif /* GENESIS_APP_PATHS_H */
+diff --git a/runner/main.c b/runner/main.c
+index 16346bc..2243752 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -207,6 +207,7 @@ static int run_picker_cmd(const char *cmd, char *out, size_t max_len)
+ 
+ 
+ #include "cmd_server.h"
++#include "app_paths.h"
+ #include "game_spec.h"
+ #include "game_layout.h"
+ #include "gamepad.h"
+@@ -2424,9 +2425,36 @@ static void replay_view(GenesisReplayView *v,int apply)
+     }
+ }
+ 
++#ifdef __APPLE__
++/* A double-clicked TG2Recomp.app runs from X.app/Contents/MacOS. Anchor the
++ * cartridge search and user data on the folder the player actually sees (the
++ * one containing X.app), and fall back to Application Support when the app
++ * sits in a read-only location such as /Applications. Assets are unaffected:
++ * SDL_GetBasePath() already reports Contents/Resources for a bundle. */
++static void macos_bundle_paths(void)
++{
++    char exe_dir[sizeof s_exe_dir];
++    char parent[sizeof s_exe_dir];
++    char data_dir[sizeof s_data_dir];
++    if (!genesis_macos_executable_dir(exe_dir, sizeof exe_dir)) return;
++    snprintf(s_exe_dir, sizeof s_exe_dir, "%s", exe_dir);
++    if (!genesis_macos_bundle_parent(exe_dir, parent, sizeof parent)) return;
++    snprintf(s_exe_dir, sizeof s_exe_dir, "%s", parent);
++    if (genesis_path_is_writable(parent)) {
++        snprintf(s_data_dir, sizeof s_data_dir, "%s", parent);
++    } else if (genesis_macos_app_support(data_dir, sizeof data_dir)) {
++        snprintf(s_data_dir, sizeof s_data_dir, "%s", data_dir);
++        fprintf(stderr, "[paths] bundle folder is read-only; user data: %s\n", s_data_dir);
++    }
++}
++#endif
++
+ int main(int argc, char *argv[])
+ {
+     init_exe_dir(argv[0]);
++#ifdef __APPLE__
++    macos_bundle_paths();
++#endif
+     const char *user_dir=getenv("GENESIS_USER_DIR");
+     if(user_dir && *user_dir) {
+         if(!path_is_absolute(user_dir) || strlen(user_dir)>sizeof s_data_dir-2) {

@@ -14,6 +14,8 @@
 
 - `0006-audio-drc-prime-snap-and-ratio-bound.patch`: discard the boot pre-roll at prime instead of resampling it away for ~26 s, and bound the DRC ratio to +/-0.2 % so a deficit cannot be masked as audible tempo/pitch drift.
 
+- `0007-macos-app-bundle-paths.patch`: resolve the running image with `_NSGetExecutablePath` on macOS, search the folder containing `X.app` for the cartridge, and put settings, logs and saves beside `X.app` when writable or in `~/Library/Application Support/TG2Recomp/` otherwise; assets stay in `Contents/Resources` where SDL reports them.
+
 `tools/build-linux.sh` applies these idempotently through
 `tools/apply-engine-patches.sh`. The submodule stays pinned to the upstream
 commit; local fixes remain visible as its applied working-tree diff.
