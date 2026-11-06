@@ -56,7 +56,7 @@ Controller evidence from ROM `$00D7A6..00D872`:
 
 | Address | Size | Meaning | Evidence |
 |---|---|---|---|
-| `$FF240E` | word | Race sound mode; `0`=SOUND EFFECTS, `1`=MUSIC; A3-relative `-$5FFA` | Readers `$0048E2`, `$006530`, `$023062`, `$0251F4`; writers `$01ED60`, `$002104` |
+| `$FF240E` | word | Race sound mode; `0`=SOUND EFFECTS, `1`=MUSIC; A3-relative `-$5FFA` | Readers `$0048E2`, `$006530`, `$023062`, `$02503A`, `$02504A`, `$025088`, `$0250E2`, `$02511C`, `$025200`, `$02523A`, `$02529A`, `$0252CC`, `$01ED3A`, `$001FBE`; writers `$01ED60`, `$002104`, `$001FC2`, `$001FF4` |
 | `$FF2554` | struct | Menu controller object; RACE SOUND page uses `A4+$0C` | Handler `$01F0D4`, enter/leave `$01ED3A/$01ED60` |
 | `$FF2560` | word | RACE SOUND page value word (`A4+$0C`): 0=SFX, 1=MUSIC | `$01F0D4`; runtime diff at the page |
 | `$FF8622` | struct | 68k PSG SFX engine state base | `$0253EE` loads A4 here; `$070008/$070014` |
@@ -70,11 +70,13 @@ Controller evidence from ROM `$00D7A6..00D872`:
 | `$A00260` | byte | Race SFX Z80 image command queue counter | `$070160`, `$0701AA/$0701CA` |
 | `$A00000` | code | Z80 reset entry: music driver (`F3 31 F0 1F C3 42`) or race SFX image (`C3 10 04`), never both | Runtime Z80 RAM dump after upload |
 
-The port's `BOTH` choice is host-only state; `$FF240E` and `$FF2560` stay in
-their stock `{0,1}` range. The SFX-side policy sites listed in
-`docs/AUDIO.md` see a temporary `0` and the word is restored before the
-dependent branch, so a reader that is not a hooked site always sees the
-stock value.
+The port's `BOTH` choice is host-only state (`[mods.racesound] mode` in
+`settings.ini`, `TG2_RACE_SOUND` for captures); `$FF240E` and `$FF2560` stay
+in their stock `{0,1}` range. Every reader of the word is hooked
+(`docs/AUDIO.md` section 5): SFX-side sites see a temporary `0`, music-side
+sites a temporary `1`, and the cartridge's own value is restored before the
+dependent branch, so an unexpected reader still sees the stock value. The
+setting no longer depends on the word being written by the menu teardown.
 
 Race timing fields verified by raw ROM and per-frame native snapshots
 (see `FRAMERATE.md` for cadence measurements):

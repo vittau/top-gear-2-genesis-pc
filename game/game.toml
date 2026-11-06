@@ -81,6 +81,27 @@ kind = "game_hook"
 addr = 0x0252D0
 kind = "game_hook"
 
+# Music-side policy reads: present 1 while BOTH is selected, so music keeps
+# running even when the cartridge word is still at its boot value.
+[[widescreen_site]]
+addr = 0x025088
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02508C
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x025200
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x025204
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02523A
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x02523E
+kind = "game_hook"
+
 # Read-only USA presentation captures, audited with tools/disasm_tg2.py.
 # Reset scene at the SAT allocator reset; capture mappings before native
 # horizontal culling; publish after the native SAT has been linked.
