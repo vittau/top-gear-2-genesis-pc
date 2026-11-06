@@ -394,7 +394,7 @@ input script).  The write dump is windowed to the race.
 | rel | same, SOUND EFFECTS | SFX | 0 | 12,614 | 117,708 | SFX only (stock) |
 | rel | **direct** (never opens the SOUND pages; BOTH persisted) | BOTH | **0** | **12,600** | **226,910** | **yes** |
 | dev | menu route, leave with **A** instead of B, BOTH | BOTH | 1 | 16,800 | 302,187 | yes |
-| dev | password / CONTINUE route, BOTH | BOTH | 1 | 2,805 | 54,165 | yes |
+| dev | password / CONTINUE route, BOTH | BOTH | 1 | 6,300 | 119,669 | yes |
 | dev | second race after finishing the first, BOTH | BOTH | 1 | 12,614 | 234,130 | yes |
 
 The dev counts are larger because that capture holds the throttle for 40 s of
@@ -402,9 +402,9 @@ wall frame samples after the race starts, while the release scripts stop at a
 fixed frame; the ratio between the two builds is not the point, the presence of
 68k-origin writes on every BOTH row is.
 
-The password row counts the 400 sound frames of its race start: that capture
-run was stopped by the tool's wall-clock limit before its WAV was closed, so
-the mode word and the 68k chip writes are its evidence.  The second-race row
+The password row is `build/final/route-password`: WAV peak 9166 / RMS 1643.89
+over 18.6 s of race after the prefilled password is submitted from the ENTER
+PASSWORD screen (`--race-frames 900`).  The second-race row
 is race 2 of `build/both/race2-both`, whose two WAVs (`race1.wav` peak 9491,
 `race2.wav` peak 11396) and write dump both show the mode surviving the
 finish/results/next-race flow.
