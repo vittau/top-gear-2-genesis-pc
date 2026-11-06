@@ -1,4 +1,232 @@
-# Race presentation rate: measurement and 60 fps option
+# 60 fps races with stock-identical simulation
+
+The CPU-headroom / fixed 1-in-3 physics-view design is **superseded**. It
+produced 60 pictures/s but changed the same-input trajectory and lap splits;
+the historical measurements below are not claims about the current code.
+
+The current option runs **all guest code at stock cycle cost**, including the
+main loop, IRQs, DMA, opponent logic, controller reads and sound writes.
+`game/tg2_spec.c` no longer supplies `main_cpu_divisor`, replaces physics
+routines, temporarily writes the player view position, or inserts deferred
+work. The five old physics/IRQ hook sites were removed from `game.toml`.
+
+## Presentation technique
+
+`game/tg2_video.c` keeps eight immutable completed-picture snapshots. A
+primary raster-list pointer change (`$FF231E`) identifies the next displayed
+picture. Each snapshot owns the VDP inputs for all 224 active scanlines and
+the matched widescreen sprite scene. Per-row capture preserves H-int register,
+vertical-scroll and palette changes, and does not assume VRAM is constant
+throughout a frame. The history allocates about 113 MiB on first use; failure
+falls back to the ordinary image.
+
+For each V-int the renderer draws the presentation time **three V-ints
+behind** the current time, bracketed by the two surrounding completed stock
+pictures. It interpolates per-line road/background horizontal scroll and
+vertical raster offsets using their shortest modular displacement. It also
+interpolates native SAT and widescreen sprite coordinates, matching tile,
+size and nearest position instead of unstable SAT indices. Pattern,
+palette, occlusion and animation changes retain the earlier endpoint until
+the next endpoint is reached; this avoids blended sprite silhouettes.
+Appearance/disappearance and unmatched pieces remain discrete.
+
+The existing native VDP renderer draws only a private `GVDP` copy. Its
+sprite collision/overflow writes therefore touch that copy, and the result
+then goes through the existing widescreen and HUD renderer. Guest RAM,
+VRAM, CRAM, CPU, raster timing and audio are never changed by interpolation.
+The original device still evaluates its real sprites once per scanline.
+No shared engine changes were needed.
+
+**Added display latency: 3 V-ints = 50 ms at nominal 60 Hz
+(50.05 ms at the runner's default 60000/1001 Hz).** This is a fixed presentation-time
+shift, independent of the variable 2/3-V-int stock build cadence. The
+`tg2_video` TCP command exposes current/from/to timestamps and the fraction
+for checking that relation. During warm-up, before a bracket exists, output
+uses the ordinary image. If a picture ever takes longer than the three-V-int
+measured bound, the renderer holds the newest available endpoint rather
+than extrapolating gameplay. Controller sampling and audio have zero added
+latency. The option text discloses the display delay.
+
+This approach is preferred to a logic/render split: the existing evidence
+shows a main-loop picture view feeding the IRQ physics, and a variable CPU
+completion schedule. Leaving both untouched gives exact state preservation
+without a second timing model or guest render-only execution.
+
+The option remains default-on, latched at each single-player race start.
+Menus, fades, countdown, finish transitions and two-player races use the
+ordinary renderer/timing. Widescreen and Centered/Edges HUD compose with it.
+
+## Qualification
+
+Evidence is private under `build/fps/`; no ROM, generated C or state dump is
+committed. See the final validation tables in this section for measured runs.
+
+The cadence probe now accepts `--port`, `--60fps`, `--widescreen`, `--hud`
+and `--turbo`. Both qualification drivers explicitly set
+`TG2_RACE_60FPS=0` when `--60fps` is absent: previously their "Off" label
+could silently inherit the default-on option.
+
+`tg2_replay_route.py --trace-frames N` reads every exact completed frame
+from the runtime's always-on history ring, independently of live TCP sampling.
+It uses a persistent connection and batches read-only history queries before
+the 600-frame ring can evict them; missing or evicted frames fail the run.
+This avoids the input script's 4096-directive limit. It writes
+`state-trace.csv` with raw lateral position, track/view position, both speed
+fields, lap, clock, slope/curve and completed-build count, plus SHA-256 of
+**all 64 KiB WRAM** and the complete **1112-byte player record**. The latter
+covers every player field, including gear/RPM, without guessing unverified
+field offsets. `compare_race_replay.py` rejects missing frames, reports the
+first divergence and maximum absolute field differences, compares the full
+record/WRAM hashes and derives exact-clock lap splits from those snapshots.
+
+### Exact same-input replay
+
+The route was recorded by the stock closed-loop run below (372 input-mask
+changes). Both replays consume that same route via the exact-wall-frame input
+script; the comparison is between replay modes, not between the reactive
+recording session and its open-loop replay.
+
+```sh
+python3 tools/tg2_replay_route.py --port 4480 \
+  --route build/fps/race-off/route-race.json --out build/fps/replay-off \
+  --widescreen off --trace-frames 16000 --grace 4000 --timeout 600
+TG2_HUD_MODE=edges python3 tools/tg2_replay_route.py --port 4480 \
+  --route build/fps/race-off/route-race.json --out build/fps/replay-60 \
+  --widescreen 16:9 --60fps --trace-frames 16000 --grace 4000 --timeout 600
+python3 tools/compare_race_replay.py build/fps/replay-off build/fps/replay-60 \
+  --out build/fps/replay-comparison.json
+```
+
+Both replays and the comparison exited **0**, all four manifests empty.
+All **16000 consecutive completed V-ints (1–16000)** match, with **no missing
+frames and no first divergent frame**, including every completed stock logic
+step. The full 64 KiB WRAM hashes and full player-record hashes match on
+**16000/16000** frames. Maximum absolute differences:
+
+| State field | Maximum absolute difference |
+|---|---:|
+| Physical track position | 0 |
+| Lateral position (raw 16.16) | 0 |
+| View position | 0 |
+| Speed (`+$0E`) and speed-model value (`+$C2`) | 0 / 0 |
+| Curvature / slope | 0 / 0 |
+| Race clock / lap / completed-build count | 0 / 0 / 0 |
+| Every player-record byte, including gear/RPM | 0 |
+| Every other WRAM byte | 0 |
+
+| Segment | Off replay | 16:9 + Edges + 60 fps replay | Difference |
+|---|---:|---:|---:|
+| Run-up | 12.3666 s | 12.3666 s | 0 ticks |
+| Lap 1 | 39.9664 s | 39.9664 s | 0 ticks |
+| Lap 2 | 44.1331 s | 44.1331 s | 0 ticks |
+| Lap 3 | 51.9497 s | 51.9497 s | 0 ticks |
+| Lap 4 | 43.2997 s | 43.2997 s | 0 ticks |
+| Total | **191.7154977 s** | **191.7154977 s** | **0 ticks** |
+
+The finish clock is **628213343** in both. The capture includes the finish
+and subsequent frozen-clock frames; exact split labels come from the history
+snapshots rather than whichever live TCP poll happened to observe a crossing.
+
+`build/fps/replay-60/presentation-timing.json` contains **21** in-race
+read-only samples. For every sample,
+`current - (from + (to-from)*phase_num/phase_den) = 3` V-ints exactly:
+measured additional presentation latency **50.05 ms** at the default pacer.
+
+### Full race: closed-loop controller
+
+Command (run separately for Off and On, TCP port 4480 only):
+
+```sh
+python3 tools/tg2_race_driver.py --port 4480 --out build/fps/race-off \
+  --skip-post --launch-delay 300 --widescreen off
+TG2_HUD_MODE=edges python3 tools/tg2_race_driver.py --port 4480 \
+  --out build/fps/race-60 --skip-post --launch-delay 300 --widescreen 16:9 --60fps
+```
+
+Both exited **0**, finished Auckland, and recorded **0/0/0/0** dispatch,
+floor, interior-label and unsafe-floor entries. `summary.json` race records
+are identical, including the finish clock **583113926** and finish frame
+**13744**. All **5560** controller trace rows (same frame set, including
+input masks) are identical. The times reproduce the earlier stock run.
+
+| Segment | Off | 16:9 + Edges + 60 fps | Difference |
+|---|---:|---:|---:|
+| Run-up | 12.4333 s | 12.4333 s | 0 ticks |
+| Lap 1 | 39.8664 s | 39.8664 s | 0 ticks |
+| Lap 2 | 42.9997 s | 42.9997 s | 0 ticks |
+| Lap 3 | 37.7998 s | 37.7998 s | 0 ticks |
+| Lap 4 | 44.8531 s | 44.8531 s | 0 ticks |
+| Total | **177.9522479 s** | **177.9522479 s** | **0 ticks** |
+
+### Picture cadence, screenshots and audio
+
+```sh
+python3 tools/probe_framerate.py --port 4480 --out build/fps/parity-stock --turbo
+python3 tools/probe_framerate.py --port 4480 --out build/fps/parity-60 \
+  --turbo --60fps --widescreen 16:9 --hud edges
+```
+
+Both exited **0**, all four manifests empty. Frames 3601–3960:
+
+| Measurement | Off | 16:9 + Edges + 60 fps |
+|---|---:|---:|
+| Changed images / 360 V-ints | 186 | **360** |
+| Changed images / 60 V-ints | 31 | **60** |
+| WRAM sample differences | reference | **0 / 364** |
+| VRAM sample differences | reference | **0 / 361** |
+
+The ordinary pacer is NTSC 60000/1001 Hz; “60 fps” here counts a changed
+picture at **every V-int**, rather than accelerating that clock.
+With **both options Off**, frame 60 is `2A0B972960C5E325`, frame 300 is
+`1131D937D70234FD`, matching stock. A separate 300-frame native-canvas run with 60 fps **On**
+also exited 0 and retained both hashes (`build/fps/boot-60/summary.json`).
+The wider boot canvas naturally has
+different framebuffer hashes even before racing.
+
+The six consecutive **398×224** images are
+`build/fps/parity-60/frame-3600.png` through `frame-3605.png`; all six SHA-256
+values differ (`hashes.txt` alongside them). Visual inspection confirms the
+wide road, centred car and edge-anchored instruments/map.
+
+The complete **83596844-byte WAV files are byte-identical**, including the
+race, not merely equal in tempo or onset correlation. Shared SHA-256:
+`c572492ef84b82804eb007eb41424e0a16fc7c67a42f6636d132210516488d02`.
+The new presentation code executes no sound writes and adds no audio delay.
+
+### Two-player timing and scope
+
+A fixed two-pad script from
+`tg2_split_screen.build_script(4, 280, [3700])`, followed by an explicit
+player-2 START to leave pause and 1500 frames with both throttles held,
+was run with the option Off and On. The private reproduction harness is
+`build/fps/verify_split_timing.py` (`python3 build/fps/verify_split_timing.py`,
+port 4480); evidence is `split-off/`, `split-60/` and
+`split-comparison.json` under `build/fps/`.
+
+Both runs exited **0**, with all four manifests empty. Every one of the
+**8800 framebuffer hashes** is identical, and the terminal **64 KiB WRAM
+snapshots are byte-identical**. Both have `$FF189E = 1`, clock **88473060**,
+player-1 speed **2917**, player-2 speed **2421**; `split-60/end.png` shows
+both racing without a pause banner. The option does not interpolate or add
+latency in split-screen.
+
+The initial 2P capture was paused and was rejected as evidence of moving
+race timing; the explicit player-2 unpause above is part of the qualified
+script. Likewise, the initial long-replay capture exceeded the input script
+limit and was rejected for missing frames; the completed comparison uses
+the always-on history reader, not that failed run.
+
+Verified here: single-player Auckland full race and replay, unchanged audio,
+60 changed race images per 60 V-ints, native boot fingerprints, widescreen
+with Edges HUD, and unchanged two-player timing. Manual controller/visual
+acceptance of the added display delay remains an owner review. Other tracks,
+weather and unusually expensive scenes exceeding the three-V-int bracket
+have not been qualified by this task; no claim is made that every discrete
+animation/pattern update becomes 60 Hz.
+
+---
+
+# Superseded design: CPU headroom and fixed physics-view gate
 
 ROM: Top Gear 2 USA, CRC32 `BD3074D2`. Every address below was checked against
 the private ROM with `tools/disasm_tg2.py` (Capstone 68000 mode) and against

@@ -1,5 +1,11 @@
 # Full-game qualification ledger
 
+The 60 fps rows below describe the **superseded CPU-headroom design**. The
+current presentation-only implementation and its exact per-V-int replay,
+full-race, cadence and audio comparisons are documented in
+[FRAMERATE.md](FRAMERATE.md#qualification). Historical trajectory/lap-time
+divergence below must not be read as a current limitation.
+
 Scope: does the native port play the real game, and do the presentation options
 change what the game does? Every entry below was produced headlessly (SDL dummy
 or offscreen video, dummy audio, TCP port 4470, one runtime at a time) by
