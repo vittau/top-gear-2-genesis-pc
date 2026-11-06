@@ -1,0 +1,1630 @@
+diff --git a/runner/audio/event_queue.c b/runner/audio/event_queue.c
+index f22e787..ea0033f 100644
+--- a/runner/audio/event_queue.c
++++ b/runner/audio/event_queue.c
+@@ -20,6 +20,12 @@ static AudioEvent s_ring[QUEUE_CAP];
+ static size_t     s_head = 0;  /* producer writes here */
+ static size_t     s_tail = 0;  /* consumer reads here */
+ static size_t     s_overflow_count = 0;
++
++/* Writer-routed second virtual chip (BOTH mode). Off by default: the stock
++ * single-chip path is untouched. */
++static int s_chip_routing_dual = 0;
++void audio_set_chip_routing(int dual) { s_chip_routing_dual = dual != 0; }
++int  audio_chip_routing_dual(void) { return s_chip_routing_dual; }
+ size_t audio_event_state_size(void) { return sizeof(uint32_t)+sizeof s_ring; }
+ size_t audio_event_rb_save(void *dst, size_t cap)
+ {
+@@ -122,6 +128,12 @@ int audio_event_cosim_hist(uint64_t *out_idx, uint32_t *out_stamp, uint32_t *out
+ #endif /* GENESIS_COSIM */
+ 
+ void audio_event_push(uint32_t cycle_stamp, uint8_t port, uint8_t value)
++{
++    audio_event_push_origin(cycle_stamp, port, value, AUDIO_ORIGIN_68K);
++}
++
++void audio_event_push_origin(uint32_t cycle_stamp, uint8_t port, uint8_t value,
++                             uint8_t origin)
+ {
+ #ifdef GENESIS_COSIM
+     hist_record(cycle_stamp, port, value);
+@@ -177,6 +189,7 @@ void audio_event_push(uint32_t cycle_stamp, uint8_t port, uint8_t value)
+     s_ring[s_head].cycle_stamp = cycle_stamp;
+     s_ring[s_head].port        = port;
+     s_ring[s_head].value       = value;
++    s_ring[s_head].origin      = origin;
+     s_head = next_head;
+ }
+ 
+diff --git a/runner/audio/event_queue.h b/runner/audio/event_queue.h
+index 0615596..4145ca7 100644
+--- a/runner/audio/event_queue.h
++++ b/runner/audio/event_queue.h
+@@ -24,14 +24,34 @@ enum {
+     AUDIO_PORT_PSG      = 4,   /* $C00011 write */
+ };
+ 
++/* Which writer issued the chip write. The queue already carried only the
++ * writer PC for diagnostics; this is the same information as a field, so a
++ * second virtual chip can be fed by writer (BOTH mode). */
++enum {
++    AUDIO_ORIGIN_68K = 0,   /* 68K FM/PSG engine (or boot code)  */
++    AUDIO_ORIGIN_Z80 = 1    /* resident Z80 driver               */
++};
++
+ typedef struct AudioEvent {
+     uint32_t cycle_stamp;   /* g_audio_cycle_counter at time of write */
+     uint8_t  port;
+     uint8_t  value;
+-} AudioEvent;
++    uint8_t  origin;        /* AUDIO_ORIGIN_*                         */
++} AudioEvent;               /* still 8 bytes: 3 payload bytes + padding */
+ 
+-/* Push one event. Safe to call from anywhere inside the game fiber. */
++/* Push one event. Safe to call from anywhere inside the game fiber.
++ * audio_event_push() is the 68K writer (the historical default); the Z80 bus
++ * push sites use audio_event_push_origin() with AUDIO_ORIGIN_Z80. */
+ void audio_event_push(uint32_t cycle_stamp, uint8_t port, uint8_t value);
++void audio_event_push_origin(uint32_t cycle_stamp, uint8_t port, uint8_t value,
++                             uint8_t origin);
++
++/* Dual-chip routing (host audio option; default off). When on, the mixer
++ * feeds a second virtual YM2612+SN76489 from 68K-origin writes and the first
++ * chip from Z80-origin writes, so two drivers never share one register file.
++ * Off keeps the single-chip path exactly as it was. */
++void audio_set_chip_routing(int dual);
++int  audio_chip_routing_dual(void);
+ 
+ /* Drain iterator. Returns 1 if *out was filled, 0 if queue empty.
+  * Call repeatedly until it returns 0 to walk the frame's events in order. */
+diff --git a/runner/audio/mixer.c b/runner/audio/mixer.c
+index c15f4d5..5ac1f81 100644
+--- a/runner/audio/mixer.c
++++ b/runner/audio/mixer.c
+@@ -55,6 +55,10 @@ void audio_mixer_init(void)
+ {
+     ym2612_init();
+     psg_init();
++    /* Second virtual chip: created up front so the first BOTH frame does not
++     * pay the allocation, and always reset with the canonical chip. */
++    ym2612_init_chip(1);
++    psg_init_chip(1);
+     /* Arm the FM shadow if opted in (GENESIS_AUDIO_SHADOW). Default OFF ⇒
+      * every fm_shadow_* call below is a cheap no-op and audio is
+      * byte-identical to the canon path. */
+@@ -83,6 +87,14 @@ void audio_mixer_init(void)
+  * SFX trailing-boop. Default 0 = current (shipping) behavior. Dev-only. */
+ static int s_mix_toggle_read = 0;
+ static int s_no_spread = 0, s_no_pairguard = 0, s_no_leftover = 0, s_no_clamp = 0;
++/* Measurement-only: drop Z80-origin writes in the single-chip path, so the
++ * 68K-only part of SOUND EFFECTS mode can be rendered as a reference for the
++ * BOTH-mode chip-B comparison (docs/AUDIO.md §10). Never set in normal play. */
++static int s_mute_z80 = 0;
++/* Measurement-only: skip the cross-axis stamp sort in the single-chip path
++ * (docs/AUDIO.md §10 uses it to separate "the 68K stream as issued" from "the
++ * 68K stream after the merged-axis sort"). Never set in normal play. */
++static int s_no_sort = 0;
+ static AudioMixerExecutor s_executor;
+ static void *s_executor_context;
+ void audio_mixer_set_shadow_executor(AudioMixerExecutor executor,void *context)
+@@ -99,43 +111,56 @@ static int mixer_outputs_disjoint(const int16_t *fm,size_t fm_cap,
+ typedef struct MixerChipJob {
+     const AudioOrderedEvent *events;size_t count;
+     uint32_t end;int16_t *output;size_t capacity,written;
+-    int keep_psg_leftover;
++    int keep_psg_leftover;   /* 1 = keep the PSG sub-sample remainder (exact clock) */
+     int16_t *raw_output;
++    int chip;      /* virtual chip index (0 = canonical, 1 = BOTH second chip) */
++    int origin;    /* AUDIO_ORIGIN_* filter, or MIXER_ANY_ORIGIN                  */
+ } MixerChipJob;
++#define MIXER_ANY_ORIGIN (-1)
++static int mixer_event_wanted(const MixerChipJob *job,const AudioEvent *e)
++{
++    return job->origin==MIXER_ANY_ORIGIN || e->origin==(uint8_t)job->origin;
++}
+ static void mixer_fm_job(void *context)
+ {
+     MixerChipJob *job=(MixerChipJob *)context;uint32_t previous=0;
+     for(size_t i=0;i<job->count;i++){
+         AudioEvent e=job->events[i].e;if(e.port==AUDIO_PORT_PSG)continue;
++        if(!mixer_event_wanted(job,&e))continue;
+         if(e.cycle_stamp<previous)e.cycle_stamp=previous;
+         uint32_t delta=e.cycle_stamp-previous;
+-        if(delta)ym2612_advance(delta);
++        if(delta)ym2612_advance_chip(job->chip,delta);
+         switch(e.port){
+-            case AUDIO_PORT_FM1_ADDR:ym2612_write(0,e.value);break;
+-            case AUDIO_PORT_FM1_DATA:ym2612_write(1,e.value);break;
+-            case AUDIO_PORT_FM2_ADDR:ym2612_write(2,e.value);break;
+-            case AUDIO_PORT_FM2_DATA:ym2612_write(3,e.value);break;
++            case AUDIO_PORT_FM1_ADDR:ym2612_write_chip(job->chip,0,e.value);break;
++            case AUDIO_PORT_FM1_DATA:ym2612_write_chip(job->chip,1,e.value);break;
++            case AUDIO_PORT_FM2_ADDR:ym2612_write_chip(job->chip,2,e.value);break;
++            case AUDIO_PORT_FM2_DATA:ym2612_write_chip(job->chip,3,e.value);break;
+             default:break;
+         }
+         previous=e.cycle_stamp;
+     }
+-    if(job->end>previous)ym2612_advance(job->end-previous);
+-    size_t available=ym2612_samples_available();job->written=available<job->capacity?available:job->capacity;
+-    if(job->output && job->written)ym2612_render_pair(job->output,job->raw_output,job->written);
++    if(job->end>previous)ym2612_advance_chip(job->chip,job->end-previous);
++    size_t available=ym2612_samples_available_chip(job->chip);
++    job->written=available<job->capacity?available:job->capacity;
++    if(job->output && job->written)
++        ym2612_render_pair_chip(job->chip,job->output,job->raw_output,job->written);
+ }
+ static void mixer_psg_job(void *context)
+ {
+     MixerChipJob *job=(MixerChipJob *)context;uint32_t previous=0;
+     for(size_t i=0;i<job->count;i++){
+         AudioEvent e=job->events[i].e;if(e.port!=AUDIO_PORT_PSG)continue;
++        if(!mixer_event_wanted(job,&e))continue;
+         if(e.cycle_stamp<previous)e.cycle_stamp=previous;
+-        if(e.cycle_stamp>previous)psg_advance(e.cycle_stamp-previous);
+-        psg_write(e.value);previous=e.cycle_stamp;
++        if(e.cycle_stamp>previous)psg_advance_chip(job->chip,e.cycle_stamp-previous);
++        psg_write_chip(job->chip,e.value);previous=e.cycle_stamp;
+     }
+-    if(job->end>previous)psg_advance(job->end-previous);
+-    if(!job->keep_psg_leftover)psg_reset_leftover();
+-    size_t available=psg_samples_available();job->written=available<job->capacity?available:job->capacity;
+-    if(job->output && job->written)psg_render_pair(job->output,job->raw_output,job->written);
++    if(job->end>previous)psg_advance_chip(job->chip,job->end-previous);
++    if(!job->keep_psg_leftover)psg_reset_leftover_chip(job->chip);
++    size_t available=psg_samples_available_chip(job->chip);
++    job->written=available<job->capacity?available:job->capacity;
++    if(job->output && job->written)
++        psg_render_pair_chip(job->chip,job->output,job->raw_output,job->written);
+ }
+ typedef struct {MixerChipJob *fm,*psg;} MixerMainJob;
+ static void mixer_main_job(void *context)
+@@ -163,16 +188,89 @@ static void mixer_read_toggles(void) {
+     if ((e = getenv("GENESIS_MIXER_NO_PAIRGUARD")) && *e && *e!='0') s_no_pairguard= 1;
+     if ((e = getenv("GENESIS_MIXER_RESET_LEFTOVER")) && *e && *e!='0') s_no_leftover = 1;
+     if ((e = getenv("GENESIS_MIXER_NO_CLAMP"))     && *e && *e!='0') s_no_clamp    = 1;
++    if ((e = getenv("GENESIS_AUDIO_MUTE_Z80"))     && *e && *e!='0') s_mute_z80    = 1;
++    if ((e = getenv("GENESIS_AUDIO_NO_SORT"))      && *e && *e!='0') s_no_sort     = 1;
++    if (s_no_sort) fprintf(stderr, "[MIXER-TOGGLE] no_sort=1 (measurement only)\n");
++    if (s_mute_z80) fprintf(stderr, "[MIXER-TOGGLE] mute_z80=1 (measurement only)\n");
+     if (s_no_spread||s_no_pairguard||s_no_leftover||s_no_clamp)
+         fprintf(stderr, "[MIXER-TOGGLE] no_spread=%d no_pairguard=%d no_leftover=%d no_clamp=%d\n",
+                 s_no_spread, s_no_pairguard, s_no_leftover, s_no_clamp);
+ }
+ 
++/* ---- Writer-routed dual-chip drain (BOTH mode) --------------------------
++ * The game's music driver and its 68K SFX engine program the same register
++ * file on real hardware, so running both means overwriting each other's
++ * notes. With routing on, the mixer instantiates a SECOND virtual
++ * YM2612+SN76489: chip 0 receives Z80-origin writes (the music driver, as in
++ * MUSIC mode) and chip 1 receives 68K-origin writes (the SFX engine, as in
++ * SOUND EFFECTS mode). Both chips advance across the whole frame, so their
++ * sample clocks stay aligned, and their outputs are summed sample by sample.
++ *
++ * Chip 0 is the same instance the stock path uses and sees the same writes in
++ * the same order, so its own stream is bit-identical to MUSIC mode's; the
++ * exports below expose each chip for the acceptance check.
++ *
++ * Off by default: with routing off this whole block is skipped and the
++ * single-chip path below is byte-identical to the pre-change engine. */
++#define MIXER_CHIP_SAMPLES 8192
++static int      s_dual_drained;
++static int16_t  s_chip_fm[2][MIXER_CHIP_SAMPLES * 2];
++static int16_t  s_chip_fm_raw[2][MIXER_CHIP_SAMPLES * 2];
++static int16_t  s_chip_psg[2][MIXER_CHIP_SAMPLES];
++static int16_t  s_chip_psg_raw[2][MIXER_CHIP_SAMPLES];
++static size_t   s_chip_fm_n[2], s_chip_psg_n[2];
++
++/* Per-chip stream produced by the last dual drain (diagnostic export). */
++int audio_mixer_chip_output(int chip, const int16_t **fm, size_t *fm_n,
++                            const int16_t **psg, size_t *psg_n)
++{
++    if (!s_dual_drained || chip < 0 || chip > 1) return 0;
++    if (fm)    *fm    = s_chip_fm[chip];
++    if (fm_n)  *fm_n  = s_chip_fm_n[chip];
++    if (psg)   *psg   = s_chip_psg[chip];
++    if (psg_n) *psg_n = s_chip_psg_n[chip];
++    return 1;
++}
++
++static int16_t mixer_clamp16(int32_t v)
++{
++    if (v > 32767) return 32767;
++    if (v < -32768) return -32768;
++    return (int16_t)v;
++}
++
++/* Sum chip A + chip B at unity gain into the caller's buffers. The voice
++ * levels are the models' own stock levels (music chip as in MUSIC, SFX chip
++ * as in SOUND EFFECTS), so BOTH keeps each source at its stock loudness; the
++ * sum is only clamped if it would leave int16, and the measured peaks leave
++ * that headroom unused (docs/AUDIO.md records the numbers). */
++static size_t mixer_sum_fm(int16_t *out, int16_t *raw_out, size_t capacity)
++{
++    size_t n = s_chip_fm_n[0] < s_chip_fm_n[1] ? s_chip_fm_n[0] : s_chip_fm_n[1];
++    if (n > capacity) n = capacity;
++    for (size_t i = 0; i < n * 2u; i++) {
++        if (out)     out[i]     = mixer_clamp16((int32_t)s_chip_fm[0][i] + s_chip_fm[1][i]);
++        if (raw_out) raw_out[i] = mixer_clamp16((int32_t)s_chip_fm_raw[0][i] + s_chip_fm_raw[1][i]);
++    }
++    return n;
++}
++static size_t mixer_sum_psg(int16_t *out, int16_t *raw_out, size_t capacity)
++{
++    size_t n = s_chip_psg_n[0] < s_chip_psg_n[1] ? s_chip_psg_n[0] : s_chip_psg_n[1];
++    if (n > capacity) n = capacity;
++    for (size_t i = 0; i < n; i++) {
++        if (out)     out[i]     = mixer_clamp16((int32_t)s_chip_psg[0][i] + s_chip_psg[1][i]);
++        if (raw_out) raw_out[i] = mixer_clamp16((int32_t)s_chip_psg_raw[0][i] + s_chip_psg_raw[1][i]);
++    }
++    return n;
++}
++
+ void audio_mixer_drain(uint32_t frame_end_cycle,
+                        int16_t *fm_stereo_out, size_t fm_cap, size_t *fm_written,
+                        int16_t *psg_mono_out,  size_t psg_cap, size_t *psg_written)
+ {
+     mixer_read_toggles();
++    s_dual_drained = 0;
+ 
+     /* Always-on APPLIED-order capture (env GENESIS_AUDIO_APPLIEDDUMP=<path>):
+      * records every FM/PSG write in the order + timing the mixer actually
+@@ -211,13 +309,22 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+         }
+     }
+ 
++    const int dual = audio_chip_routing_dual();
++
+     /* Pair guard: give each FM ADDRESS write the stamp of its matching DATA
+      * write (the next FM event on the same part, which is its adjacent push
+      * in practice). With equal stamps and the stable tiebreak, no foreign
+      * event can sort between an address write and the data write that
+      * completes it, so the synth's address latch can never be clobbered
+-     * mid-pair by cross-axis interleaving. */
+-    audio_event_order(evs,scratch.ordered,n,!s_no_pairguard);
++     * mid-pair by cross-axis interleaving.
++     *
++     * Writer-routed mode needs no merge at all: chip A only ever sees Z80
++     * pushes (already monotonic on the raster axis) and chip B only 68K pushes,
++     * so each chip is applied in its own writer's issue order. That is what
++     * keeps the 68K engine's register bursts intact: the two stamp axes are
++     * not comparable, and sorting a 68K-only stream by the merged axis splits
++     * its address/data pairs and re-orders a burst into nonsense. */
++    if (!dual && !s_no_sort) audio_event_order(evs,scratch.ordered,n,!s_no_pairguard);
+ 
+     /* Multi-frame spreading: a handler that runs long (the Sega-scream PCM
+      * V-int feeds ~118k DAC writes whose stamps span ~129 frames of machine
+@@ -230,7 +337,7 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+      * (address, data) pair so a pair never straddles the boundary with a
+      * foreign write able to sort between its halves next frame. */
+     size_t n_apply = n;
+-    if (!s_no_spread) {
++    if (!s_no_spread && !dual) {
+     while (n_apply > 0 && evs[n_apply - 1].e.cycle_stamp > frame_end_cycle)
+         n_apply--;
+     if (n_apply > 0) {
+@@ -256,8 +363,8 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+     static int16_t raw_fm[8192*2],raw_psg[8192];
+     if(s_executor && fm_shadow_enabled() &&
+        mixer_outputs_disjoint(fm_stereo_out,fm_cap,psg_mono_out,psg_cap)){
+-        MixerChipJob fm={evs,n_apply,frame_end_cycle,fm_stereo_out,fm_cap,0,0,raw_fm};
+-        MixerChipJob psg={evs,n_apply,frame_end_cycle,psg_mono_out,psg_cap,0,s_no_leftover,raw_psg};
++        MixerChipJob fm={evs,n_apply,frame_end_cycle,fm_stereo_out,fm_cap,0,0,raw_fm,0,MIXER_ANY_ORIGIN};
++        MixerChipJob psg={evs,n_apply,frame_end_cycle,psg_mono_out,psg_cap,0,!s_no_leftover,raw_psg,0,MIXER_ANY_ORIGIN};
+         MixerMainJob main_job={&fm,&psg};
+         s_executor(mixer_main_job,&main_job,mixer_shadow_job,&fm,s_executor_context);
+         if(fm.output && fm.written)fm_shadow_verify_and_substitute(fm.output,fm.written);
+@@ -280,8 +387,79 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+         if(psg_written)*psg_written=psg.written;
+         return;
+     }
++    if (dual) {
++        /* Chip 0 <- Z80 writes, chip 1 <- 68K writes, each in its own writer's
++         * push order. Both chips advance across the whole frame, so they emit
++         * exactly as many samples as the stock single chip would. */
++        s_dual_drained = 1;
++        /* No chip may advance past the frame end (that would emit samples
++         * belonging to the next frame); an overshooting write lands on the
++         * frame's last sub-sample. */
++        for (size_t i = 0; i < n_apply; i++)
++            if (evs[i].e.cycle_stamp > frame_end_cycle)
++                evs[i].e.cycle_stamp = frame_end_cycle;
++        MixerChipJob fm0={evs,n_apply,frame_end_cycle,s_chip_fm[0],MIXER_CHIP_SAMPLES,0,0,
++                          s_chip_fm_raw[0],0,AUDIO_ORIGIN_Z80};
++        MixerChipJob fm1={evs,n_apply,frame_end_cycle,s_chip_fm[1],MIXER_CHIP_SAMPLES,0,0,
++                          s_chip_fm_raw[1],1,AUDIO_ORIGIN_68K};
++        MixerChipJob psg0={evs,n_apply,frame_end_cycle,s_chip_psg[0],MIXER_CHIP_SAMPLES,0,
++                           !s_no_leftover,s_chip_psg_raw[0],0,AUDIO_ORIGIN_Z80};
++        MixerChipJob psg1={evs,n_apply,frame_end_cycle,s_chip_psg[1],MIXER_CHIP_SAMPLES,0,
++                           !s_no_leftover,s_chip_psg_raw[1],1,AUDIO_ORIGIN_68K};
++        { static unsigned long dbg68, dbgz, dbg68fm; static unsigned long lastf;
++          size_t this68fm=0;
++          for (size_t di=0; di<n_apply; di++) { if (evs[di].e.origin==AUDIO_ORIGIN_68K) { dbg68++; if(evs[di].e.port!=AUDIO_PORT_PSG) this68fm++; } else dbgz++; }
++          dbg68fm+=this68fm;
++          if (g_snd_frame != lastf && (g_snd_frame % 600u)==0u) {
++              fprintf(stderr,"[DUAL-DBG] f=%lu n=%zu apply=%zu m68k=%lu z80=%lu fmA=%zu fmB=%zu fm0=%d,%d fm1=%d,%d psg1=%d,%d\n",
++                      g_snd_frame,n,n_apply,dbg68,dbgz,s_chip_fm_n[0],s_chip_fm_n[1],
++                      s_chip_fm[0][0],s_chip_fm[0][1],s_chip_fm[1][0],s_chip_fm[1][1],
++                      s_chip_psg[1][0],s_chip_psg[1][1]);
++              fprintf(stderr,"[DUAL-DBG] fm1.chip=%d origin=%d count=%zu this68fm=%zu total68fm=%lu\n",
++                      fm1.chip,fm1.origin,fm1.count,this68fm,dbg68fm);
++          }
++          lastf=g_snd_frame; }
++        mixer_fm_job(&fm0);  mixer_psg_job(&psg0);
++        mixer_fm_job(&fm1);  mixer_psg_job(&psg1);
++        /* The mix uses the shorter of the two chips' frame; report the same
++         * counts to the per-chip export so exporting and mixing agree exactly
++         * (a one-sample difference would shift the FM upsample phase). */
++        size_t fm_common  = fm0.written  < fm1.written  ? fm0.written  : fm1.written;
++        size_t psg_common = psg0.written < psg1.written ? psg0.written : psg1.written;
++        s_chip_fm_n[0]=s_chip_fm_n[1]=fm_common;
++        s_chip_psg_n[0]=s_chip_psg_n[1]=psg_common;
++
++        size_t fm_n  = 0, psg_n = 0;
++        static int16_t sum_fm_raw[MIXER_CHIP_SAMPLES * 2], sum_psg_raw[MIXER_CHIP_SAMPLES];
++        fm_n  = mixer_sum_fm(fm_stereo_out, sum_fm_raw, fm_cap);
++        psg_n = mixer_sum_psg(psg_mono_out, sum_psg_raw, psg_cap);
++        if (fm_stereo_out && fm_n > 0)
++            filter_present(fm_stereo_out, sum_fm_raw, fm_n, 2,
++                           &s_fm_filter_mix, s_fm_filter_span, 1);
++        if (psg_mono_out && psg_n > 0)
++            filter_present(psg_mono_out, sum_psg_raw, psg_n, 1,
++                           &s_psg_filter_mix, s_psg_filter_span, 1);
++        if ((fm_stereo_out && fm_n) || (psg_mono_out && psg_n)) s_filter_started = 1;
++        if (s_ad) for (size_t i = 0; i < n_apply; i++) {
++            AudioEvent e = evs[i].e;
++            uint32_t *previous = e.port == AUDIO_PORT_PSG ? &psg_prev : &fm_prev;
++            if (e.cycle_stamp < *previous) e.cycle_stamp = *previous;
++            *previous = e.cycle_stamp;
++            if (e.port == AUDIO_PORT_PSG)
++                fprintf(s_ad, "f=%lu APP PSG $%02X cyc=%u pi=%u\n",
++                        g_snd_frame, e.value, e.cycle_stamp, (unsigned)evs[i].idx);
++            else
++                fprintf(s_ad, "f=%lu APP FM  p%u $%02X cyc=%u pi=%u\n",
++                        g_snd_frame, e.port, e.value, e.cycle_stamp, (unsigned)evs[i].idx);
++        }
++        if (fm_written)  *fm_written  = fm_n;
++        if (psg_written) *psg_written = psg_n;
++        return;
++    }
++
+     for (size_t i = 0; i < n_apply; i++) {
+         AudioEvent e = evs[i].e;
++        if (s_mute_z80 && e.origin == AUDIO_ORIGIN_Z80) continue;
+         if (e.port == AUDIO_PORT_PSG) {
+             if (e.cycle_stamp < psg_prev) e.cycle_stamp = psg_prev;
+             uint32_t delta = e.cycle_stamp - psg_prev;
+diff --git a/runner/audio/mixer.h b/runner/audio/mixer.h
+index 1f31548..74d085b 100644
+--- a/runner/audio/mixer.h
++++ b/runner/audio/mixer.h
+@@ -27,6 +27,14 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+ /* Call once at boot. */
+ void audio_mixer_init(void);
+ 
++/* Per-chip output of the last drain, for the BOTH-mode acceptance export
++ * (diagnostic; env-gated by the caller). Returns 1 only while writer-routed
++ * dual-chip mixing produced this frame, 0 otherwise. Buffers are the chip's
++ * own FM (stereo, FM rate) and PSG (mono, PSG rate) streams BEFORE the A+B
++ * sum, so they are what MUSIC / SOUND EFFECTS mode would have produced. */
++int audio_mixer_chip_output(int chip, const int16_t **fm, size_t *fm_n,
++                            const int16_t **psg, size_t *psg_n);
++
+ /* Presentation preference, default0: bypass the native FM/PSG hardware LPFs.
+  * Both canonical filters keep advancing. Changes on the emulation/main thread
+  * fade over5ms without resetting chips, clocks or playback. Safe before init;
+diff --git a/runner/audio/sn76489.c b/runner/audio/sn76489.c
+index 79866b7..78f2297 100644
+--- a/runner/audio/sn76489.c
++++ b/runner/audio/sn76489.c
+@@ -21,14 +21,7 @@
+ 
+ #define PSG_SAMPLE_DIVISOR_MASTER   240u   /* Z80_CLOCK_DIVIDER * PSG_SAMPLE_RATE_DIVIDER */
+ 
+-static int        s_inited = 0;
+-static uint32_t   s_leftover_master_cycles = 0;  /* in master-cycle units */
+-
+ #define PSG_SCRATCH_SAMPLES  8192
+-static int16_t s_scratch[PSG_SCRATCH_SAMPLES];
+-static int16_t s_raw_scratch[PSG_SCRATCH_SAMPLES];
+-static size_t  s_scratch_write = 0;
+-static size_t  s_scratch_read  = 0;
+ 
+ /* ---- clean-room SN76489 ---- */
+ typedef struct {
+@@ -52,7 +45,20 @@ typedef struct {
+  * bright and let PSG energy run hotter than the reference. */
+ #define SN_LPF_SAMPLE_MAGIC  2517   /* round(1.0    * 65536 / 26.044) */
+ #define SN_LPF_OUTPUT_MAGIC  60504  /* round(24.044 * 65536 / 26.044) */
+-static SN76489 s_sn;
++/* One wrapper instance per virtual SN76489. Index 0 is the canonical chip and
++ * keeps the exact arithmetic of the single-chip build; index 1 is the
++ * writer-routed second chip (BOTH mode only). */
++typedef struct PsgChip {
++    SN76489  sn;
++    int      inited;
++    uint32_t leftover_master_cycles;      /* in master-cycle units */
++    int16_t  scratch[PSG_SCRATCH_SAMPLES];
++    int16_t  raw_scratch[PSG_SCRATCH_SAMPLES];
++    size_t   scratch_write;
++    size_t   scratch_read;
++} PsgChip;
++
++static PsgChip s_chips[2];
+ 
+ /* 4-bit attenuation -> linear amplitude. 2 dB/step (×10^-0.1), 0xF = silence.
+  * Values match the reference (clownmdemu psg.c psg_volumes / known SN76489
+@@ -210,90 +216,115 @@ static int sn_silent_span(SN76489 *p,int16_t *out,size_t samples)
+ }
+ #endif
+ 
+-void psg_init(void)
++void psg_init_chip(int index)
+ {
+-    sn_reset(&s_sn);
+-    s_scratch_write = s_scratch_read = 0;
+-    s_leftover_master_cycles = 0;
+-    s_inited = 1;
++    if (index < 0 || index > 1) return;
++    PsgChip *c = &s_chips[index];
++    sn_reset(&c->sn);
++    c->scratch_write = c->scratch_read = 0;
++    c->leftover_master_cycles = 0;
++    c->inited = 1;
+ }
+ 
+-void psg_advance(uint32_t cycles_master)
++void psg_init(void) { psg_init_chip(0); }
++
++void psg_advance_chip(int index, uint32_t cycles_master)
+ {
+-    if (!s_inited) psg_init();
++    if (index < 0 || index > 1) return;
++    PsgChip *c = &s_chips[index];
++    if (!c->inited) psg_init_chip(index);
+     if (cycles_master == 0) return;
+ 
+-    uint64_t total = (uint64_t)cycles_master + s_leftover_master_cycles;
++    uint64_t total = (uint64_t)cycles_master + c->leftover_master_cycles;
+     size_t   samples_to_emit = (size_t)(total / PSG_SAMPLE_DIVISOR_MASTER);
+-    s_leftover_master_cycles = (uint32_t)(total % PSG_SAMPLE_DIVISOR_MASTER);
++    c->leftover_master_cycles = (uint32_t)(total % PSG_SAMPLE_DIVISOR_MASTER);
+ 
+     while (samples_to_emit > 0) {
+-        size_t avail = PSG_SCRATCH_SAMPLES - s_scratch_write;
++        size_t avail = PSG_SCRATCH_SAMPLES - c->scratch_write;
+         if (avail == 0) return;  /* scratch full; drop */
+         size_t chunk = samples_to_emit < avail ? samples_to_emit : avail;
+ #if GENESIS_PSG_SILENT_SPANS
+-        if(sn_silent_span(&s_sn,s_scratch+s_scratch_write,chunk))
+-            memset(s_raw_scratch+s_scratch_write,0,chunk*sizeof *s_raw_scratch);
++        if(sn_silent_span(&c->sn,c->scratch+c->scratch_write,chunk))
++            memset(c->raw_scratch+c->scratch_write,0,chunk*sizeof *c->raw_scratch);
+         else
+ #endif
+             for (size_t i = 0; i < chunk; i++)
+-                s_scratch[s_scratch_write + i] = sn_render_sample(&s_sn,s_raw_scratch+s_scratch_write+i);
+-        s_scratch_write  += chunk;
++                c->scratch[c->scratch_write + i] = sn_render_sample(&c->sn,c->raw_scratch+c->scratch_write+i);
++        c->scratch_write  += chunk;
+         samples_to_emit  -= chunk;
+     }
+ }
+ 
+-void psg_write(uint8_t value)
++void psg_advance(uint32_t cycles_master) { psg_advance_chip(0, cycles_master); }
++
++void psg_write_chip(int index, uint8_t value)
+ {
+-    if (!s_inited) psg_init();
+-    sn_write(&s_sn, value);
++    if (index < 0 || index > 1) return;
++    PsgChip *c = &s_chips[index];
++    if (!c->inited) psg_init_chip(index);
++    sn_write(&c->sn, value);
+ }
+ 
++void psg_write(uint8_t value) { psg_write_chip(0, value); }
++
++size_t psg_render_chip(int index, int16_t *out, size_t sample_count)
++{ return psg_render_pair_chip(index, out, NULL, sample_count); }
++
+ size_t psg_render(int16_t *out, size_t sample_count)
+-{
+-    return psg_render_pair(out,NULL,sample_count);
+-}
++{ return psg_render_pair_chip(0, out, NULL, sample_count); }
+ 
+-size_t psg_render_pair(int16_t *filtered,int16_t *unfiltered,size_t sample_count)
++size_t psg_render_pair_chip(int index,int16_t *filtered,int16_t *unfiltered,
++                            size_t sample_count)
+ {
++    if (index < 0 || index > 1) return 0;
++    PsgChip *c = &s_chips[index];
+     if ((!filtered && !unfiltered) || sample_count == 0) return 0;
+-    size_t available = s_scratch_write - s_scratch_read;
++    size_t available = c->scratch_write - c->scratch_read;
+     size_t copy = sample_count < available ? sample_count : available;
+     if (copy > 0) {
+-        if(filtered)memcpy(filtered, &s_scratch[s_scratch_read], copy * sizeof(int16_t));
+-        if(unfiltered)memcpy(unfiltered, &s_raw_scratch[s_scratch_read], copy * sizeof(int16_t));
+-        s_scratch_read += copy;
++        if(filtered)memcpy(filtered, &c->scratch[c->scratch_read], copy * sizeof(int16_t));
++        if(unfiltered)memcpy(unfiltered, &c->raw_scratch[c->scratch_read], copy * sizeof(int16_t));
++        c->scratch_read += copy;
+     }
+-    if (s_scratch_read >= s_scratch_write) {
+-        s_scratch_read = s_scratch_write = 0;
++    if (c->scratch_read >= c->scratch_write) {
++        c->scratch_read = c->scratch_write = 0;
+     }
+     return copy;
+ }
+ 
+-size_t psg_samples_available(void)
++size_t psg_render_pair(int16_t *filtered,int16_t *unfiltered,size_t sample_count)
++{ return psg_render_pair_chip(0, filtered, unfiltered, sample_count); }
++
++size_t psg_samples_available_chip(int index)
+ {
+-    return s_scratch_write - s_scratch_read;
++    if (index < 0 || index > 1) return 0;
++    return s_chips[index].scratch_write - s_chips[index].scratch_read;
+ }
+ 
++size_t psg_samples_available(void) { return psg_samples_available_chip(0); }
++
+ uint32_t psg_sample_rate(void)
+ {
+     return (uint32_t)(GENESIS_MASTER_CLOCK_NTSC / PSG_SAMPLE_DIVISOR_MASTER);
+ }
+ 
+-void psg_reset_leftover(void)
++void psg_reset_leftover_chip(int index)
+ {
+-    s_leftover_master_cycles = 0;
++    if (index < 0 || index > 1) return;
++    s_chips[index].leftover_master_cycles = 0;
+ }
+ 
++void psg_reset_leftover(void) { psg_reset_leftover_chip(0); }
++
+ /* Save-state hooks (own-backend snapshots): the whole SN76489 register/
+  * counter struct + sample-clock remainder. The output scratch is transient
+  * (drained every frame) and is reset on load. */
+ #include <stdio.h>
+ int psg_save_state(FILE *f)
+ {
+-    if (!s_inited) psg_init();
+-    if (fwrite(&s_sn, sizeof s_sn, 1, f) != 1) return 0;
+-    if (fwrite(&s_leftover_master_cycles, sizeof s_leftover_master_cycles, 1, f) != 1) return 0;
++    if (!s_chips[0].inited) psg_init();
++    if (fwrite(&s_chips[0].sn, sizeof s_chips[0].sn, 1, f) != 1) return 0;
++    if (fwrite(&s_chips[0].leftover_master_cycles, sizeof s_chips[0].leftover_master_cycles, 1, f) != 1) return 0;
+     return 1;
+ }
+ 
+@@ -303,21 +334,21 @@ int psg_save_state(FILE *f)
+  * + sample-clock leftover — the surface frame_snapshots.c zeroes. */
+ uint64_t psg_cosim_hash(void)
+ {
+-    if (!s_inited) psg_init();
++    if (!s_chips[0].inited) psg_init();
+     uint64_t h = cosim_fnv_init();
+-    for (int i = 0; i < 3; i++) h = cosim_fnv_u16(h, s_sn.tone_period[i]);
+-    for (int i = 0; i < 3; i++) h = cosim_fnv_u32(h, (uint32_t)s_sn.tone_counter[i]);
+-    for (int i = 0; i < 3; i++) h = cosim_fnv_u8(h, s_sn.tone_out[i]);
+-    for (int i = 0; i < 4; i++) h = cosim_fnv_u8(h, s_sn.vol[i]);
+-    h = cosim_fnv_u8(h, s_sn.noise_ctrl);
+-    h = cosim_fnv_u32(h, (uint32_t)s_sn.noise_counter);
+-    h = cosim_fnv_u16(h, s_sn.lfsr);
+-    h = cosim_fnv_u8(h, s_sn.noise_ff);
+-    h = cosim_fnv_u8(h, s_sn.noise_out);
+-    h = cosim_fnv_u8(h, s_sn.latch);
+-    h = cosim_fnv_u32(h, (uint32_t)s_sn.lpf_y);
+-    h = cosim_fnv_u32(h, (uint32_t)s_sn.lpf_prev);
+-    h = cosim_fnv_u32(h, s_leftover_master_cycles);
++    for (int i = 0; i < 3; i++) h = cosim_fnv_u16(h, s_chips[0].sn.tone_period[i]);
++    for (int i = 0; i < 3; i++) h = cosim_fnv_u32(h, (uint32_t)s_chips[0].sn.tone_counter[i]);
++    for (int i = 0; i < 3; i++) h = cosim_fnv_u8(h, s_chips[0].sn.tone_out[i]);
++    for (int i = 0; i < 4; i++) h = cosim_fnv_u8(h, s_chips[0].sn.vol[i]);
++    h = cosim_fnv_u8(h, s_chips[0].sn.noise_ctrl);
++    h = cosim_fnv_u32(h, (uint32_t)s_chips[0].sn.noise_counter);
++    h = cosim_fnv_u16(h, s_chips[0].sn.lfsr);
++    h = cosim_fnv_u8(h, s_chips[0].sn.noise_ff);
++    h = cosim_fnv_u8(h, s_chips[0].sn.noise_out);
++    h = cosim_fnv_u8(h, s_chips[0].sn.latch);
++    h = cosim_fnv_u32(h, (uint32_t)s_chips[0].sn.lpf_y);
++    h = cosim_fnv_u32(h, (uint32_t)s_chips[0].sn.lpf_prev);
++    h = cosim_fnv_u32(h, s_chips[0].leftover_master_cycles);
+     return h;
+ }
+ 
+@@ -325,64 +356,64 @@ uint64_t psg_cosim_hash(void)
+ #include <stdio.h>
+ /* Human-readable PSG field dump for co-sim drill (which field diverges?). */
+ int psg_cosim_dump(char *buf, int cap) {
+-    if (!s_inited) psg_init();
++    if (!s_chips[0].inited) psg_init();
+     return snprintf(buf, (size_t)cap,
+         "tone_p %u %u %u tone_c %d %d %d tone_o %u %u %u "
+         "vol %u %u %u %u noise_ctrl %u noise_c %d lfsr %u noise_ff %u noise_o %u "
+         "latch %u leftover %u",
+-        s_sn.tone_period[0], s_sn.tone_period[1], s_sn.tone_period[2],
+-        s_sn.tone_counter[0], s_sn.tone_counter[1], s_sn.tone_counter[2],
+-        s_sn.tone_out[0], s_sn.tone_out[1], s_sn.tone_out[2],
+-        s_sn.vol[0], s_sn.vol[1], s_sn.vol[2], s_sn.vol[3],
+-        s_sn.noise_ctrl, s_sn.noise_counter, s_sn.lfsr, s_sn.noise_ff,
+-        s_sn.noise_out, s_sn.latch, s_leftover_master_cycles);
++        s_chips[0].sn.tone_period[0], s_chips[0].sn.tone_period[1], s_chips[0].sn.tone_period[2],
++        s_chips[0].sn.tone_counter[0], s_chips[0].sn.tone_counter[1], s_chips[0].sn.tone_counter[2],
++        s_chips[0].sn.tone_out[0], s_chips[0].sn.tone_out[1], s_chips[0].sn.tone_out[2],
++        s_chips[0].sn.vol[0], s_chips[0].sn.vol[1], s_chips[0].sn.vol[2], s_chips[0].sn.vol[3],
++        s_chips[0].sn.noise_ctrl, s_chips[0].sn.noise_counter, s_chips[0].sn.lfsr, s_chips[0].sn.noise_ff,
++        s_chips[0].sn.noise_out, s_chips[0].sn.latch, s_chips[0].leftover_master_cycles);
+ }
+ #endif /* GENESIS_COSIM */
+ 
+ size_t psg_rb_save(void *dst, size_t cap)
+ {
+-    if (!s_inited) psg_init();
+-    uint32_t pend = (uint32_t)(s_scratch_write - s_scratch_read);
+-    size_t need = sizeof s_sn + sizeof s_leftover_master_cycles + sizeof pend +
++    if (!s_chips[0].inited) psg_init();
++    uint32_t pend = (uint32_t)(s_chips[0].scratch_write - s_chips[0].scratch_read);
++    size_t need = sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles + sizeof pend +
+                   (size_t)pend * 2u * sizeof(int16_t);
+     if (!dst) return need;
+     if (cap < need) return 0;
+     uint8_t *o = (uint8_t *)dst;
+-    memcpy(o, &s_sn, sizeof s_sn); o += sizeof s_sn;
+-    memcpy(o, &s_leftover_master_cycles, sizeof s_leftover_master_cycles);
+-    o += sizeof s_leftover_master_cycles;
++    memcpy(o, &s_chips[0].sn, sizeof s_chips[0].sn); o += sizeof s_chips[0].sn;
++    memcpy(o, &s_chips[0].leftover_master_cycles, sizeof s_chips[0].leftover_master_cycles);
++    o += sizeof s_chips[0].leftover_master_cycles;
+     memcpy(o, &pend, sizeof pend); o += sizeof pend;
+-    memcpy(o, &s_scratch[s_scratch_read], (size_t)pend * sizeof(int16_t));
++    memcpy(o, &s_chips[0].scratch[s_chips[0].scratch_read], (size_t)pend * sizeof(int16_t));
+     o += (size_t)pend * sizeof(int16_t);
+-    memcpy(o, &s_raw_scratch[s_scratch_read], (size_t)pend * sizeof(int16_t));
++    memcpy(o, &s_chips[0].raw_scratch[s_chips[0].scratch_read], (size_t)pend * sizeof(int16_t));
+     return need;
+ }
+ 
+ int psg_rb_load(const void *src, size_t len)
+ {
+-    if (!s_inited) psg_init();
++    if (!s_chips[0].inited) psg_init();
+     const uint8_t *i = (const uint8_t *)src;
+     uint32_t pend = 0;
+-    size_t fixed = sizeof s_sn + sizeof s_leftover_master_cycles + sizeof pend;
++    size_t fixed = sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles + sizeof pend;
+     if (!src || len < fixed) return 0;
+-    memcpy(&pend, i + sizeof s_sn + sizeof s_leftover_master_cycles, sizeof pend);
++    memcpy(&pend, i + sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles, sizeof pend);
+     if (pend > PSG_SCRATCH_SAMPLES || len != fixed + (size_t)pend * 2u * sizeof(int16_t)) return 0;
+-    memcpy(&s_sn, i, sizeof s_sn); i += sizeof s_sn;
+-    memcpy(&s_leftover_master_cycles, i, sizeof s_leftover_master_cycles);
+-    i += sizeof s_leftover_master_cycles + sizeof pend;
+-    memcpy(s_scratch, i, (size_t)pend * sizeof(int16_t));
++    memcpy(&s_chips[0].sn, i, sizeof s_chips[0].sn); i += sizeof s_chips[0].sn;
++    memcpy(&s_chips[0].leftover_master_cycles, i, sizeof s_chips[0].leftover_master_cycles);
++    i += sizeof s_chips[0].leftover_master_cycles + sizeof pend;
++    memcpy(s_chips[0].scratch, i, (size_t)pend * sizeof(int16_t));
+     i += (size_t)pend * sizeof(int16_t);
+-    memcpy(s_raw_scratch, i, (size_t)pend * sizeof(int16_t));
+-    s_scratch_read = 0;
+-    s_scratch_write = pend;
++    memcpy(s_chips[0].raw_scratch, i, (size_t)pend * sizeof(int16_t));
++    s_chips[0].scratch_read = 0;
++    s_chips[0].scratch_write = pend;
+     return 1;
+ }
+ 
+ int psg_load_state(FILE *f)
+ {
+-    if (!s_inited) psg_init();
+-    if (fread(&s_sn, sizeof s_sn, 1, f) != 1) return 0;
+-    if (fread(&s_leftover_master_cycles, sizeof s_leftover_master_cycles, 1, f) != 1) return 0;
+-    s_scratch_read = s_scratch_write = 0;
++    if (!s_chips[0].inited) psg_init();
++    if (fread(&s_chips[0].sn, sizeof s_chips[0].sn, 1, f) != 1) return 0;
++    if (fread(&s_chips[0].leftover_master_cycles, sizeof s_chips[0].leftover_master_cycles, 1, f) != 1) return 0;
++    s_chips[0].scratch_read = s_chips[0].scratch_write = 0;
+     return 1;
+ }
+diff --git a/runner/audio/sn76489.h b/runner/audio/sn76489.h
+index 097594a..c0489bc 100644
+--- a/runner/audio/sn76489.h
++++ b/runner/audio/sn76489.h
+@@ -23,6 +23,18 @@ uint32_t psg_sample_rate(void);
+  * per-Iterate sync.psg.current_cycle reset. */
+ void   psg_reset_leftover(void);
+ 
++/* Writer-routed second virtual SN76489 (BOTH mode). Index 0 is the canonical
++ * chip and is what the legacy psg_* calls above use; index 1 is fed from
++ * 68K-origin writes. */
++void   psg_init_chip(int index);
++void   psg_advance_chip(int index, uint32_t cycles_master);
++void   psg_write_chip(int index, uint8_t value);
++size_t psg_render_chip(int index, int16_t *out, size_t sample_count);
++size_t psg_render_pair_chip(int index, int16_t *filtered,
++                            int16_t *unfiltered, size_t sample_count);
++size_t psg_samples_available_chip(int index);
++void   psg_reset_leftover_chip(int index);
++
+ /* Save-state hooks (own-backend snapshots). Returns 1 on success. */
+ #include <stdio.h>
+ int psg_save_state(FILE *f);
+diff --git a/runner/audio/ym2612.h b/runner/audio/ym2612.h
+index 0966bdd..a04cbea 100644
+--- a/runner/audio/ym2612.h
++++ b/runner/audio/ym2612.h
+@@ -18,6 +18,17 @@
+ /* Lifecycle */
+ void ym2612_init(void);
+ 
++/* Writer-routed second virtual chip (BOTH mode). Index 0 is the canonical
++ * chip and is what every legacy ym2612_* call below uses; index 1 is the
++ * second YM2612 fed from 68K-origin writes. Same lifecycle and semantics. */
++void   ym2612_init_chip(int index);
++void   ym2612_advance_chip(int index, uint32_t cycles_master);
++void   ym2612_write_chip(int index, uint8_t port, uint8_t value);
++size_t ym2612_render_chip(int index, int16_t *out, size_t sample_count);
++size_t ym2612_render_pair_chip(int index, int16_t *filtered,
++                               int16_t *unfiltered, size_t sample_count);
++size_t ym2612_samples_available_chip(int index);
++
+ /* Advance internal state by `cycles_68k` 68K cycles without any register
+  * writes. Ticks envelope/phase/LFO for each operator. */
+ void ym2612_advance(uint32_t cycles_68k);
+diff --git a/runner/audio/ym2612_ymfm.cpp b/runner/audio/ym2612_ymfm.cpp
+index 552d2f6..90878bf 100644
+--- a/runner/audio/ym2612_ymfm.cpp
++++ b/runner/audio/ym2612_ymfm.cpp
+@@ -58,20 +58,35 @@ constexpr int32_t YM_GAIN_DEN = 256;
+ /* Minimal interface: all-default (no timers, no busy, no external memory). */
+ struct YmfmIface : public ymfm::ymfm_interface {};
+ 
+-YmfmIface       s_iface;
+-ymfm::ym2612   *s_chip = nullptr;
+-int             s_inited = 0;
+-
+-/* Output scratch ring, mirroring ym2612.c's so ym2612_render semantics match. */
++/* One wrapper instance per virtual YM2612. Index 0 is the canonical chip and
++ * keeps the exact arithmetic of the single-chip build; index 1 is the
++ * writer-routed second chip (BOTH mode only). Instantiating the state per chip
++ * is what keeps chip 0 byte-identical: nothing about its scratch, sample-clock
++ * remainder or output LPF changes. */
+ constexpr size_t FM_SCRATCH_STEREO_SAMPLES = 8192;
+-int16_t s_scratch[FM_SCRATCH_STEREO_SAMPLES * 2];
+-int16_t s_raw_scratch[FM_SCRATCH_STEREO_SAMPLES * 2];
+-size_t  s_scratch_write = 0; /* next free stereo-sample index */
+-size_t  s_scratch_read  = 0; /* next unread stereo-sample index */
+ 
+-uint32_t s_master_accum = 0; /* leftover MASTER cycles below one sample */
++struct YmChip {
++    YmfmIface      iface;
++    ymfm::ym2612  *chip = nullptr;
++    int            inited = 0;
++    int            index = 0;
++
++    /* Output scratch ring, mirroring ym2612.c's so ym2612_render semantics match. */
++    int16_t scratch[FM_SCRATCH_STEREO_SAMPLES * 2];
++    int16_t raw_scratch[FM_SCRATCH_STEREO_SAMPLES * 2];
++    size_t  scratch_write = 0;    /* next free stereo-sample index */
++    size_t  scratch_read  = 0;    /* next unread stereo-sample index */
++
++    uint32_t master_accum = 0;    /* leftover MASTER cycles below one sample */
+ 
+-/* Hardware FM output low-pass — the real Genesis filters the FM DAC output, and
++    /* Hardware FM output low-pass state (see the coefficients below). */
++    int32_t lpf_prev[2] = {0, 0};
++    int32_t lpf_out[2]  = {0, 0};
++};
++
++YmChip s_chips[2];
++
++/* Hardware FM output low-pass -- the real Genesis filters the FM DAC output, and
+  * clownmdemu models it (low-pass-filter.c, coefficients 6.910, 4.910) after
+  * FM_OutputSamples. ymfm emits the bare chip output (excess >8 kHz energy); this
+  * filter both matches the reference render and is hardware-correct. A cutoff
+@@ -80,8 +95,6 @@ uint32_t s_master_accum = 0; /* leftover MASTER cycles below one sample */
+  *   out = ((in + prevIn)*SAMPLE_MAGIC + prevOut*OUTPUT_MAGIC) >> 16 */
+ constexpr int32_t FM_LPF_SAMPLE_MAGIC = 9484;  /* round(1.000 * 65536 / 6.910) */
+ constexpr int32_t FM_LPF_OUTPUT_MAGIC = 46568; /* round(4.910 * 65536 / 6.910) */
+-int32_t s_fm_lpf_prev[2] = {0, 0};
+-int32_t s_fm_lpf_out[2]  = {0, 0};
+ 
+ inline int16_t clamp16(int32_t v) {
+     if (v > 32767)  return 32767;
+@@ -89,50 +102,50 @@ inline int16_t clamp16(int32_t v) {
+     return (int16_t)v;
+ }
+ 
+-inline int32_t fm_lpf(int ch, int32_t in) {
+-    int64_t o = ((int64_t)(in + s_fm_lpf_prev[ch]) * FM_LPF_SAMPLE_MAGIC
+-               + (int64_t)s_fm_lpf_out[ch] * FM_LPF_OUTPUT_MAGIC) / 65536;
+-    s_fm_lpf_prev[ch] = in;
++inline int32_t fm_lpf(YmChip &c, int ch, int32_t in) {
++    int64_t o = ((int64_t)(in + c.lpf_prev[ch]) * FM_LPF_SAMPLE_MAGIC
++               + (int64_t)c.lpf_out[ch] * FM_LPF_OUTPUT_MAGIC) / 65536;
++    c.lpf_prev[ch] = in;
+     int32_t out = clamp16((int32_t)o);
+-    s_fm_lpf_out[ch] = out;
++    c.lpf_out[ch] = out;
+     return out;
+ }
+ 
+ #if !GENESIS_FM_BLOCK_SAMPLES
+-void emit_one_sample() {
+-    if (s_scratch_write >= FM_SCRATCH_STEREO_SAMPLES) {
+-        /* Scratch full — consumer didn't drain. Shouldn't happen at
++void emit_one_sample(YmChip &c) {
++    if (c.scratch_write >= FM_SCRATCH_STEREO_SAMPLES) {
++        /* Scratch full -- consumer didn't drain. Shouldn't happen at
+          * ~888 samples/frame into an 8192 buffer; drop to stay safe. */
+         return;
+     }
+     ymfm::ym2612::output_data out;
+-    s_chip->generate(&out, 1);
++    c.chip->generate(&out, 1);
+     int32_t l = out.data[0] * YM_GAIN_NUM / YM_GAIN_DEN;
+     int32_t r = out.data[1] * YM_GAIN_NUM / YM_GAIN_DEN;
+-    s_scratch[s_scratch_write * 2 + 0] = (int16_t)fm_lpf(0, l);   /* hardware FM output LPF (matches reference; tames ymfm's excess highs) */
+-    s_scratch[s_scratch_write * 2 + 1] = (int16_t)fm_lpf(1, r);
+-    s_raw_scratch[s_scratch_write * 2 + 0] = clamp16(l);
+-    s_raw_scratch[s_scratch_write * 2 + 1] = clamp16(r);
+-    s_scratch_write++;
++    c.scratch[c.scratch_write * 2 + 0] = (int16_t)fm_lpf(c, 0, l);   /* hardware FM output LPF (matches reference; tames ymfm's excess highs) */
++    c.scratch[c.scratch_write * 2 + 1] = (int16_t)fm_lpf(c, 1, r);
++    c.raw_scratch[c.scratch_write * 2 + 0] = clamp16(l);
++    c.raw_scratch[c.scratch_write * 2 + 1] = clamp16(r);
++    c.scratch_write++;
+ }
+ #else
+-void emit_samples(uint32_t count) {
+-    size_t available = FM_SCRATCH_STEREO_SAMPLES - s_scratch_write;
++void emit_samples(YmChip &c, uint32_t count) {
++    size_t available = FM_SCRATCH_STEREO_SAMPLES - c.scratch_write;
+     if (count > available) count = (uint32_t)available;
+     /* No register write can occur within this advance interval. Keep ymfm's
+      * exact sample sequence and the serial LPF, amortizing the outer calls. */
+     ymfm::ym2612::output_data block[64];
+     while (count) {
+         uint32_t chunk = count < 64 ? count : 64;
+-        s_chip->generate(block, chunk);
++        c.chip->generate(block, chunk);
+         for (uint32_t i = 0; i < chunk; ++i) {
+             int32_t l = block[i].data[0] * YM_GAIN_NUM / YM_GAIN_DEN;
+             int32_t r = block[i].data[1] * YM_GAIN_NUM / YM_GAIN_DEN;
+-            s_scratch[s_scratch_write * 2] = (int16_t)fm_lpf(0, l);
+-            s_scratch[s_scratch_write * 2 + 1] = (int16_t)fm_lpf(1, r);
+-            s_raw_scratch[s_scratch_write * 2] = clamp16(l);
+-            s_raw_scratch[s_scratch_write * 2 + 1] = clamp16(r);
+-            ++s_scratch_write;
++            c.scratch[c.scratch_write * 2] = (int16_t)fm_lpf(c, 0, l);
++            c.scratch[c.scratch_write * 2 + 1] = (int16_t)fm_lpf(c, 1, r);
++            c.raw_scratch[c.scratch_write * 2] = clamp16(l);
++            c.raw_scratch[c.scratch_write * 2 + 1] = clamp16(r);
++            ++c.scratch_write;
+         }
+         count -= chunk;
+     }
+@@ -141,88 +154,120 @@ void emit_samples(uint32_t count) {
+ 
+ } /* namespace */
+ 
+-extern "C" void ym2612_init(void) {
+-    if (!s_chip)
+-        s_chip = new ymfm::ym2612(s_iface);
+-    s_chip->reset();
+-    s_scratch_write = s_scratch_read = 0;
+-    s_master_accum = 0;
+-    s_fm_lpf_prev[0] = s_fm_lpf_prev[1] = 0;
+-    s_fm_lpf_out[0]  = s_fm_lpf_out[1]  = 0;
+-    s_inited = 1;
++extern "C" void ym2612_init_chip(int index) {
++    if (index < 0 || index > 1) return;
++    YmChip &c = s_chips[index];
++    c.index = index;
++    if (!c.chip)
++        c.chip = new ymfm::ym2612(c.iface);
++    c.chip->reset();
++    c.scratch_write = c.scratch_read = 0;
++    c.master_accum = 0;
++    c.lpf_prev[0] = c.lpf_prev[1] = 0;
++    c.lpf_out[0]  = c.lpf_out[1]  = 0;
++    c.inited = 1;
+ }
+ 
+-extern "C" void ym2612_advance(uint32_t cycles_master) {
+-    if (!s_inited) ym2612_init();
++extern "C" void ym2612_init(void) { ym2612_init_chip(0); }
++
++extern "C" void ym2612_advance_chip(int index, uint32_t cycles_master) {
++    if (index < 0 || index > 1) return;
++    YmChip &c = s_chips[index];
++    if (!c.inited) ym2612_init_chip(index);
+     if (cycles_master == 0) return;
+-    s_master_accum += cycles_master;
++    c.master_accum += cycles_master;
+ #if GENESIS_FM_BLOCK_SAMPLES
+-    if (s_master_accum >= MASTER_PER_SAMPLE) {
+-        uint32_t count = s_master_accum / MASTER_PER_SAMPLE;
+-        s_master_accum %= MASTER_PER_SAMPLE;
+-        emit_samples(count);
++    if (c.master_accum >= MASTER_PER_SAMPLE) {
++        uint32_t count = c.master_accum / MASTER_PER_SAMPLE;
++        c.master_accum %= MASTER_PER_SAMPLE;
++        emit_samples(c, count);
+     }
+ #else
+-    while (s_master_accum >= MASTER_PER_SAMPLE) {
+-        s_master_accum -= MASTER_PER_SAMPLE;
+-        emit_one_sample();
++    while (c.master_accum >= MASTER_PER_SAMPLE) {
++        c.master_accum -= MASTER_PER_SAMPLE;
++        emit_one_sample(c);
+     }
+ #endif
+ }
+ 
+-extern "C" void ym2612_write(uint8_t port, uint8_t value) {
+-    if (!s_inited) ym2612_init();
+-    /* port 0/1 = part-1 address/data, port 2/3 = part-2 address/data —
++extern "C" void ym2612_advance(uint32_t cycles_master)
++{ ym2612_advance_chip(0, cycles_master); }
++
++extern "C" void ym2612_write_chip(int index, uint8_t port, uint8_t value) {
++    if (index < 0 || index > 1) return;
++    YmChip &c = s_chips[index];
++    if (!c.inited) ym2612_init_chip(index);
++    /* port 0/1 = part-1 address/data, port 2/3 = part-2 address/data --
+      * exactly ymfm::ym2612::write()'s offset convention. */
+     if (port <= 3)
+-        s_chip->write(port, value);
++        c.chip->write(port, value);
+ }
+ 
+-extern "C" size_t ym2612_render(int16_t *out, size_t sample_count) {
+-    return ym2612_render_pair(out, nullptr, sample_count);
+-}
++extern "C" void ym2612_write(uint8_t port, uint8_t value)
++{ ym2612_write_chip(0, port, value); }
+ 
+-extern "C" size_t ym2612_render_pair(int16_t *filtered, int16_t *unfiltered, size_t sample_count) {
++extern "C" size_t ym2612_render_pair_chip(int index, int16_t *filtered,
++                                          int16_t *unfiltered,
++                                          size_t sample_count) {
++    if (index < 0 || index > 1) return 0;
++    YmChip &c = s_chips[index];
+     if ((!filtered && !unfiltered) || sample_count == 0) return 0;
+-    size_t available = s_scratch_write - s_scratch_read;
++    size_t available = c.scratch_write - c.scratch_read;
+     size_t copy = sample_count < available ? sample_count : available;
+     if (copy > 0) {
+-        if (filtered) std::memcpy(filtered, &s_scratch[s_scratch_read * 2], copy * 2 * sizeof(int16_t));
+-        if (unfiltered) std::memcpy(unfiltered, &s_raw_scratch[s_scratch_read * 2], copy * 2 * sizeof(int16_t));
+-        s_scratch_read += copy;
++        if (filtered) std::memcpy(filtered, &c.scratch[c.scratch_read * 2], copy * 2 * sizeof(int16_t));
++        if (unfiltered) std::memcpy(unfiltered, &c.raw_scratch[c.scratch_read * 2], copy * 2 * sizeof(int16_t));
++        c.scratch_read += copy;
+     }
+-    if (s_scratch_read >= s_scratch_write)
+-        s_scratch_read = s_scratch_write = 0;
++    if (c.scratch_read >= c.scratch_write)
++        c.scratch_read = c.scratch_write = 0;
+     return copy;
+ }
+ 
+-extern "C" size_t ym2612_samples_available(void) {
+-    return s_scratch_write - s_scratch_read;
++extern "C" size_t ym2612_render_chip(int index, int16_t *out, size_t sample_count)
++{ return ym2612_render_pair_chip(index, out, nullptr, sample_count); }
++
++extern "C" size_t ym2612_render(int16_t *out, size_t sample_count)
++{ return ym2612_render_pair_chip(0, out, nullptr, sample_count); }
++
++extern "C" size_t ym2612_render_pair(int16_t *filtered, int16_t *unfiltered,
++                                     size_t sample_count)
++{ return ym2612_render_pair_chip(0, filtered, unfiltered, sample_count); }
++
++extern "C" size_t ym2612_samples_available_chip(int index) {
++    if (index < 0 || index > 1) return 0;
++    YmChip &c = s_chips[index];
++    return c.scratch_write - c.scratch_read;
+ }
+ 
++extern "C" size_t ym2612_samples_available(void)
++{ return ym2612_samples_available_chip(0); }
++
+ extern "C" uint32_t ym2612_sample_rate(void) {
+     /* ymfm: ym2612 emits clock/144. With YM_CLOCK = 7670453 -> 53267 Hz,
+      * matching ym2612.c so audio.c's FM->PSG resampler is unchanged. */
+-    if (!s_chip) return YM_CLOCK / 144u;
+-    return s_chip->sample_rate(YM_CLOCK);
++    if (!s_chips[0].chip) return YM_CLOCK / 144u;
++    return s_chips[0].chip->sample_rate(YM_CLOCK);
+ }
+ 
+-/* Save-state hooks (own-backend snapshots): full ymfm chip state via
++/* Save-state hooks (own-backend snapshots): the whole ymfm chip state via
+  * ymfm_saved_state (size-prefixed blob; the size is whatever the vendored
+- * ymfm version serializes — the format is private to a build), plus this
++ * ymfm version serializes -- the format is private to a build), plus this
+  * wrapper's sample-clock remainder and output-LPF state. The output scratch
+- * ring is transient (drained every frame) and is reset on load. */
++ * ring is transient (drained every frame) and is reset on load. Only the
++ * canonical chip 0 is in the state format; the second chip is re-synced from
++ * the next frame of 68K writes after a load. */
+ extern "C" int ym2612_save_state(FILE *f) {
+-    if (!s_inited) ym2612_init();
++    if (!s_chips[0].inited) ym2612_init();
+     std::vector<uint8_t> buf;
+     ymfm::ymfm_saved_state st(buf, true);
+-    s_chip->save_restore(st);
++    s_chips[0].chip->save_restore(st);
+     uint32_t n = (uint32_t)buf.size();
+     if (fwrite(&n, sizeof n, 1, f) != 1) return 0;
+     if (n && fwrite(buf.data(), 1, n, f) != n) return 0;
+-    if (fwrite(&s_master_accum, sizeof s_master_accum, 1, f) != 1) return 0;
+-    if (fwrite(s_fm_lpf_prev, sizeof s_fm_lpf_prev, 1, f) != 1) return 0;
+-    if (fwrite(s_fm_lpf_out,  sizeof s_fm_lpf_out,  1, f) != 1) return 0;
++    if (fwrite(&s_chips[0].master_accum, sizeof s_chips[0].master_accum, 1, f) != 1) return 0;
++    if (fwrite(s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev, 1, f) != 1) return 0;
++    if (fwrite(s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out,  1, f) != 1) return 0;
+     return 1;
+ }
+ 
+@@ -233,79 +278,79 @@ extern "C" int ym2612_save_state(FILE *f) {
+  * sample-clock remainder) but folded into an FNV-1a hash instead of a FILE.
+  * save_restore in save-mode is a pure read — side-effect-free on the chip. */
+ extern "C" uint64_t ym2612_cosim_hash(void) {
+-    if (!s_inited) ym2612_init();
++    if (!s_chips[0].inited) ym2612_init();
+     std::vector<uint8_t> buf;
+     ymfm::ymfm_saved_state st(buf, true);
+-    s_chip->save_restore(st);
++    s_chips[0].chip->save_restore(st);
+     uint64_t h = cosim_fnv_bytes(cosim_fnv_init(), buf.data(), buf.size());
+-    h = cosim_fnv_u32(h, s_master_accum);
+-    h = cosim_fnv_bytes(h, s_fm_lpf_prev, sizeof s_fm_lpf_prev);
+-    h = cosim_fnv_bytes(h, s_fm_lpf_out,  sizeof s_fm_lpf_out);
++    h = cosim_fnv_u32(h, s_chips[0].master_accum);
++    h = cosim_fnv_bytes(h, s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev);
++    h = cosim_fnv_bytes(h, s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out);
+     return h;
+ }
+ 
+ extern "C" size_t ym2612_rb_save(void *dst, size_t cap) {
+-    if (!s_inited) ym2612_init();
++    if (!s_chips[0].inited) ym2612_init();
+     std::vector<uint8_t> buf;
+     ymfm::ymfm_saved_state st(buf, true);
+-    s_chip->save_restore(st);
++    s_chips[0].chip->save_restore(st);
+     uint32_t n = (uint32_t)buf.size();
+-    uint32_t pend = (uint32_t)(s_scratch_write - s_scratch_read);
+-    size_t need = sizeof n + n + sizeof s_master_accum + sizeof s_fm_lpf_prev +
+-                  sizeof s_fm_lpf_out + sizeof pend + (size_t)pend * 4u * sizeof(int16_t);
++    uint32_t pend = (uint32_t)(s_chips[0].scratch_write - s_chips[0].scratch_read);
++    size_t need = sizeof n + n + sizeof s_chips[0].master_accum + sizeof s_chips[0].lpf_prev +
++                  sizeof s_chips[0].lpf_out + sizeof pend + (size_t)pend * 4u * sizeof(int16_t);
+     if (!dst) return need;
+     if (cap < need) return 0;
+     uint8_t *o = (uint8_t *)dst;
+     std::memcpy(o, &n, sizeof n); o += sizeof n;
+     if (n) { std::memcpy(o, buf.data(), n); o += n; }
+-    std::memcpy(o, &s_master_accum, sizeof s_master_accum); o += sizeof s_master_accum;
+-    std::memcpy(o, s_fm_lpf_prev, sizeof s_fm_lpf_prev); o += sizeof s_fm_lpf_prev;
+-    std::memcpy(o, s_fm_lpf_out, sizeof s_fm_lpf_out); o += sizeof s_fm_lpf_out;
++    std::memcpy(o, &s_chips[0].master_accum, sizeof s_chips[0].master_accum); o += sizeof s_chips[0].master_accum;
++    std::memcpy(o, s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev); o += sizeof s_chips[0].lpf_prev;
++    std::memcpy(o, s_chips[0].lpf_out, sizeof s_chips[0].lpf_out); o += sizeof s_chips[0].lpf_out;
+     std::memcpy(o, &pend, sizeof pend); o += sizeof pend;
+-    std::memcpy(o, &s_scratch[s_scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
++    std::memcpy(o, &s_chips[0].scratch[s_chips[0].scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
+     o += (size_t)pend * 2u * sizeof(int16_t);
+-    std::memcpy(o, &s_raw_scratch[s_scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
++    std::memcpy(o, &s_chips[0].raw_scratch[s_chips[0].scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
+     return need;
+ }
+ 
+ extern "C" int ym2612_rb_load(const void *src, size_t len) {
+-    if (!s_inited) ym2612_init();
++    if (!s_chips[0].inited) ym2612_init();
+     const uint8_t *i = (const uint8_t *)src;
+     const uint8_t *end = i + len;
+     uint32_t n = 0, pend = 0;
+     if (!src || len < sizeof n) return 0;
+     std::memcpy(&n, i, sizeof n); i += sizeof n;
+-    size_t fixed = sizeof s_master_accum + sizeof s_fm_lpf_prev + sizeof s_fm_lpf_out + sizeof pend;
++    size_t fixed = sizeof s_chips[0].master_accum + sizeof s_chips[0].lpf_prev + sizeof s_chips[0].lpf_out + sizeof pend;
+     if (n > (1u << 20) || (size_t)(end - i) < (size_t)n + fixed) return 0;
+     std::memcpy(&pend, i + n + fixed - sizeof pend, sizeof pend);
+     if (pend > FM_SCRATCH_STEREO_SAMPLES ||
+         (size_t)(end - i) != (size_t)n + fixed + (size_t)pend * 4u * sizeof(int16_t)) return 0;
+     std::vector<uint8_t> buf(i, i + n); i += n;
+     ymfm::ymfm_saved_state st(buf, false);
+-    s_chip->save_restore(st);
+-    std::memcpy(&s_master_accum, i, sizeof s_master_accum); i += sizeof s_master_accum;
+-    std::memcpy(s_fm_lpf_prev, i, sizeof s_fm_lpf_prev); i += sizeof s_fm_lpf_prev;
+-    std::memcpy(s_fm_lpf_out, i, sizeof s_fm_lpf_out); i += sizeof s_fm_lpf_out;
++    s_chips[0].chip->save_restore(st);
++    std::memcpy(&s_chips[0].master_accum, i, sizeof s_chips[0].master_accum); i += sizeof s_chips[0].master_accum;
++    std::memcpy(s_chips[0].lpf_prev, i, sizeof s_chips[0].lpf_prev); i += sizeof s_chips[0].lpf_prev;
++    std::memcpy(s_chips[0].lpf_out, i, sizeof s_chips[0].lpf_out); i += sizeof s_chips[0].lpf_out;
+     i += sizeof pend;
+-    std::memcpy(s_scratch, i, (size_t)pend * 2u * sizeof(int16_t));
++    std::memcpy(s_chips[0].scratch, i, (size_t)pend * 2u * sizeof(int16_t));
+     i += (size_t)pend * 2u * sizeof(int16_t);
+-    std::memcpy(s_raw_scratch, i, (size_t)pend * 2u * sizeof(int16_t));
+-    s_scratch_read = 0;
+-    s_scratch_write = pend;
++    std::memcpy(s_chips[0].raw_scratch, i, (size_t)pend * 2u * sizeof(int16_t));
++    s_chips[0].scratch_read = 0;
++    s_chips[0].scratch_write = pend;
+     return 1;
+ }
+ 
+ extern "C" int ym2612_load_state(FILE *f) {
+-    if (!s_inited) ym2612_init();
++    if (!s_chips[0].inited) ym2612_init();
+     uint32_t n = 0;
+     if (fread(&n, sizeof n, 1, f) != 1 || n > (1u << 20)) return 0;
+     std::vector<uint8_t> buf(n);
+     if (n && fread(buf.data(), 1, n, f) != n) return 0;
+     ymfm::ymfm_saved_state st(buf, false);
+-    s_chip->save_restore(st);
+-    if (fread(&s_master_accum, sizeof s_master_accum, 1, f) != 1) return 0;
+-    if (fread(s_fm_lpf_prev, sizeof s_fm_lpf_prev, 1, f) != 1) return 0;
+-    if (fread(s_fm_lpf_out,  sizeof s_fm_lpf_out,  1, f) != 1) return 0;
+-    s_scratch_read = s_scratch_write = 0;
++    s_chips[0].chip->save_restore(st);
++    if (fread(&s_chips[0].master_accum, sizeof s_chips[0].master_accum, 1, f) != 1) return 0;
++    if (fread(s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev, 1, f) != 1) return 0;
++    if (fread(s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out,  1, f) != 1) return 0;
++    s_chips[0].scratch_read = s_chips[0].scratch_write = 0;
+     return 1;
+ }
+diff --git a/runner/audio.c b/runner/audio.c
+index 3c9acc4..3aa8269 100644
+--- a/runner/audio.c
++++ b/runner/audio.c
+@@ -1,4 +1,5 @@
+ #include "audio.h"
++#include "audio/mixer.h"
+ #include "host_stream.h"
+ #include <SDL2/SDL.h>
+ #include <stdio.h>
+@@ -126,6 +127,13 @@ static FILE *s_wav_file = NULL;
+ static GenesisHostStream *s_wav_stream;
+ static uint32_t s_wav_data_bytes = 0;
+ 
++/* Forward declarations for the chip export / mix helper (defined below). */
++static void wav_write_header(FILE *f, uint32_t sample_rate, uint32_t data_bytes);
++static void mix_frame_into(int16_t *out, size_t out_n,
++                           const int16_t *fm_buf, size_t fm_frames,
++                           const int16_t *psg_buf, size_t psg_frames);
++static void chip_dump_stop(void);
++
+ /* Scratch output buffer — sized for worst-case PSG frames per video frame.
+  * PSG rate ~223721 Hz / 50 Hz (PAL) ≈ 4475 frames.  Double for headroom. */
+ #define OUT_BUF_FRAMES 16384
+@@ -270,6 +278,7 @@ int audio_init(int psg_sample_rate)
+ void audio_close(void)
+ {
+     s_extra_source = NULL;
++    chip_dump_stop();
+     if (s_dev != 0) {
+         SDL_LockAudioDevice(s_dev);
+         if (s_buffer_trace) {
+@@ -344,6 +353,101 @@ void audio_discard_playback(void)
+     SDL_UnlockAudioDevice(s_dev);
+ }
+ 
++/* Fixed-ratio mix: PSG at ratio 1 (÷8 like the reference mixer), FM
++ * upsampled to the PSG rate. Exactly the arithmetic audio_flush always used;
++ * factored out so the per-chip BOTH-mode export can reuse it unchanged. */
++static void mix_frame_into(int16_t *out, size_t out_n,
++                           const int16_t *fm_buf, size_t fm_frames,
++                           const int16_t *psg_buf, size_t psg_frames)
++{
++    for (size_t i = 0; i < out_n; i++) {
++        size_t si = out_n == psg_frames ? i : i * psg_frames / out_n;
++        int32_t p = (int32_t)psg_buf[si] / s_psg_vol_div;
++        int32_t l = p;
++        int32_t r = p;
++        if (fm_buf != NULL && fm_frames > 0) {
++            size_t fi = si * fm_frames / psg_frames;
++            l += (int32_t)fm_buf[fi * 2 + 0] / FM_VOL_DIV;
++            r += (int32_t)fm_buf[fi * 2 + 1] / FM_VOL_DIV;
++        }
++        if (l >  32767) l =  32767; else if (l < -32768) l = -32768;
++        if (r >  32767) r =  32767; else if (r < -32768) r = -32768;
++        out[i * 2 + 0] = (int16_t)l;
++        out[i * 2 + 1] = (int16_t)r;
++    }
++}
++
++/* ---- BOTH-mode per-chip export (diagnostic) ------------------------------
++ * GENESIS_AUDIO_CHIPDUMP=<prefix> writes <prefix>A.wav and <prefix>B.wav: the
++ * two virtual chips' own mixed streams, produced by exactly the same mix that
++ * feeds the main WAV. Used to prove chip A == MUSIC mode and chip B ==
++ * SOUND EFFECTS mode on the same deterministic route. No-op (and no extra
++ * work) unless the variable is set AND writer-routed dual-chip mixing is
++ * active for that frame. */
++static FILE *s_chip_wav[2];
++static uint32_t s_chip_bytes[2];
++static int s_chip_dump_looked;
++static const char *s_chip_dump_prefix;
++static int16_t s_chip_mix[OUT_BUF_FRAMES * 2];
++
++static void chip_dump_open(int chip)
++{
++    char path[1024];
++    if (!s_chip_dump_looked) {
++        s_chip_dump_looked = 1;
++        const char *p = getenv("GENESIS_AUDIO_CHIPDUMP");
++        if (p && *p) s_chip_dump_prefix = p;
++    }
++    if (!s_chip_dump_prefix || s_chip_wav[chip]) return;
++    snprintf(path, sizeof path, "%s%c.wav", s_chip_dump_prefix,
++             chip == 0 ? 'A' : 'B');
++    s_chip_wav[chip] = fopen(path, "wb");
++    if (!s_chip_wav[chip]) {
++        fprintf(stderr, "[audio] chip dump: cannot open %s\n", path);
++        return;
++    }
++    s_chip_bytes[chip] = 0;
++    wav_write_header(s_chip_wav[chip], 223721, 0);
++    fprintf(stderr, "[audio] chip dump started: %s\n", path);
++}
++
++static void chip_dump_stop(void)
++{
++    for (int chip = 0; chip < 2; chip++) {
++        if (!s_chip_wav[chip]) continue;
++        if (fseek(s_chip_wav[chip], 0, SEEK_SET))
++            fprintf(stderr, "[audio] chip dump: seek failed\n");
++        else
++            wav_write_header(s_chip_wav[chip], 223721, s_chip_bytes[chip]);
++        fclose(s_chip_wav[chip]);
++        s_chip_wav[chip] = NULL;
++    }
++}
++
++/* Write this frame's per-chip streams, if the export is active. */
++static void chip_dump_frame(void)
++{
++    if (!s_chip_dump_looked) {
++        s_chip_dump_looked = 1;
++        const char *p = getenv("GENESIS_AUDIO_CHIPDUMP");
++        if (p && *p) s_chip_dump_prefix = p;
++    }
++    if (!s_chip_dump_prefix) return;
++    for (int chip = 0; chip < 2; chip++) {
++        const int16_t *fm = NULL, *psg = NULL;
++        size_t fn = 0, pn = 0;
++        if (!audio_mixer_chip_output(chip, &fm, &fn, &psg, &pn) || pn == 0)
++            continue;
++        chip_dump_open(chip);
++        if (!s_chip_wav[chip]) continue;
++        if (pn > OUT_BUF_FRAMES) pn = OUT_BUF_FRAMES;
++        mix_frame_into(s_chip_mix, pn, fm, fn, psg, pn);
++        uint32_t bytes = (uint32_t)(pn * 2 * sizeof(int16_t));
++        fwrite(s_chip_mix, 1, bytes, s_chip_wav[chip]);
++        s_chip_bytes[chip] += bytes;
++    }
++}
++
+ void audio_flush(uint32_t wall_frame, int realtime,
+                  const int16_t *fm_buf,  size_t fm_frames,
+                  const int16_t *psg_buf, size_t psg_frames)
+@@ -377,28 +481,10 @@ void audio_flush(uint32_t wall_frame, int realtime,
+      * This is now a FIXED ratio-1 conversion, never rate-modulated: the DRC
+      * bridge owns the band-limited downsample to the device rate and the
+      * clock-domain servo, so this mix never drops/duplicates a sample. */
+-    #define MIX_INTO(out_n)                                                  \
+-        for (size_t i = 0; i < (out_n); i++) {                               \
+-            size_t si = (out_n) == psg_frames ? i                            \
+-                        : i * psg_frames / (out_n);                          \
+-            int32_t p = (int32_t)psg_buf[si] / s_psg_vol_div;                \
+-            int32_t l = p;                                                   \
+-            int32_t r = p;                                                   \
+-            if (fm_buf != NULL && fm_frames > 0) {                           \
+-                size_t fi = si * fm_frames / psg_frames;                     \
+-                l += (int32_t)fm_buf[fi * 2 + 0] / FM_VOL_DIV;               \
+-                r += (int32_t)fm_buf[fi * 2 + 1] / FM_VOL_DIV;               \
+-            }                                                                \
+-            if (l >  32767) l =  32767; else if (l < -32768) l = -32768;     \
+-            if (r >  32767) r =  32767; else if (r < -32768) r = -32768;     \
+-            s_out[i * 2 + 0] = (int16_t)l;                                   \
+-            s_out[i * 2 + 1] = (int16_t)r;                                   \
+-        }
+-
+     /* Mix one video frame at the internal PSG rate into s_out (PSG ratio 1; FM
+      * upsampled to PSG rate). This is the single mix, a FIXED conversion, so it
+      * no longer crackles. The DRC bridge owns the downsample and the servo. */
+-    MIX_INTO(psg_frames);
++    mix_frame_into(s_out, psg_frames, fm_buf, fm_frames, psg_buf, psg_frames);
+     if (s_extra_source)
+         s_extra_source(s_out, psg_frames, s_mix_rate);
+ 
+@@ -412,6 +498,7 @@ void audio_flush(uint32_t wall_frame, int realtime,
+         else fwrite(s_out, 1, bytes, s_wav_file);
+         s_wav_data_bytes += bytes;
+     }
++    chip_dump_frame();
+ 
+     /* Master volume — speaker output only (applied after the WAV tap, so paired
+      * captures stay bit-deterministic regardless of this setting). */
+@@ -540,6 +627,7 @@ int audio_wav_start(const char *path)
+ 
+ void audio_wav_stop(void)
+ {
++    chip_dump_stop();   /* same lifetime as the main capture */
+     if (!s_wav_file) return;
+     /* Drain immutable PCM before seeking back to finalize the RIFF header. */
+     int ok = genesis_host_stream_destroy(s_wav_stream);
+diff --git a/runner/video/genesis_bus.c b/runner/video/genesis_bus.c
+index ff6e90c..22abe2e 100644
+--- a/runner/video/genesis_bus.c
++++ b/runner/video/genesis_bus.c
+@@ -78,71 +78,82 @@ static uint64_t ym_abs_68k_stamp(void)
+            (uint64_t)STAMP_68K();
+ }
+ 
+-static void ym_timer_update(GenesisBus *b, uint64_t now)
++/* One status/timer model per virtual chip. In the stock single-chip path the
++ * only instance is the bus copy (`&b->ym`), so every write and status read
++ * behaves exactly as before. BOTH mode routes 68K-chip writes/reads to a
++ * separate instance for chip B (below), while the Z80 keeps using the bus
++ * copy, i.e. chip A, whose timer B is the music clock. */
++static void ym_timer_update(YmTimerState *y, uint64_t now)
+ {
+-    if (!b->ym_timer_b_running || b->ym_timer_b_period == 0 ||
+-        now < b->ym_timer_b_deadline)
++    if (!y->running || y->period == 0 || now < y->deadline)
+         return;
+ 
+-    if (b->ym_mode & 0x08u)             /* enable timer-B overflow flag */
+-        b->ym_status |= 0x02u;
++    if (y->mode & 0x08u)                /* enable timer-B overflow flag */
++        y->status |= 0x02u;
+ 
+     /* Timer B is periodic while load/enable bit 1 remains set. Advance the
+      * deadline past 'now' without an unbounded catch-up loop. */
+-    uint64_t elapsed = now - b->ym_timer_b_deadline;
+-    uint64_t periods = elapsed / b->ym_timer_b_period + 1u;
+-    b->ym_timer_b_deadline += periods * b->ym_timer_b_period;
++    uint64_t elapsed = now - y->deadline;
++    uint64_t periods = elapsed / y->period + 1u;
++    y->deadline += periods * y->period;
+ }
+ 
+-static void ym_write_side_effect(GenesisBus *b, uint8_t port, uint8_t val,
++static void ym_write_side_effect(YmTimerState *y, uint8_t port, uint8_t val,
+                                  uint64_t now)
+ {
+-    ym_timer_update(b, now);
++    ym_timer_update(y, now);
+     unsigned bank = (port >> 1) & 1u;
+     if ((port & 1u) == 0) {
+-        b->ym_addr[bank] = val;
++        y->addr[bank] = val;
+         return;
+     }
+     if (bank != 0) return;              /* timers live in register bank 0 */
+ 
+-    uint8_t reg = b->ym_addr[0];
++    uint8_t reg = y->addr[0];
+     if (reg == 0x26u) {
+-        b->ym_timer_b = val;
+-        b->ym_timer_b_period =
+-            (uint64_t)(256u - (unsigned)val) * YM_TIMER_B_MASTER_TICK;
++        y->timer_b = val;
++        y->period = (uint64_t)(256u - (unsigned)val) * YM_TIMER_B_MASTER_TICK;
+     } else if (reg == 0x27u) {
+         /* Bits 4/5 clear timer A/B flags; bit 1 loads/runs timer B; bit 3
+          * enables its overflow flag. RKA writes $3C (clear/stop), updates
+          * $26, then writes $3A (clear/load/run). */
+-        if (val & 0x10u) b->ym_status &= 0xfeu;
+-        if (val & 0x20u) b->ym_status &= 0xfdu;
+-        b->ym_mode = val;
++        if (val & 0x10u) y->status &= 0xfeu;
++        if (val & 0x20u) y->status &= 0xfdu;
++        y->mode = val;
+         if (val & 0x02u) {
+-            if (b->ym_timer_b_period == 0)
+-                b->ym_timer_b_period =
+-                    (uint64_t)(256u - (unsigned)b->ym_timer_b) *
+-                    YM_TIMER_B_MASTER_TICK;
++            if (y->period == 0)
++                y->period = (uint64_t)(256u - (unsigned)y->timer_b) *
++                            YM_TIMER_B_MASTER_TICK;
+             /* The load bit STARTS a stopped timer; it does not re-phase one
+-             * that is already running. Hardware (and ymfm's own
+-             * fm_engine_base::update_timer) only arms the counter on the
+-             * 0 -> 1 transition, and the overflow flag is a level on a
+-             * free-running grid: a driver that reloads the timer every tick
+-             * therefore has its polling lateness repaid by the following
+-             * shorter tick instead of accumulating. Re-arming the deadline on
+-             * every write (the previous model) turned each late tick into
+-             * permanent tempo loss. */
+-            if (!b->ym_timer_b_running)
+-                b->ym_timer_b_deadline = now + b->ym_timer_b_period;
+-            b->ym_timer_b_running = 1;
++             * that is already running (patch 0010). The overflow flag is a
++             * level on a free-running grid, so a driver that reloads the timer
++             * every tick has its polling lateness repaid by the next, shorter
++             * tick instead of accumulating permanent tempo loss. */
++            if (!y->running)
++                y->deadline = now + y->period;
++            y->running = 1;
+         } else {
+-            b->ym_timer_b_running = 0;
++            y->running = 0;
+         }
+     }
+ }
+ 
++/* Chip B's (68K-side) CPU-visible status model while BOTH mode is routed to
++ * two virtual chips. Presentation-only; not part of the bus image or history.
++ * The 68K SFX engines never poll the chip today, so an empty model (BUSY
++ * clear, no timer flags) is exactly what chip B would answer. */
++static YmTimerState s_ym68k;
++
++/* The status/timer model a 68K-side access must observe. */
++static YmTimerState *ym_68k_state(GenesisBus *b)
++{
++    return audio_chip_routing_dual() ? &s_ym68k : &b->ym;
++}
++
+ void gbus_init(GenesisBus *b, GVDP *vdp)
+ {
+     memset(b, 0, sizeof(*b));
++    memset(&s_ym68k, 0, sizeof s_ym68k);
+     b->vdp = vdp;
+     b->version = 0x80;          /* overseas (non-Japan) NTSC, no FDD          */
+     b->z80_reset_off = 0;       /* Z80 starts held in reset                   */
+@@ -340,8 +351,9 @@ uint16_t gbus_read16(GenesisBus *b, uint32_t a)
+          * clear, while timer flags are updated synchronously for polling
+          * drivers. Mirror the byte onto both word lanes for 68K byte reads. */
+         if ((a & 0xFFFFu) < 0x6000u) {
+-            ym_timer_update(b, ym_abs_68k_stamp());
+-            return (uint16_t)((uint16_t)b->ym_status * 0x0101u);
++            YmTimerState *st = ym_68k_state(b);
++            ym_timer_update(st, ym_abs_68k_stamp());
++            return (uint16_t)((uint16_t)st->status * 0x0101u);
+         }
+         return 0xFFFFu;                          /* bank/PSG region: open bus  */
+     }
+@@ -379,7 +391,7 @@ uint16_t gbus_peek16(const GenesisBus *b, uint32_t a)
+                               | b->z80_ram[(off + 1u) & 0x1FFFu]);
+         }
+         if ((a & 0xFFFFu) < 0x6000u)             /* YM status, no timer catch-up */
+-            return (uint16_t)((uint16_t)b->ym_status * 0x0101u);
++            return (uint16_t)((uint16_t)ym_68k_state((GenesisBus *)b)->status * 0x0101u);
+         return 0xFFFFu;
+     }
+     if (a >= 0xA10000u && a < 0xA10020u) return io_read(b, a);
+@@ -431,7 +443,7 @@ void gbus_write16(GenesisBus *b, uint32_t a, uint16_t v)
+             b->z80_ram[off] = (uint8_t)(v >> 8); return; }
+         if (a >= 0xA04000u && a <= 0xA04003u) {
+             uint8_t port = (uint8_t)(a & 3);
+-            ym_write_side_effect(b, port, (uint8_t)v, ym_abs_68k_stamp());
++            ym_write_side_effect(ym_68k_state(b), port, (uint8_t)v, ym_abs_68k_stamp());
+             CHIP_PC_68K(); audio_event_push(STAMP_68K(), port, (uint8_t)v); return;
+         }
+         return;
+@@ -481,7 +493,7 @@ void gbus_write8(GenesisBus *b, uint32_t a, uint8_t v)
+             b->z80_ram[off] = v; return; }
+         if (a >= 0xA04000u && a <= 0xA04003u) {
+             uint8_t port = (uint8_t)(a & 3);
+-            ym_write_side_effect(b, port, v, ym_abs_68k_stamp());
++            ym_write_side_effect(ym_68k_state(b), port, v, ym_abs_68k_stamp());
+             CHIP_PC_68K(); audio_event_push(STAMP_68K(), port, v); return;
+         }
+         return;
+@@ -499,8 +511,8 @@ uint8_t gbus_z80_read(GenesisBus *b, uint16_t addr)
+     if (addr < 0x4000u) return b->z80_ram[addr & 0x1FFFu];         /* RAM+mirror */
+     /* YM2612 status: BUSY is clear; timer flags advance on scheduler time. */
+     if (addr < 0x6000u) {
+-        ym_timer_update(b, ym_abs_z80_stamp());
+-        return b->ym_status;
++        ym_timer_update(&b->ym, ym_abs_z80_stamp());
++        return b->ym.status;
+     }
+     if (addr < 0x8000u) return 0xFFu;                               /* bank/PSG   */
+     /* $8000-$FFFF: banked window into the 68K bus. */
+@@ -515,14 +527,14 @@ void gbus_z80_write(GenesisBus *b, uint16_t addr, uint8_t val)
+         b->z80_ram[off] = val; return; }                           /* RAM+mirror */
+     if (addr < 0x6000u) {
+         uint8_t port = (uint8_t)(addr & 3);
+-        ym_write_side_effect(b, port, val, ym_abs_z80_stamp());
+-        CHIP_PC_Z80(); audio_event_push(machine_z80_stamp(), port, val); return;
++        ym_write_side_effect(&b->ym, port, val, ym_abs_z80_stamp());
++        CHIP_PC_Z80(); audio_event_push_origin(machine_z80_stamp(), port, val, AUDIO_ORIGIN_Z80); return;
+     } /* FM */
+     if (addr < 0x6100u) {                                /* $6000 bank register   */
+         b->z80_bank = ((b->z80_bank >> 1) | ((val & 1) << 8)) & 0x1FF;
+         return;
+     }
+-    if (addr == 0x7F11u) { CHIP_PC_Z80(); audio_event_push(machine_z80_stamp(), AUDIO_PORT_PSG, val); return; }       /* PSG          */
++    if (addr == 0x7F11u) { CHIP_PC_Z80(); audio_event_push_origin(machine_z80_stamp(), AUDIO_PORT_PSG, val, AUDIO_ORIGIN_Z80); return; }       /* PSG          */
+     if (addr >= 0x8000u) {                                          /* banked window */
+         uint32_t a68 = ((uint32_t)b->z80_bank << 15) + (uint32_t)(addr - 0x8000u);
+         gbus_write8(b, a68, val);
+diff --git a/runner/video/genesis_bus.h b/runner/video/genesis_bus.h
+index a1fafbd..e7cd359 100644
+--- a/runner/video/genesis_bus.h
++++ b/runner/video/genesis_bus.h
+@@ -24,6 +24,21 @@ enum {
+     GPAD_X  = 0x100, GPAD_Y   = 0x200, GPAD_Z   = 0x400, GPAD_MODE  = 0x800
+ };
+ 
++/* CPU-visible YM2612 timer/status model (one per virtual chip). Same size as
++ * the previous flat field group, so the bus image (and its rollback hash) is
++ * unchanged. The stock single-chip path uses only the bus copy; BOTH mode
++ * gives the 68K-side (chip B) its own copy, kept off the bus image because it
++ * is presentation-only state. */
++typedef struct YmTimerState {
++    uint8_t  addr[2];                /* address latch for ports 0/1         */
++    uint8_t  timer_b;                /* register $26                        */
++    uint8_t  mode;                   /* register $27                        */
++    uint8_t  status;                 /* timer overflow flags, bits 1..0     */
++    uint8_t  running;
++    uint64_t deadline;               /* absolute scheduler master cycles    */
++    uint64_t period;                 /* cached period in master cycles      */
++} YmTimerState;
++
+ typedef struct GenesisBus {
+     GVDP    *vdp;
+ 
+@@ -42,13 +57,7 @@ typedef struct GenesisBus {
+      * the cycle-stamped mixer, but the emulated CPUs must observe timer flags
+      * synchronously while polling $4000/$A04000 (RKA's Z80 driver uses timer
+      * B as its music tick). */
+-    uint8_t  ym_addr[2];                /* address latch for ports 0/1         */
+-    uint8_t  ym_timer_b;                /* register $26                        */
+-    uint8_t  ym_mode;                   /* register $27                        */
+-    uint8_t  ym_status;                 /* timer overflow flags, bits 1..0     */
+-    uint8_t  ym_timer_b_running;
+-    uint64_t ym_timer_b_deadline;       /* absolute scheduler master cycles    */
+-    uint64_t ym_timer_b_period;         /* cached period in master cycles      */
++    YmTimerState ym;                    /* chip A (Z80-side) status model      */
+ 
+     /* Controllers / I-O. */
+     uint16_t pad[2];                    /* live button state (GPAD_* bits, 12) */
+diff --git a/runner/video/genesis_machine.c b/runner/video/genesis_machine.c
+index 98bdc59..9344dd9 100644
+--- a/runner/video/genesis_machine.c
++++ b/runner/video/genesis_machine.c
+@@ -13,6 +13,7 @@
+ #include "genesis_frame_pixels.h"
+ #include "genesis_dac.h"  /* authentic Genesis output-DAC color ladder */
+ #include "chip_trace.h"   /* [CHIP-TRACE] shared FM/PSG stream ring + g_snd_* globals */
++#include "../audio/event_queue.h" /* writer-routed second chip (BOTH mode) */
+ #include <string.h>
+ #include <stdio.h>   /* [SND-TRACE] temporary sound-command lifecycle trace */
+ 
+@@ -426,7 +427,15 @@ uint32_t machine_z80_stamp(void)
+ 
+ static void step_z80(GenesisMachine *m, uint32_t target)
+ {
+-    if (!m->bus.z80_reset_off || m->bus.z80_busreq) return;   /* Z80 halted */
++    /* BUSREQ halts the Z80 because the 68K is about to touch the Z80's RAM or
++     * its one sound chip. With writer-routed chips (BOTH mode) the 68K's chip
++     * writes go to chip B, which the Z80 never touches, so the Z80 only has to
++     * yield for its own RAM (mailbox bytes, which the emulation writes
++     * atomically anyway). Releasing it here removes the music driver's per-
++     * frame stall; on the shared chip it is what made the music stutter and
++     * shift under the SFX engine. */
++    if (!m->bus.z80_reset_off) return;                        /* Z80 halted */
++    if (m->bus.z80_busreq && !audio_chip_routing_dual()) return;
+     /* The 68K pulsed the Z80 reset line while halted — restart the core at
+      * $0000 now that it's released, so it runs the freshly-uploaded driver
+      * from its entry point (not from a stale, pre-upload PC). */

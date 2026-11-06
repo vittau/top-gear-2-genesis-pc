@@ -32,8 +32,17 @@
 /* game/tg2_options.c: the RACE SOUND choice is a player option. */
 extern void tg2_options_race_sound_changed(int mode);
 
+/* engine/runner/audio/event_queue.h: writer-routed second virtual chip. On in
+ * BOTH only, so stock MUSIC/SFX keep the single chip and stay byte-identical. */
+void audio_set_chip_routing(int dual);
+
 /* Work-RAM addresses (see docs/RAM_MAP.md / docs/AUDIO.md). */
 #define RAM_SOUND_MODE   0x240Eu   /* word: 0 = SFX, 1 = MUSIC            */
+#define RAM_MENU_PAGE    0x2554u   /* word: menu controller (page index)  */
+#define RAM_MENU_VALUE   0x2560u   /* word: RACE SOUND page value (A4+$0C)*/
+#define RAM_MENU_DIRTY   0x2556u   /* word: A4+$02 redraw request         */
+#define RAM_MENU_STATE   0x256Cu   /* word: A4+$18 page state             */
+#define RACE_SOUND_PAGE  4         /* $FF2554 while the value page is open*/
 
 /* RACE SOUND choices.  SFX and MUSIC are the cartridge's own 0/1; BOTH is
  * host-only and never reaches guest RAM as a number. */
@@ -186,7 +195,6 @@ int tg2_audio_hook(uint32_t pc)
     case 0x0048E2u:                    /* race V-int: read sound mode */
     case 0x0250E2u:
     case 0x02511Cu:
-    case 0x02503Au:
     case 0x02504Au:
     case 0x02529Au:
     case 0x0252CCu:
@@ -200,6 +208,11 @@ int tg2_audio_hook(uint32_t pc)
     case 0x025088u:                    /* music start/refresh gate */
     case 0x025200u:                    /* race track start */
     case 0x02523Au:
+    /* $02503A stops the music ($FF) before the race track is started. That is
+     * a MUSIC-side action: stock SOUND EFFECTS skips it because no music is
+     * playing, but BOTH has the menu music running, so it must see MUSIC's
+     * value or the stop is skipped and the new track is layered on the old. */
+    case 0x02503Au:
         present_music();
         return 0;
 
@@ -424,8 +437,18 @@ int tg2_audio_race_sound(void) { return s_mode; }
 void tg2_audio_set_race_sound(int mode)
 {
     if (mode < TG2_SOUND_SFX || mode > TG2_SOUND_BOTH) return;
-    if (mode == s_mode) return;
     s_mode = mode;
+    /* Two virtual chips only while BOTH is the choice; stock modes keep the
+     * single chip so their output stays byte-identical. */
+    audio_set_chip_routing(both_active());
+}
+
+/* Per-frame, before the guest runs: keep the engine's chip routing in step
+ * with the host choice (the menu, the option row and TG2_RACE_SOUND can all
+ * change it, and a guest reset reloads the cartridge's own word). */
+void tg2_audio_frame_pre(void)
+{
+    audio_set_chip_routing(both_active());
 }
 
 /* Guest reset or state load: the cartridge reloads its boot value; the
@@ -435,16 +458,42 @@ void tg2_audio_reset(void)
     s_patched = 0;
     s_page_seen = 0;
     s_saved_n = 0;
+    audio_set_chip_routing(both_active());
+}
+
+static int race_sound_page_open(void)
+{
+    return ram_read16(0xFF0000u + RAM_MENU_PAGE) == RACE_SOUND_PAGE;
 }
 
 void tg2_frame_post(uint64_t frame_count)
 {
     (void)frame_count;
-    if (!s_page_seen) {
-        if (s_saved_n) restore_row();   /* page closed while BOTH was shown */
+
+    /* The page's own entry path reloads its value from $FF240E, which can only
+     * hold the cartridge's 0/1. BOTH reuses MUSIC's value, so after leaving and
+     * re-entering the page the game draws "MUSIC" even though BOTH is the
+     * choice in effect. Detect the open page from the menu controller itself
+     * (no button press is required) and repaint the row from the session
+     * choice on every frame, whichever route entered the page. */
+    int open = race_sound_page_open();
+    s_page_seen = open;
+
+    if (!open) {
+        if (s_saved_n) restore_row();
         return;
     }
+
     if (s_mode == TG2_SOUND_BOTH) {
+        /* Keep the page value consistent with what is painted. The stock
+         * state machine, sprite builder and teardown all stay in {0,1}. */
+        uint16_t page = ram_read16(0xFF0000u + RAM_MENU_VALUE);
+        if (page != 1u) {
+            ram_write16(0xFF0000u + RAM_MENU_VALUE, 1u);
+            ram_write16(0xFF0000u + RAM_MENU_DIRTY,
+                        (uint16_t)(ram_read16(0xFF0000u + RAM_MENU_DIRTY) + 1u));
+            ram_write16(0xFF0000u + RAM_MENU_STATE, 2u);
+        }
         paint_both();
         return;
     }
