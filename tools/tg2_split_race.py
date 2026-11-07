@@ -107,6 +107,7 @@ def main():
     p.add_argument('--press-gap', type=int, default=280)
     p.add_argument('--unpause-at', default='')
     a = p.parse_args()
+    a.out = a.out.resolve()   # the runner resolves script paths from its exe dir
     a.out.mkdir(parents=True, exist_ok=True)
     script, race_start = build_script(a.press_count, a.press_gap,
                                       [int(x) for x in a.unpause_at.split(',') if x.strip()])
