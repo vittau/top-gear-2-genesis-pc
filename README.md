@@ -1,5 +1,7 @@
 # Top Gear 2 Recomp
 
+<p align="center"><img src="tools/release/tg2recomp.png" width="128" alt="TG2Recomp: silver sports car at a fiery sunset"></p>
+
 A native, widescreen, 60 fps static recompilation of *Top Gear 2* (USA) for
 the Sega Genesis / Mega Drive.
 
