@@ -35,8 +35,8 @@ submodule pin is upstream `dd520f1`.
 The owner's priority is a first release (v0.1.0) that is playable and has no
 major bugs. Release path:
 
-1. **Blocker:** BOTH via the second chip (task 20). If it can't be made clean
-   in time, hide BOTH for 0.1.0 instead of shipping noise.
+1. **Done (313ae46):** BOTH via two chips and a second Z80 core (task 20b):
+   music, engine, nitro and impacts all play.
 2. **Release qualification** (after task 20): reach every race of every
    country via passwords, including each country's still-unvisited second race,
    and 2-player. Run the release build with the default options. Gate on
@@ -57,9 +57,17 @@ Release bugs from owner playtests (2026-11-07):
   widescreen margins; long stretched horizontal lines show there instead.
   Seen in task 22's captures (Switzerland blizzard, a night rain race). Sent
   to task 22.
-- Minor: "Internal resolution" in the menu does nothing visible for TG2,
+- **Fixed (3a92c4f):** "Internal resolution" did nothing visible for TG2,
   because the game renders through its own `GameVideo` at native resolution.
-  Hide the option or make it meaningful.
+  Patch 0017 hides the row; high-resolution rendering may bring it back.
+- **Fixed (2e42151):** with the HUD at edges, the overtake popup ("18TH"
+  rising over the car) was carried to the right edge with the right cluster.
+  Only the cluster columns move now.
+- **Major, open (task 22):** loading a save state in a race freezes it at
+  "GO!" (picture static, 0 MPH). Seen in a cross-process load; same-process
+  load (rewind) still to check. Suspect: `on_state_loaded = tg2_post_reset`.
+- Added for the owner (patch 0016): P freezes the frame without the game's
+  PAUSE screen and pauses audio output (screenshot mode); P or Esc resumes.
 
 Deferred until after 0.1.0: the clean FM option and music/SFX volumes, task
 17 (widescreen menus), and the Auckland music re-attack divergence.
