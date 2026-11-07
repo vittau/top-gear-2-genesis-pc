@@ -199,6 +199,19 @@ def main():
         tap_key(r, 'f5', settle=4)
         r.wait_frame(r.frame() + 8)
         report['notice_fkey_load'] = notice_shot(r, 'fkey-load')
+        # ---- gamepad path: the pad's accept button must not leak either ----
+        r.command('virtual_pad', attach=1)
+        r.wait_frame(r.frame() + 20)
+        report['pad_idle'] = r.command('pad')
+        report['selected_save_pad'] = open_save_section(r, 'Save state')
+        r.command('virtual_pad', button='a', held=1)     # pad accept, still held
+        r.wait_frame(r.frame() + 3)
+        report['pad_while_pad_a_held'] = r.command('pad')
+        r.wait_frame(r.frame() + 3)
+        report['notice_pad_save'] = notice_shot(r, 'pad-save')
+        r.command('virtual_pad', button='a', held=0)
+        r.wait_frame(r.frame() + 20)
+        report['pad_after_pad_release'] = r.command('pad')
         report['race_clock_end'] = r.state_and_frame().clock
         report['final_frame'] = r.frame()
 
@@ -210,6 +223,7 @@ def main():
                                       'mtime': v.stat().st_mtime if v.exists() else None}
                              for v in slots.values()}
     report['ok'] = bool(report.get('pad_while_enter_held', {}).get('pad0', 1) == 0
+                        and report.get('pad_while_pad_a_held', {}).get('pad0', 1) == 0
                         and report['state_files'][str(slots[1])]['exists']
                         and report['state_files'][str(slots[5])]['exists']
                         and any('no resumable game boundary' in l for l in lines))
