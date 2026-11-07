@@ -48,6 +48,16 @@ major bugs. Release path:
 Deferred until after 0.1.0: the clean FM option and music/SFX volumes, task
 17 (widescreen menus), and the Auckland music re-attack divergence.
 
+**Enhancement idea for after 0.1.0 (owner, 2026-11-06): gradient skies.** Race skies
+with a vertical gradient similar to the SNES version's look, not limited to the
+Genesis palette. Draw it ourselves in the game-owned renderer; copy no SNES
+assets. Derive it from the game's own sky colour per track, weather and time of
+day: night, fog, rain and snow need their own ramps. Anchor it to the moving
+horizon on hills, and handle tunnels, flashes and split screen. Make it an
+option; with it off, the picture stays byte-identical. A worker should first
+answer how the sky is drawn today: the backdrop colour or background-layer
+tiles, and whether raster palette changes already occur.
+
 ## Still in progress
 
 | Task | Worktree | State |
