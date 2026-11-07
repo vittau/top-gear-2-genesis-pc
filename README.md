@@ -57,19 +57,19 @@ the tree on the right, which the original frame cuts off. All three have
 cropped.
 
 <p align="center">
-  <a href="docs/images/aspect-original.png"><img src="docs/images/aspect-original.png" width="40%" alt="Original view of the race"></a>
+  <a href="docs/images/aspect-original-cropped.png"><img src="docs/images/aspect-original-cropped.png" width="40%" alt="Original view of the race"></a>
   <br>
   <em>Original</em>
 </p>
 
 <p align="center">
-  <a href="docs/images/aspect-16x9.png"><img src="docs/images/aspect-16x9.png" width="62%" alt="16:9 view of the same race moment"></a>
+  <a href="docs/images/aspect-16x9-cropped.png"><img src="docs/images/aspect-16x9-cropped.png" width="62%" alt="16:9 view of the same race moment"></a>
   <br>
   <em>16:9</em>
 </p>
 
 <p align="center">
-  <a href="docs/images/aspect-21x9.png"><img src="docs/images/aspect-21x9.png" width="100%" alt="21:9 view of the same race moment"></a>
+  <a href="docs/images/aspect-21x9-cropped.png"><img src="docs/images/aspect-21x9-cropped.png" width="100%" alt="21:9 view of the same race moment"></a>
   <br>
   <em>21:9</em>
 </p>
