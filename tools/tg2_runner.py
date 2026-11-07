@@ -264,12 +264,15 @@ class Runner:
     def vram(self, addr: int, size: int) -> bytes:
         return bytes.fromhex(self.command('read_vram', addr=f'0x{addr:04X}', size=size)['hex'])
 
-    def screenshot(self, path: str | Path):
+    def screenshot(self, path: str | Path, presented: bool = False):
         path = Path(path)
         if not path.is_absolute():
             path = self.out / path
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.command('screenshot', path=str(path))
+        if presented:
+            self.command('screenshot', path=str(path), presented=1)
+        else:
+            self.command('screenshot', path=str(path))
         return path
 
     def set_input(self, keys: int | str):
