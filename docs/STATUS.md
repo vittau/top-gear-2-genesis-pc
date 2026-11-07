@@ -59,8 +59,13 @@ answer how the sky is drawn today: the backdrop colour or background-layer
 tiles, and whether raster palette changes already occur.
 
 **Enhancement idea for after 0.1.0 (owner, 2026-11-06): arbitrary car colours.**
-An HSL picker in the options menu (Esc), instead of the game's fixed colour
-choice, and not limited to the Genesis 512-colour palette. Recolour at
+An HSL picker that **replaces the game's own car-colour page** in the
+pre-race menu. It is in-game and drawn in the game's menu style, not in the Esc
+overlay. It is not limited to the Genesis 512-colour palette. Like the BOTH
+row on the SOUND page, the page is host-owned: hook the colour page, draw
+H/S/L rows and a live preview with the game's font and glyph tiles, and read
+the pad there. With the option off, the stock page and its fixed colours stay
+byte-identical. Recolour at
 render time in our renderer; the simulation and RAM are untouched, and with it
 off the picture stays byte-identical. First find out:
 - which palette line and entries the player car's body uses;
@@ -70,8 +75,7 @@ off the picture stays byte-identical. First find out:
 Recolour only the player car's sprite pieces, using the sprite capture,
 shifting hue and saturation and scaling lightness to keep the shading. Cover
 P1 and P2 in split screen, the HUD car icon, and the menu, shop and results
-car images. Persist the colours per player in `settings.ini`. The game's own
-colour menu choice stays the default.
+car images. Persist the colours per player in `settings.ini`.
 
 ## Still in progress
 
