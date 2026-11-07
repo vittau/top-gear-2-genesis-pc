@@ -106,7 +106,11 @@ def main():
                 top_mark_columns=info['top_mark_columns'])
             if size[1] != 224:
                 report['failures'].append(f'{path}: {size} is not stock height')
-            if not info['top_ok'] or not info['bottom_ok']:
+            # The band classifier only knows native width: a widescreen capture
+            # has synthesised margins beside the stock band, which is the
+            # pre-existing behaviour and is covered by the byte-identity check
+            # below instead.
+            if size[0] == 256 and (not info['top_ok'] or not info['bottom_ok']):
                 report['failures'].append(f'{path}: stock bands carry picture')
             before = root / 'before' / f'{mode}-off' / mode / f'frame-{frame}.png'
             if before.exists() and not same_pixels(before, path):
@@ -138,12 +142,25 @@ def main():
     split = root / 'split/on/summary.json'
     if split.exists():
         data = json.loads(split.read_text())
-        report['split'] = dict(widths=data.get('widths'),
+        shots = [Path(p) for p in data.get('screenshots', [])]
+        shots = [p if p.is_absolute() else root / 'split/on' / p for p in shots]
+        shots = [p for p in shots if p.exists()]
+        heights = sorted({png_size(p)[1] for p in shots})
+        # Every 2P picture must keep the full 224-line frame; the split screen
+        # uses the bottom band for the second viewport's HUD, so cropping it
+        # would cut content (which is why the qualifier excludes 2P).
+        bottom = [check(p) for p in shots]
+        carries = sum(1 for info in bottom if info['bottom_rows'].count('picture'))
+        report['split'] = dict(widths=data.get('widths'), heights=heights,
                                two_player_frames=data.get('two_player_frames'),
                                two_player_race_samples=data.get('two_player_race_samples'),
-                               screenshots=data.get('screenshots'))
-        if data.get('widths') and data['widths'] != [256]:
-            report['failures'].append(f'split widths {data["widths"]}')
+                               pictures=len(shots),
+                               pictures_using_bottom_band=carries,
+                               screenshots=[str(p) for p in shots[:6]])
+        if heights and heights != [224]:
+            report['failures'].append(f'split heights {heights} (cropped?)')
+        if not carries:
+            report['failures'].append('no split-screen capture used the bottom band')
     # Active-line summaries.
     totals = dict(runs=0, pictures=0, race_pictures=0, failures=0,
                   first_row=None, last_row=None)
