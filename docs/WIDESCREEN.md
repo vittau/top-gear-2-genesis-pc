@@ -318,7 +318,7 @@ pre-change runs are in `before/`, the shipping behaviour in `after/`.
 | Off hashes | frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` in `after/off-on/off/stderr.log` |
 | Active lines | 16 tracks, 279 captures, 181 race pictures: every one uses rows 8..207 with an empty bottom band |
 | Margin audit | `margins/{16-9,21-9,16-9-60}/summary.json`: 2933 frames, 1,313,984 samples, rows 0..223 complete, 0 black-gap, 0 ground-colour, 0 band-colour and 0 brief-backdrop violations in each |
-| 60 fps synthesized pictures | `after/16-9-60/16-9/frame-451x.png`: 356 × 200, empty bands, no window flash; road audit 2503 frames / 1511 synthesized / 83,732 road lines / 0 violations |
+| 60 fps synthesized pictures | `after/16-9-60/16-9/frame-4510.png` .. `frame-4515.png`: every one **356 × 200** with content on rows 0..199 (no band, no flash); road audit 2503 frames / 1511 synthesized pictures / 83,732 road lines / 0 violations |
 | Split-screen | `split/on/summary.json`: all 32 pictures 224 lines (never cropped) during 3115 two-player frames; 6 of them draw into rows 208..223 (the second viewport's HUD), which is why 2P is excluded from the crop |
 | Road artifacts | `road/road-artifacts.json`: `passed`, 0 violations |
 | Manifests | 0 entries after every run |
