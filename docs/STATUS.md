@@ -21,6 +21,7 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 | BOTH fix + music tempo | BOTH is now session-owned host state (it engages on every route, persisted as `[mods.racesound]`), and its text uses the game's own menu font. Exact audio sample clock (patch 0008; it was -402 ppm). Tempo-stable slow-integral DRC (patch 0009): speed swings 1233 → 37 ppm/s. Reference pipeline: headless Genesis Plus GX renderer (`tools/gpgx_render.c`). A/B files in `~/Music/tg2-ab/`. | `AUDIO.md` §6-7, §11-12 |
 | Music tempo (owner bug) | Root cause: the port re-armed the YM2612 timer B on every `$27` reload instead of letting it run free (patch 0010). Title theme went from -6.99% ±2% to +0.194% flat. **Owner confirmed 2026-11-06: music speed is great.** All 4 owner VGM rips align at +0.194%, and Genesis Plus GX agrees with the port to 0.02%, so the residual is the rips' own time base. Logic match vs the VGMs: 89.7–99.5% (open item: Auckland ch1-2 re-attacks). | `AUDIO.md` §11 |
 | Race band crop + HUD Edges fix (owner request) | Hide overscan (default On) now crops the race's empty 8 top / 16 bottom lines: 256×200 Off, 356×200 16:9, 467×200 21:9. A per-frame guard crops only single-player race pictures whose bands are empty. Menus and split screen are unchanged. Engine patch 0012 (`present_window`). HUD Edges map/marker split fixed (the HUD moves to sprites on frames 3409–3585). 16 tracks, 181 race pictures checked; margin audits 0; Off hashes unchanged. Before release: refresh the README screenshots. | `WIDESCREEN.md` |
+| Quit from the menu (owner request) | The in-game menu (Esc / Back+RB) has a **Quit game** row (two presses) that exits through the normal window-close path, so settings are saved. Meant for controller-only play on Steam Deck. Engine patch 0013. Compiles; needs a hands-on check in the next play build. | |
 | Options | Widescreen / 60 fps / HUD / Hide overscan in the launcher and the in-game overlay (gamepad: Back+RB), persisted in `settings.ini [mods.*]`. | `RELEASING.md` |
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
 | Release packaging | macOS `TG2Recomp.app` (universal2; finds the ROM beside the `.app`), single-file Linux `TG2Recomp-x86_64.AppImage` plus tarball, Windows zip. `v*` tags build a **draft** release with SHA256SUMS. Validated on CI run 42222837085: every platform smoke-ran 600 frames with the ROM auto-detected. | `RELEASING.md` |
@@ -116,8 +117,7 @@ to be fitted from the stock ramps rather than invented.
   engine sound is a 68k FM effect, not a PCM sample.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
-- Each country's second championship race is still unvisited (it needs
-  progression).
+- Task 22 found that the password `stage` field is the **difficulty**, not a race selector. The game has 64 races (16 countries × 4). Coverage is in progress.
 - Quiver Launcher listing: the owner submits the project after the first real release (v0.1.0) exists, so
   Quiver can review it. Window screenshot for the form: `~/Pictures/tg2-quiver-screenshot.png` (outside git).
 - First public release: the owner decides when to make the repo public.
