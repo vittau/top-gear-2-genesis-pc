@@ -49,8 +49,17 @@ int main(void)
     failures += check("/home/u/Games/", 0, NULL);
     failures += check("/home/u/Games/Contents/MacOS/", 0, NULL);
     failures += check("/home/u/Games/Other.app/Contents/Resources/", 0, NULL);
+    failures += genesis_macos_is_installed_location("/Applications/") != 1;
+    failures += genesis_macos_is_installed_location("/Users/u/Applications/") != 1;
+    failures += genesis_macos_is_installed_location("/Applications/Games/") != 1;
+    failures += genesis_macos_is_installed_location("/Applications") != 1;
+    failures += genesis_macos_is_installed_location("/Users/u/Games/") != 0;
+    failures += genesis_macos_is_installed_location("/Users/u/Downloads/TG2Recomp-macos/") != 0;
+    failures += genesis_macos_is_installed_location("/Users/u/MyApplications/") != 0;
+    failures += genesis_macos_is_installed_location("/Users/u/Applications Old/") != 0;
+    failures += genesis_macos_is_installed_location("./") != 0;
     if (failures) return 1;
-    puts("app paths: 8 cases passed");
+    puts("app paths: 17 cases passed");
     return 0;
 }
 '''
@@ -63,7 +72,7 @@ def main():
         source.write_text(SOURCE)
         executable = directory / "check"
         subprocess.run(
-            [os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
+            [os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
              "-DGENESIS_APP_PATHS_TEST",
              "-I", str(ROOT / "segagenesisrecomp/runner"),
              str(source), "-o", str(executable)],

@@ -308,7 +308,11 @@ TG2Recomp.app/Contents/Resources/TG2Recomp.icns
 ```
 
 The `.app` is unsigned and not notarized, so macOS quarantines downloaded
-copies. Either right-click the app > Open > Open the first time, or run once:
+copies. Right-click > Open no longer bypasses Gatekeeper on current macOS, and
+*Privacy & Security → Open Anyway* can lose its confirmation dialog: the
+`syspolicyd` evaluation then waits forever ("waiting on another evaluation")
+and the icon bounces until a restart (seen on macOS 27.2, 2026-11-07). The
+reliable step is to run once:
 
 ```sh
 xattr -dr com.apple.quarantine TG2Recomp.app
@@ -317,11 +321,15 @@ xattr -dr com.apple.quarantine TG2Recomp.app
 Gatekeeper does not affect a build produced locally by CI's checkout, only
 downloaded archives.
 
-**Where files go.** The player drops the ROM beside `TG2Recomp.app`; engine
-patch 0007 also searches the folder containing the bundle, not just
-`Contents/MacOS`. Settings, logs and saves are written beside the `.app` when
-that folder is writable; when it is read-only (for example in `/Applications`)
-they go to `~/Library/Application Support/TG2Recomp/`. Read-only assets stay
+**Where files go.** An app in an Applications folder (`/Applications`,
+`~/Applications` or a subfolder) is an installed app (engine patch 0019):
+settings, logs, saves and the cartridge live in
+`~/Library/Application Support/TG2Recomp/`. The cartridge search covers that
+folder, and a ROM picked in the launcher is copied there after its CRC check,
+so later launches boot straight in. Anywhere else the app is portable (patch
+0007): the player drops the ROM beside `TG2Recomp.app`, the search covers the
+folder containing the bundle, and data is written beside the `.app` when that
+folder is writable, otherwise to Application Support. Read-only assets stay
 inside the bundle, where SDL reports `Contents/Resources`.
 
 ## Windows notes

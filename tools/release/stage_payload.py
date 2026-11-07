@@ -91,12 +91,16 @@ LINUX_EXTRA = """STEAM DECK / STEAMOS (controller only)
 
 MACOS_EXTRA = """macOS: FIRST LAUNCH (unsigned build)
   This build is not signed or notarized. macOS quarantines downloaded files,
-  so the first launch may be blocked. Either:
-    - right-click {app_short} > Open > Open, or
-    - run once: xattr -dr com.apple.quarantine {app}
-  Put the ROM next to {app} (in the same folder as the bundle), not inside it.
-  Settings, logs and saves are written next to {app} when that folder is
-  writable, otherwise in ~/Library/Application Support/TG2Recomp/.
+  so the first launch is blocked. Move {app} to Applications, then run once:
+    xattr -dr com.apple.quarantine /Applications/{app}
+  (System Settings > Privacy & Security > Open Anyway also works; if the icon
+  then keeps bouncing, restart the Mac and run the command above.)
+  On the first launch, pick the ROM in the launcher. An app in Applications
+  copies it to ~/Library/Application Support/TG2Recomp/, together with
+  settings, logs and saves, and boots straight in from then on.
+  Portable: outside Applications, put the ROM next to {app} (same folder as
+  the bundle, not inside it); data is written next to {app} when that folder
+  is writable.
 
 """
 
@@ -220,7 +224,6 @@ def build_info_text(args):
         quarantine = (
             "Gatekeeper: the build is unsigned and not notarized; after download run\n"
             "  xattr -dr com.apple.quarantine TG2Recomp.app\n"
-            "or right-click TG2Recomp.app > Open the first time.\n"
         )
     return (
         f"game=Top Gear 2 (USA)\n"

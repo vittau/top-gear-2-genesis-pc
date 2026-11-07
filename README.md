@@ -150,15 +150,23 @@ and run it.
 
 ### macOS
 
-1. Extract `TG2Recomp-macos.zip`.
-2. Put your ROM in the same folder as `TG2Recomp.app`, next to the app, not
-   inside it.
-3. Open `TG2Recomp.app`.
+1. Extract `TG2Recomp-macos.zip` and move `TG2Recomp.app` to
+   *Applications*.
+2. The app is not signed with an Apple Developer ID or notarised, so clear
+   the download quarantine once in Terminal:
+   `xattr -dr com.apple.quarantine /Applications/TG2Recomp.app`
+3. Open `TG2Recomp.app`. On the first launch, pick your ROM in the launcher.
+   The app copies it to `~/Library/Application Support/TG2Recomp/` and boots
+   straight into the game from then on, so the original file can go.
 
-The app is not signed with an Apple Developer ID or notarised. If macOS
-blocks it, right-click the app and choose *Open*, then *Open* again, or allow
-it under *System Settings → Privacy & Security → Open Anyway*. See
-[Apple's instructions](https://support.apple.com/en-us/102445).
+Instead of the Terminal step you can allow the app under *System Settings →
+Privacy & Security → Open Anyway* (see
+[Apple's instructions](https://support.apple.com/en-us/102445)). If the icon
+then keeps bouncing and the game never opens, macOS lost its confirmation
+dialog: restart the Mac and use the Terminal step.
+
+To keep the game portable instead, leave `TG2Recomp.app` in any folder
+outside *Applications* and put the ROM in the same folder, next to the app.
 
 ### Settings, saves and updating
 
@@ -166,9 +174,10 @@ If no matching ROM is found next to the program, the launcher lets you pick
 one.
 
 `settings.ini`, save states and logs are written next to the executable. On
-macOS they go next to `TG2Recomp.app`, or to
-`~/Library/Application Support/TG2Recomp/` when that folder is read-only (for
-example `/Applications`). Keep the folder writable.
+macOS an app in *Applications* keeps them, and the imported ROM, in
+`~/Library/Application Support/TG2Recomp/`. A portable copy elsewhere writes
+them next to `TG2Recomp.app`, or to that Application Support folder when its
+own folder is read-only.
 
 Your championship progress is kept by the game's own passwords, as on the
 cartridge. To update, quit the game and replace the program files, keeping
