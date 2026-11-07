@@ -252,6 +252,77 @@ def same_process_case(name, args, mode):
     return ev
 
 
+def two_p_case(name, args):
+    """Save in a 2P split-screen race (scripted boot), load in a fresh process.
+
+    The 2P setup waits for pad port 1, which `set_input` cannot reach, so the
+    boot uses the runner input script from tools/tg2_split_race.py; the
+    quickstate must carry the 2P flag ($FF189E) and both panels must keep
+    animating after the load."""
+    from tg2_split_race import build_script
+    out = args.out / name
+    out.mkdir(parents=True, exist_ok=True)
+    state = out / 'race.state'
+    script, race_start = build_script(4, 280, [3700])
+    (out / 'split2p.input').write_text(script.text())
+    ev = dict(case=name, kind='2p', mode='defaults')
+    r = Runner(port=args.port, out=out / 'save', widescreen='16:9',
+               max_frames=script.frame + 500,
+               env_extra={'TG2_RACE_60FPS': '1', 'TG2_HIDE_OVERSCAN': '1'},
+               extra_args=['--turbo', '--input-script', str(out / 'split2p.input')],
+               video_driver='offscreen')
+    try:
+        r.start()
+        st = None
+        while r.frame() < script.frame:
+            r.wait_frame(r.frame() + 120)
+            st = r.state_and_frame()
+            if st.clock > 0 and st.two_p == 1:
+                break
+        ev['reached_race'] = bool(st and st.clock > 0)
+        ev['two_p_before'] = r.ram16(0x189E)
+        # The scripted 2P boot's last START can land just after GO and pause
+        # the countdown; a paused clock is not a freeze, so unpause first.
+        r.wait_frame(r.frame() + 60)
+        ev['save_shot'] = str(r.screenshot(out / 'save' / 'saved.png'))
+        c0 = r.state_and_frame().clock
+        r.wait_frame(r.frame() + 20)
+        ev['clock_live_before'] = r.state_and_frame().clock != c0
+        ev['clock_at_save'] = r.state_and_frame().clock
+        ev['saved'] = save_moment(r, state)
+    finally:
+        r.stop()
+    if not ev['saved']:
+        ev['result'] = 'save-refused'
+        return ev
+    r2 = make_runner(args.port, out / 'load', MODES['defaults'])
+    try:
+        r2.start()
+        r2.wait_frame(600)
+        ev['loaded'] = bool(r2.command('load_state', path=str(state)))
+        ev['two_p_after'] = r2.ram16(0x189E)
+        ev['after_load'] = hold_and_measure(r2, name, args.frames, pad=0)
+        if not ev['clock_live_before']:
+            # The scripted 2P boot leaves the countdown paused (task 22 note),
+            # so the correct expectation is the same paused picture, not a
+            # running clock. START over TCP does not clear that pause.
+            ev['saved_vs_loaded'] = image_diff(ev['save_shot'],
+                                               ev['after_load']['shots'][0])
+    finally:
+        ev['exit_code'] = r2.stop()
+        ev['manifests'] = manifest_counts(out / 'load')
+    a = ev['after_load']
+    if not ev['clock_live_before']:
+        same = ev['saved_vs_loaded']['changed_fraction'] <= 0.01
+        ev['live'] = bool(same and ev['two_p_after'] == 1)
+        ev['result'] = 'resumed-paused' if ev['live'] else 'frozen'
+        return ev
+    ev['live'] = bool(a['distinct_pictures'] > 2 and a['clock_delta'] > 0
+                      and ev['two_p_after'] == 1)
+    ev['result'] = 'live' if ev['live'] else 'frozen'
+    return ev
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -277,6 +348,7 @@ def main():
                                           at_start=1, goto='password'),
         'menu-setup': lambda: menu_case('menu-setup', a, 'defaults',
                                        at_start=1, goto='setup'),
+        'race-2p': lambda: two_p_case('race-2p', a),
     }
     names = [n for n in cases if not a.only or n in a.only.split(',')]
     results = []
@@ -292,7 +364,8 @@ def main():
               flush=True)
         (a.out / 'summary.json').write_text(
             json.dumps(dict(cases=results), indent=2) + '\n')
-    bad = [r for r in results if r.get('result') != 'live']
+    bad = [r for r in results
+           if r.get('result') not in ('live', 'resumed-paused')]
     print(f"{len(results) - len(bad)}/{len(results)} live")
     return 1 if bad else 0
 

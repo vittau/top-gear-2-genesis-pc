@@ -688,7 +688,7 @@ boot/title chain: the guest clock and RAM advanced while the picture stayed on
 
 | Screen | Boundary instruction | Resume PC | Verified |
 |---|---|---|---|
-| Race (1P) | `$0065F2` picture-ready wait, once per frame | `$0065F2` | live, pixel-identical to the saved frame |
+| Race (1P and 2P) | `$0065F2` picture-ready wait, once per frame | `$0065F2` | live, pixel-identical to the saved frame |
 | Title | `$001E9D8` START spin | `$001E9D8` | live, pixel-identical, START still advances |
 | Main menu | `$001EBF6` page draw/input loop | `$001EBF6` | live, pixel-identical, START still advances |
 | Password entry / game setup | no declared loop top | — | save **refused** ("Save unavailable in the current game mode", no file written) |
@@ -708,8 +708,8 @@ picture changed, the race clock advanced, and the manifests stayed empty.
 | Case | Options at save | Distinct pictures / 420 frames | Clock delta | Speed | Manifests | Evidence |
 |---|---|---:|---:|---|---|---|
 | `race-off` | 4:3, stock rate | 8 | +24 794 302 | 82 → 3803 | 0/0/0/0 | `build/qual/qa-state-matrix/race-off` |
-| `race-60fps` | 16:9 + 60 fps | 8 | +24 794 302 | 82 → 3768 | 0/0/0/0 | `build/qual/qa-state-matrix/race-60fps` |
-| `race-ws169` | 16:9, stock rate | 8 | +24 794 302 | 82 → 3803 | 0/0/0/0 | `build/qual/qa-state-matrix/race-ws169` |
+| `race-60fps` | 16:9 + 60 fps | 8 | +24 794 302 | 82 → 3709 | 0/0/0/0 | `build/qual/qa-state-matrix/race-60fps` |
+| `race-ws169` | 16:9, stock rate | 8 | +24 794 302 | 82 → 3709 | 0/0/0/0 | `build/qual/qa-state-matrix/race-ws169` |
 | `race-both` | 16:9 + 60 fps, RACE SOUND BOTH | 8 | +24 794 302 | 82 → 3803 | 0/0/0/0 | `build/qual/qa-state-matrix/race-both` |
 | `race-mid` | 16:9 + 60 fps, 240 frames into the race | 8 | +24 794 302 | 4270 → 3274 (throttle only) | 0/0/0/0 | `build/qual/qa-state-matrix/race-mid` |
 | `rewind` | same process save → run → load | 8 | +24 794 302 | 82 → 3709 | 0/0/0/0 | `build/qual/qa-state-matrix/rewind` |
@@ -717,6 +717,7 @@ picture changed, the race clock advanced, and the manifests stayed empty.
 | `menu-main` | main menu | static (pixel-identical) | — | — | 0/0/0/0 | `build/qual/qa-state-matrix/menu-main` |
 | `menu-password` | password entry | save refused | — | — | — | `build/qual/qa-state-matrix/menu-password` |
 | `menu-setup` | game setup | save refused | — | — | — | `build/qual/qa-state-matrix/menu-setup` |
+| `race-2p` | 2P split screen, 16:9 + 60 fps | resumed paused (pixel-identical) | — | — | 0/0/0/0 | `build/qual/qa-state-matrix/race-2p` |
 
 The loaded menu frame is the saved frame: both menu cases compare the saving
 process's screenshot with the loading process's first frame (0.0 % differing
@@ -738,6 +739,10 @@ Stock identity: with every presentation option off, frame 60
 (`tools/verify_widescreen.py --modes off`, `build/qual/qa-ws-off3`), and all
 four manifests stay empty.
 
-2P: save/load uses the same race loop (`$0065F2`) and the state carries
-`$FF189E`; the 2P full-race drive still has the known scripted-boot pause
-(section above), so no separate 2P quickstate run was added this round.
+2P: the scripted boot reaches the split-screen race and saves at `$0065F2`;
+`$FF189E` is 1 before and after the fresh-process load, the loaded picture is
+pixel-identical to the saved one (0.0 %), and the manifests stay empty. That
+boot leaves the game's own PAUSE overlay up (the known task-22 scripted-boot
+pause) and TCP `set_input` does not clear it, so the resumed 2P picture is the
+correct paused race rather than a live one; a full unpaused 2P race is still
+the open item from the 2P section above.
