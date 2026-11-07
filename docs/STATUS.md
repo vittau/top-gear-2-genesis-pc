@@ -91,7 +91,12 @@ high resolution. Do it as a data-driven replacement pack keyed by the
 original tile/pattern content (like Dolphin or RT64 texture packs), so the
 game logic is untouched, missing entries fall back to the original art, and
 the pack is optional. The redraws must be faithful HD versions of the
-originals, not new designs. It pairs with task 17 (widescreen menus). Before
+originals, not new designs. It pairs with task 17 (widescreen menus). Acceptance test (owner):
+downsampling each HD asset back to the original size must give art very close
+to the original tile. A tool scores every pack entry: box-filter downsample,
+quantise to the Genesis 9-bit palette, then compare per pixel against the
+original, with a threshold. Entries that fail are rejected. This is the same
+idea as the car-colour test: the enhancement must reproduce the stock asset. Before
 publishing a pack, decide how to distribute it: it is a derivative of the
 game's copyrighted art, so it is a riskier thing to host than code. Make it an option; at 1× with it off, the output stays byte-identical.
 First steps: map the LOD tables (pattern sets per object and distance
