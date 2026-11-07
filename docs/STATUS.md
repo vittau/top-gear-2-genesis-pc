@@ -51,8 +51,10 @@ submodule pin is upstream `dd520f1`.
 - **Final phase (deferred by the owner):** widescreen for *every* extendable non-race screen (track intro with scrolling scenery, menus, shop, results...). Spec: `docs/tasks/17-widescreen-menu-screens.md`.
 
 - **Approved for after BOTH merges (owner, 2026-11-06):** a small optional audio task. It adds a "clean FM" option
-  (ymfm YM3438 variant, no ladder distortion; default stays the stock YM2612 sound) and a music/SFX
-  balance for BOTH. Rejected: replacing the engine sound with samples from other games or versions. The
+  (ymfm YM3438 variant, no ladder distortion; default stays the stock YM2612 sound) plus separate
+  **Music volume** and **SFX volume** sliders in the in-game Esc menu, next to the existing master Volume,
+  in every sound mode (owner request). Default 100% stays byte-identical. Classify by source: the Z80
+  music driver is music. The 68k FM/PSG engine and the race Z80 SFX image are SFX. Rejected: replacing the engine sound with samples from other games or versions. The
   engine sound is a 68k FM effect, not a PCM sample.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
