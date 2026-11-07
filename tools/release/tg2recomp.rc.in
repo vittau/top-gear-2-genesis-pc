@@ -1,0 +1,2 @@
+// Application icon. Absolute configured path works with windres and MSVC rc.exe.
+1 ICON "@TG2_WINDOWS_ICON@"

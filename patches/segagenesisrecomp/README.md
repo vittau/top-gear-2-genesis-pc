@@ -33,3 +33,9 @@ commit; local fixes remain visible as its applied working-tree diff.
 - `0011-writer-routed-second-sound-chip.patch`: tag every queued FM/PSG write with its writer and, when the game asks for it, feed a second virtual YM2612+SN76489 from the 68K-origin writes while the first chip keeps the Z80 music driver (`audio_set_chip_routing`). Stock modes keep the single chip and are untouched; the per-chip timer/status model keeps chip A's timer B as the music clock (patch 0010's free-running phase included) and gives the 68K side its own. `audio_mixer_chip_output()` exposes each chip's stream for the BOTH acceptance export (`GENESIS_AUDIO_CHIPDUMP`). The 68K no longer stalls the Z80 for its chip writes while routing is on, because those go to the second chip.
 
 - `0012-game-video-presented-window.patch`: let a game video provider crop empty scanline bands from the presented picture (a `present_window` hook called once per completed frame, so captures, hashes and the margin audit keep all native rows) — Top Gear 2's race overscan crop needs it.
+
+- `0013-runtime-menu-quit-row.patch`: enable the recomp-ui standard "Quit game" row (two presses) in the in-game menu and leave through the normal window-close path, so a controller-only player (Steam Deck) can exit without the system menu.
+
+- `0015-game-application-icon.patch`: expose game-owned desktop app id and embedded RGBA window icon, set SDL2 Wayland/X11 identity before video initialization, and call `SDL_SetWindowIcon` for the gameplay window.
+
+- `0016-photo-freeze-hotkey.patch`: P freezes emulation on the current frame without the game's own PAUSE screen (P or Esc resumes), so a player can line up a clean screenshot of the window. Nothing changes until P is pressed.
