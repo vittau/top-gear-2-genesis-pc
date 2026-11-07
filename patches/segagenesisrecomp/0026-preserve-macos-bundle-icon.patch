@@ -1,0 +1,46 @@
+From 3e5d6961344daec41a82700eb2547cb74491a622 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 20:14:05 -0300
+Subject: [PATCH] Preserve the macOS bundle application icon
+
+Do not replace the bundle ICNS with the embedded small SDL window icon on Apple hosts. Keep the launcher window_icon_path explicitly NULL there; its SDL2 and SDL3 icon setters return before decoding or setting an icon.
+---
+ runner/main.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/runner/main.c b/runner/main.c
+index 8b3798a..278f225 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -2199,6 +2199,11 @@ static int run_recomp_launcher(const char *ltitle, const char *initial_rom, char
+         RecompLauncherCGameInfo gi;
+         memset(&gi, 0, sizeof gi);
+         gi.name                 = g_game_spec.display_name;
++#ifdef __APPLE__
++        /* Cocoa treats a window icon as the application-wide Dock/Cmd+Tab
++         * icon. Preserve the bundle's multi-resolution ICNS in the launcher. */
++        gi.window_icon_path = NULL;
++#endif
+         gi.region               = "NTSC-U (USA)";
+         gi.expected_crc         = g_game_spec.expected_rom_crc32;
+         gi.has_expected_crc     = g_game_spec.expected_rom_crc32 != 0;
+@@ -3098,6 +3103,9 @@ int main(int argc, char *argv[])
+         fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+         return 1;
+     }
++#ifndef __APPLE__
++    /* SDL's Cocoa backend assigns NSApp.applicationIconImage here. The
++     * embedded cross-platform 32px window icon must not replace bundle ICNS. */
+     if (g_game_spec.icon_rgba && g_game_spec.icon_width > 0 &&
+         g_game_spec.icon_width <= 1024 && g_game_spec.icon_height > 0 &&
+         g_game_spec.icon_height <= 1024) {
+@@ -3110,6 +3118,7 @@ int main(int argc, char *argv[])
+             SDL_FreeSurface(icon);
+         }
+     }
++#endif
+     fprintf(stderr, "[VIDEO] window %dx%d (%s)\n", win_w, win_h,
+             (custom_video_on || ws_armed()) ? "16:9 widescreen" : "4:3");
+ 
+-- 
+2.54.0 (Apple Git-157)

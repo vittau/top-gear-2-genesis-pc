@@ -47,3 +47,5 @@ commit; local fixes remain visible as its applied working-tree diff.
 - `0017-game-hides-internal-resolution.patch`: a `GameSpec.hide_internal_resolution` flag drops the runtime menu's "Internal resolution" row for games whose own video provider ignores the supersampling scale (Top Gear 2 today: the row did nothing visible).
 
 - `0018-quickstate-frame-boundary-and-resume.patch`: a game hook may offer a per-frame instruction as a host-snapshot boundary (`glue_state_boundary`), which parks a queued save at a repeatable point instead of interrupting whatever instruction the save command landed on, and the adapter may name the PC the game fiber restarts at after a load (`state_resume_pc`). Top Gear 2's screens spin on their own hardware flags, so without this a quickstate loaded in a fresh process resumed inside the new process's boot chain and the picture froze while the guest ran on.
+
+- `0026-preserve-macos-bundle-icon.patch`: on macOS keep the bundle ICNS for Dock/Cmd+Tab instead of assigning the embedded 32px SDL window icon; the host passes no launcher icon override.
