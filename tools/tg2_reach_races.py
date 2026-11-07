@@ -55,8 +55,6 @@ def main():
     p.add_argument('--mode', default='defaults')
     p.add_argument('--only', default='',
                    help='comma list of country-slot (1-based slot), e.g. 3-2,14-4')
-    p.add_argument('--seconds', type=int, default=0,
-                   help='optional: cap the race window instead of driving to the finish')
     p.add_argument('--no-lock', action='store_true',
                    help='do not wrap each run in the machine-wide heavy lock')
     a = p.parse_args()
