@@ -240,10 +240,13 @@ UIs) describes the crop, not only the blanking.
 ### Why the crop is safe: the active-line evidence
 
 `tools/check_active_lines.py` classifies every presented row as *picture*
-(any colour that is not black or one of the two stock window-mark colours),
-*window* (black plus those exact marks) or *empty* (all black). Every capture
-below is a stock picture: widescreen Off, 60 fps Off and Hide overscan Off, so
-all 224 lines are visible.
+(any colour that is not black or one of the three stock window-mark colours:
+red `$E0`-ladder 206/0/0, orange 206/87/49 and grey 87/87/87, all confined to
+native columns 16..31), *window* (black plus those exact marks) or *empty*
+(all black). A capture whose top band holds nothing but those marks is a race
+picture — exactly the picture the crop removes. Every capture below is a stock
+picture: widescreen Off, 60 fps Off and Hide overscan Off, so all 224 lines are
+visible.
 
 `tools/tg2_active_lines.py` reaches a track through the game's own password
 screen, then captures the countdown, the first seconds, cruising, a nitro
@@ -255,7 +258,8 @@ burst and both pause screens. Results per country are in
 
 The crop changes only which rows are presented; every renderer coordinate stays
 native. Margins, sprite capture and the HUD relocation therefore keep working
-row by row: the HUD raster lines are the top 60 of the 200 presented lines.
+row by row: the HUD rows (native 14..94) are simply the top of the presented
+picture.
 Centered and Edges both keep their documented anchoring (Edges moves the two
 clusters by the margin, which is now computed from the 200-line height:
 50/50 at 16:9, 105/106 at 21:9).
