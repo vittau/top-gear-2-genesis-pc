@@ -961,8 +961,8 @@ static int present_window(int native_w, int native_h, int *first, int *last) {
         *first = CROP_TOP;
         *last = native_h - CROP_BOTTOM;
         ++crop_frames;
-    } else if (crop_race_ok) {
-        /* A race picture kept its full height because a band was not empty. */
+    } else if (tg2_video_get_hide_overscan() && crop_race_ok) {
+        /* The crop was wanted but this picture draws into a band. */
         ++crop_withheld;
     }
     return crop;

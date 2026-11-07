@@ -31,6 +31,9 @@ p.add_argument('--route', type=Path, default=ROOT/'game/baseline-route.json')
 p.add_argument('--end-frame', type=int, default=5600)
 p.add_argument('--shots', default='', help='extra exact-frame PNG captures')
 p.add_argument('--turbo', action='store_true')
+p.add_argument('--adaptive-height', type=int, default=200,
+               help='presented race height for the adaptive-width probes '
+                    '(200 with the overscan crop, 224 with it off)')
 a = p.parse_args()
 a.exe, a.out = a.exe.resolve(), a.out.resolve()
 a.out.mkdir(parents=True, exist_ok=True)
@@ -103,9 +106,12 @@ for mode in a.modes.split(','):
     diagnostics = []
     margin_shots = []
     resize_actions = []
+    adaptive_expected = [max(320, int(a.adaptive_height * dw / dh + 0.5))
+                         for dw, dh in [(1600,900),(1234,567),(1000,1000),(3840,720)]]
     if mode == '21:9' and not a.sweep and not a.margin_audit:
-        for frame, dw, dh, expected in [(4600,1600,900,398), (4700,1234,567,488),
-                                        (4800,1000,1000,320), (4900,3840,720,1195)]:
+        for (frame, dw, dh), expected in zip([(4600,1600,900), (4700,1234,567),
+                                              (4800,1000,1000), (4900,3840,720)],
+                                             adaptive_expected):
             resize_actions += [(frame, 'configure', (dw,dh)), (frame+20, 'capture', expected)]
         resize_actions += [(5000,'off',None), (5020,'capture',256), (5100,'restore',None)]
     with (out/'stdout.log').open('w') as stdout, (out/'stderr.log').open('w') as stderr:
@@ -178,7 +184,7 @@ for mode in a.modes.split(','):
         summary[mode]['margins'] = check(out/'margins.csv')
     if mode == '21:9' and not a.sweep and not a.margin_audit:
         assert not resize_actions, resize_actions
-        summary[mode]['adaptive_widths_and_disable'] = [398,488,320,1195,256]
+        summary[mode]['adaptive_widths_and_disable'] = adaptive_expected + [256]
     if mode != 'off':
         assert any(d['video'].get('sat_matches', 0)>0 for d in diagnostics), 'captured mappings never matched native SAT pieces'
         assert margin_shots or a.margin_audit, 'no captured sprite pixel ever reached the added margins'
