@@ -59,6 +59,22 @@ option; with it off, the picture stays byte-identical. A worker should first
 answer how the sky is drawn today: the backdrop colour or background-layer
 tiles, and whether raster palette changes already occur.
 
+**Enhancement idea for after 0.1.0 (owner, 2026-11-07): analog control.**
+Proportional steering from an analog stick, with optional analog throttle and
+brake on the triggers, similar to Cannonball (the OutRun recomp). Top Gear 2
+only reads a digital pad, so there are two levels:
+- Quick: pulse LEFT/RIGHT with a duty cycle proportional to the stick. It is
+  game-agnostic but can feel jittery.
+- Proper: find the routine that turns LEFT/RIGHT into the car's steering
+  delta, and inject a scaled value from the stick there. Add a deadzone,
+  a response curve and a sensitivity option.
+
+Treat the triggers the same way only if the throttle model makes partial input
+meaningful. Then check feel and lap times against the D-pad, cover 2P, and keep
+it an option. With it off, input stays byte-identical. First steps: map the
+steering and throttle code in RAM and ROM, and see how Cannonball maps its
+wheel.
+
 **Enhancement idea for after 0.1.0 (owner, 2026-11-06): arbitrary car colours.**
 An HSL picker that **replaces the game's own car-colour page** in the
 pre-race menu. It is in-game and drawn in the game's menu style, not in the Esc
