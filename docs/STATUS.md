@@ -88,7 +88,7 @@ to be fitted from the stock ramps rather than invented.
 | Task | Worktree | State |
 |---|---|---|
 | 21 Crop race black bands + HUD Edges map split (owner request) | `tg2-race-crop` | The owner chose to crop the 8 top / 16 bottom black lines of races when Hide overscan is On. Also fixes the HUD Edges map/marker split. |
-| 20 BOTH via a second virtual chip (owner bug) | `tg2-both-dualchip` | Fourth playtest: BOTH sounds like noise because music and SFX fight over the same FM channels (shared-chip mix). Fix: route Z80 writes to chip A and 68k writes to chip B, then mix. Acceptance: BOTH ≈ MUSIC + SFX. Also fixes the menu showing MUSIC after BOTH. |
+| 20b BOTH: second Z80 core for the race SFX image | `tg2-both-dualchip` | Dual-chip BOTH merged: music on chip A, 68k FM on chip B; no shared-chip noise; page re-entry fixed. Missing: the engine and nitro PCM, which run on a Z80 SFX image that needs its own Z80 core. Prototype reverted (the upload side effects stopped both drivers). Resumes when a worker slot frees. If it isn't clean by the release candidate, BOTH ships labelled as missing car sounds, or is hidden. |
 
 ## Questions for the owner (queued for 09:00)
 
@@ -109,7 +109,11 @@ to be fitted from the stock ramps rather than invented.
   (ymfm YM3438 variant, no ladder distortion; default stays the stock YM2612 sound) plus separate
   **Music volume** and **SFX volume** sliders in the in-game Esc menu, next to the existing master Volume,
   in every sound mode (owner request). Default 100% stays byte-identical. Classify by source: the Z80
-  music driver is music. The 68k FM/PSG engine and the race Z80 SFX image are SFX. Rejected: replacing the engine sound with samples from other games or versions. The
+  music driver is music. The 68k FM/PSG engine and the race Z80 SFX image are SFX.
+  Rejected: engine samples from other games or versions. Correction from task 20: the engine and
+  nitro **are** PCM, a 6.6 kHz DAC player in the race Z80 SFX image (ROM `$0701F6`). The 68k FM
+  part is only a drone. So the owner's "better version of the same asset" fits here: band-limited
+  resampling of the original PCM instead of the DAC's sample-and-hold. That is post-0.1.0 too. Rejected: replacing the engine sound with samples from other games or versions. The
   engine sound is a 68k FM effect, not a PCM sample.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
