@@ -46,6 +46,14 @@ major bugs. Release path:
    `v0.1.0` with the owner's go-ahead → the owner publishes the draft and
    submits to Quiver.
 
+Release bugs from owner playtests (2026-11-07):
+- **Blocker:** with BOTH persisted in `settings.ini`, the music is silent from
+  boot. Sent to the BOTH worker; it is fixed before the second Z80.
+- Tier-3 floor ran `$00E46C` / `$00445A` in real play. Sent to task 22.
+- Minor: "Internal resolution" in the menu does nothing visible for TG2,
+  because the game renders through its own `GameVideo` at native resolution.
+  Hide the option or make it meaningful.
+
 Deferred until after 0.1.0: the clean FM option and music/SFX volumes, task
 17 (widescreen menus), and the Auckland music re-attack divergence.
 
