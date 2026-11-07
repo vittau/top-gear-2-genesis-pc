@@ -28,6 +28,9 @@
 #include "genesis_runtime.h"
 #include "game_spec.h"
 #include "genesis_machine.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* game/tg2_options.c: the RACE SOUND choice is a player option. */
 extern void tg2_options_race_sound_changed(int mode);
@@ -35,6 +38,18 @@ extern void tg2_options_race_sound_changed(int mode);
 /* engine/runner/audio/event_queue.h: writer-routed second virtual chip. On in
  * BOTH only, so stock MUSIC/SFX keep the single chip and stay byte-identical. */
 void audio_set_chip_routing(int dual);
+/* Second Z80 core for the race SFX PCM image, and the 68K-access routing
+ * predicate that keeps its upload off the resident music driver. */
+void audio_second_z80_set_enabled(int on);
+/* Mirrors the engine's audio/event_queue.h contract (the game file does not
+ * include engine-internal headers). */
+enum {
+    AUDIO_Z80_ACCESS_RAM = 0,
+    AUDIO_Z80_ACCESS_BUSREQ = 1,
+    AUDIO_Z80_ACCESS_RESET = 2
+};
+typedef int (*AudioZ80RouteFn)(int access, uint16_t off, uint8_t value);
+void audio_set_z80_route_fn(AudioZ80RouteFn fn);
 
 /* Work-RAM addresses (see docs/RAM_MAP.md / docs/AUDIO.md). */
 #define RAM_SOUND_MODE   0x240Eu   /* word: 0 = SFX, 1 = MUSIC            */
@@ -79,6 +94,45 @@ static uint16_t page_value(void)
 static int both_active(void)
 {
     return s_mode == TG2_SOUND_BOTH;
+}
+
+/* ---- Second Z80 core: the race SFX PCM image -----------------------------
+ * In BOTH the 68K uploads the race SFX image (its routine at $0700C8) and its
+ * SFX engine later sends PCM sample commands to the image's ports at
+ * $A0025E..$A00261. Those 68K accesses to Z80 space must reach the second
+ * core's own RAM and reset/busreq lines; letting them hit the resident music
+ * driver is exactly what stopped both drivers in the first prototype (the
+ * upload overwrites all 8 KB and pulses the Z80 reset). The predicate is the
+ * game's, so the engine's stock paths are untouched when BOTH is off. */
+static int s_sfx_upload;            /* 68K is inside the SFX image upload   */
+static FILE *s_pcm_log;
+
+/* Env-gated command trace: every SFX-engine sample command, in every sound
+ * mode, straight from the writer's registers. Used to prove the BOTH command
+ * stream is SOUND EFFECTS'. */
+static void sfx_cmd_log(uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3)
+{
+    extern unsigned long g_snd_frame;
+    if (!s_pcm_log) {
+        const char *p = getenv("GENESIS_AUDIO_SFXPCM_TRACE");
+        if (!p || !*p) return;
+        s_pcm_log = fopen(p, "w");
+        if (!s_pcm_log) return;
+        fprintf(s_pcm_log, "# frame cmd d1 d2 d3\n");
+    }
+    fprintf(s_pcm_log, "%lu %u %u %u %u\n", g_snd_frame,
+            d0 & 0xFFu, d1 & 0xFFu, d2 & 0xFFu, d3 & 0xFFu);
+    fflush(s_pcm_log);
+}
+
+static int z80_route(int access, uint16_t off, uint8_t value)
+{
+    (void)value;
+    if (!both_active()) return 0;
+    if (s_sfx_upload) return 1;             /* image upload: RAM + control  */
+    if (access != AUDIO_Z80_ACCESS_RAM) return 0;
+    /* The SFX engine's sample-command ports. */
+    return off >= 0x25Eu && off <= 0x261u;
 }
 
 /* ---- Value presentation hooks -------------------------------------------
@@ -187,8 +241,20 @@ int tg2_audio_hook(uint32_t pc)
         return menu_value_handler();
 
     case 0x0700C8u:                    /* upload race SFX Z80 image */
-        /* Never overwrite the boot music driver while BOTH is selected. */
-        return both_active() ? 1 : 0;
+        /* In BOTH the upload really runs, but every Z80-space access it makes
+         * is routed to the second core (z80_route above), so the resident
+         * music driver keeps its RAM and its reset line. */
+        if (!both_active()) return 0;
+        s_sfx_upload = 1;
+        return 0;
+
+    case 0x070188u:                    /* upload routine's RTS */
+        s_sfx_upload = 0;
+        return 0;
+
+    case 0x0701DAu:                    /* SFX engine writes command $025E */
+        sfx_cmd_log(g_cpu.D[0], g_cpu.D[1], g_cpu.D[2], g_cpu.D[3]);
+        return 0;
 
     /* --- SFX-side policy sites: present 0 while BOTH is live --- */
     case 0x006530u:                    /* race init: read sound mode */
@@ -438,9 +504,12 @@ void tg2_audio_set_race_sound(int mode)
 {
     if (mode < TG2_SOUND_SFX || mode > TG2_SOUND_BOTH) return;
     s_mode = mode;
-    /* Two virtual chips only while BOTH is the choice; stock modes keep the
-     * single chip so their output stays byte-identical. */
+    /* Two virtual chips and a second Z80 core only while BOTH is the choice;
+     * stock modes keep the single chip and core so their output stays
+     * byte-identical. */
     audio_set_chip_routing(both_active());
+    audio_second_z80_set_enabled(both_active());
+    audio_set_z80_route_fn(z80_route);
 }
 
 /* Per-frame, before the guest runs: keep the engine's chip routing in step
@@ -449,6 +518,8 @@ void tg2_audio_set_race_sound(int mode)
 void tg2_audio_frame_pre(void)
 {
     audio_set_chip_routing(both_active());
+    audio_second_z80_set_enabled(both_active());
+    audio_set_z80_route_fn(z80_route);
 }
 
 /* Guest reset or state load: the cartridge reloads its boot value; the
@@ -458,7 +529,10 @@ void tg2_audio_reset(void)
     s_patched = 0;
     s_page_seen = 0;
     s_saved_n = 0;
+    s_sfx_upload = 0;
     audio_set_chip_routing(both_active());
+    audio_second_z80_set_enabled(both_active());
+    audio_set_z80_route_fn(z80_route);
 }
 
 static int race_sound_page_open(void)

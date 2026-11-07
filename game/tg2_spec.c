@@ -92,6 +92,8 @@ const GameSpec g_game_spec = {
     .expected_rom_crc32 = 0xBD3074D2u,
     .expected_rom_size = 0x100000u,
     .tier3_floor_default = 1,
+    /* tg2_video draws every frame itself; the supersampling scale is unused. */
+    .hide_internal_resolution = 1,
     .call_entry_point = tg2_entry,
     .call_vblank = tg2_vblank,
     .call_hblank = tg2_hblank,
