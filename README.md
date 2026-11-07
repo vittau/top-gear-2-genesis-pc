@@ -45,7 +45,8 @@ macOS (Apple Silicon and Intel).
 
 With every option off, the picture is byte-identical to the original game.
 
-Linux has been played on real hardware. The Windows and macOS builds pass
+Linux has been played on real hardware. The macOS build has been started and
+played into the menus on an Apple Silicon Mac. Windows and Intel Macs pass
 automated boot tests on CI but still need playtesting on real machines, and
 so does the Steam Deck. See [docs/STATUS.md](docs/STATUS.md) for the current
 state and open items.
@@ -174,15 +175,17 @@ If no matching ROM is found next to the program, the launcher lets you pick
 one.
 
 `settings.ini`, save states and logs are written next to the executable. On
-macOS an app in *Applications* keeps them, and the imported ROM, in
-`~/Library/Application Support/TG2Recomp/`. A portable copy elsewhere writes
+macOS an app in *Applications* keeps them in
+`~/Library/Application Support/TG2Recomp/`, together with the copy of the ROM
+you picked, and also looks for the ROM there. A portable copy elsewhere writes
 them next to `TG2Recomp.app`, or to that Application Support folder when its
 own folder is read-only.
 
 Your championship progress is kept by the game's own passwords, as on the
 cartridge. To update, quit the game and replace the program files, keeping
-`settings.ini` and your save states. Delete `settings.ini` to restore every
-option to its default.
+`settings.ini` and your save states. On macOS, replacing `TG2Recomp.app` in
+*Applications* is enough: your files stay in Application Support. Delete
+`settings.ini` to restore every option to its default.
 
 ## Controls and settings
 
@@ -285,6 +288,8 @@ tools/release/build-macos.sh --rom /path/to/your/tg2.bin --sdl "$sdl"
 ```
 
 This builds a universal2 `TG2Recomp.app` and its ZIP under `build-release/`.
+Add `--architectures arm64` (or `x86_64`) for a faster build for your own Mac
+only.
 
 ### Windows (x64, MSVC)
 
@@ -316,9 +321,9 @@ Packaging, CI and the release process are described in
 | [docs/RELEASING.md](docs/RELEASING.md) | Builds, packaging and releases |
 | [docs/RAM_MAP.md](docs/RAM_MAP.md), [docs/PASSWORDS.md](docs/PASSWORDS.md) | Reverse-engineering notes |
 
-Report bugs with your platform, the build version (in `BUILD-INFO.txt`), your
-settings, and the steps to reproduce them. Don't attach ROMs, save states or
-generated code.
+Report bugs with your platform, the build version (in `BUILD-INFO.txt`; on
+macOS inside the app, under `Contents/Resources`), your settings, and the
+steps to reproduce them. Don't attach ROMs, save states or generated code.
 
 ## Support the project
 

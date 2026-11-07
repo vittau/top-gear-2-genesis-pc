@@ -145,16 +145,25 @@ three platforms; it does not prove audio, input or rendering on a device.
 You need a Top Gear 2 (USA) ROM. The game identifies it by content (CRC32
 `BD3074D2`, 1,048,576 bytes), so any filename and extension work.
 
-**Windows, Linux tarball and macOS**
+**Windows and Linux tarball**
 
-1. Unpack the release: the Windows folder as-is, `TG2Recomp-linux-x86_64.tar.gz`
-   on Linux, or `TG2Recomp-macos.zip` on macOS.
-2. Put your ROM in the same folder as `TG2Recomp` / `TG2Recomp.exe`. On macOS
-   put it next to `TG2Recomp.app` (the folder containing the app bundle), not
-   inside the bundle.
-3. Run `TG2Recomp`, `TG2Recomp.exe`, or double-click `TG2Recomp.app`.
+1. Unpack the release: the Windows folder as-is, or
+   `TG2Recomp-linux-x86_64.tar.gz` on Linux.
+2. Put your ROM in the same folder as `TG2Recomp` / `TG2Recomp.exe`.
+3. Run `TG2Recomp` or `TG2Recomp.exe`.
 4. Done: no installation, setup, or emulator. If no matching ROM is found the
    launcher/picker opens instead.
+
+**macOS**
+
+1. Unpack `TG2Recomp-macos.zip` and move `TG2Recomp.app` to *Applications*.
+2. The app is not signed by Apple. Clear the download quarantine once, in
+   Terminal: `xattr -dr com.apple.quarantine /Applications/TG2Recomp.app`
+3. Open `TG2Recomp.app` and pick your ROM in the launcher. The app keeps a copy
+   and starts the game directly from then on.
+
+To keep it portable instead, leave `TG2Recomp.app` outside *Applications* and
+put the ROM next to it (in the folder containing the bundle, not inside it).
 
 **Linux AppImage (single file)**
 
@@ -167,9 +176,9 @@ You need a Top Gear 2 (USA) ROM. The game identifies it by content (CRC32
    has FUSE and the plain launch works.
 
 `settings.ini`, logs and saves are written next to the executable (Linux,
-Windows) or next to `TG2Recomp.app` on macOS. If that folder is read-only
-(for example `/Applications`), macOS uses
-`~/Library/Application Support/TG2Recomp/` instead.
+Windows). On macOS an app in *Applications* keeps them, with the ROM copy, in
+`~/Library/Application Support/TG2Recomp/`; a portable copy writes them next
+to `TG2Recomp.app`, or to that folder when its own folder is read-only.
 
 ## Instruções para o usuário (Português)
 
@@ -177,18 +186,26 @@ Você precisa da ROM de Top Gear 2 (USA). O jogo identifica o cartucho pelo
 conteúdo (CRC32 `BD3074D2`, 1.048.576 bytes), então qualquer nome e extensão
 funcionam.
 
-**Windows, tarball do Linux e macOS**
+**Windows e tarball do Linux**
 
-1. Descompacte a versão: a pasta do Windows, o
-   `TG2Recomp-linux-x86_64.tar.gz` no Linux, ou o `TG2Recomp-macos.zip` no
-   macOS.
-2. Coloque a ROM na mesma pasta de `TG2Recomp` / `TG2Recomp.exe`. No macOS,
-   coloque ao lado de `TG2Recomp.app` (na pasta que contém o aplicativo), não
-   dentro do pacote.
-3. Execute `TG2Recomp`, `TG2Recomp.exe`, ou dê um duplo clique em
-   `TG2Recomp.app`.
+1. Descompacte a versão: a pasta do Windows, ou o
+   `TG2Recomp-linux-x86_64.tar.gz` no Linux.
+2. Coloque a ROM na mesma pasta de `TG2Recomp` / `TG2Recomp.exe`.
+3. Execute `TG2Recomp` ou `TG2Recomp.exe`.
 4. Pronto: não precisa instalar, configurar nem usar emulador. Se nenhuma ROM
    compatível for encontrada, o seletor de arquivos abre.
+
+**macOS**
+
+1. Descompacte o `TG2Recomp-macos.zip` e mova o `TG2Recomp.app` para
+   *Aplicativos*.
+2. O app não é assinado pela Apple. Remova a quarentena do download uma vez,
+   no Terminal: `xattr -dr com.apple.quarantine /Applications/TG2Recomp.app`
+3. Abra o `TG2Recomp.app` e escolha a ROM no launcher. O app guarda uma cópia
+   e, daí em diante, abre o jogo direto.
+
+Para usar no modo portátil, deixe o `TG2Recomp.app` fora de *Aplicativos* e
+coloque a ROM ao lado dele (na pasta que contém o pacote, não dentro dele).
 
 **AppImage do Linux (arquivo único)**
 
@@ -201,15 +218,17 @@ funcionam.
    normalmente tem FUSE e a execução normal funciona.
 
 `settings.ini`, logs e saves são gravados ao lado do executável (Linux,
-Windows) ou ao lado de `TG2Recomp.app` no macOS. Se essa pasta for somente
-leitura (por exemplo `/Applications`), o macOS usa
-`~/Library/Application Support/TG2Recomp/`.
+Windows). No macOS, um app em *Aplicativos* os guarda, junto com a cópia da
+ROM, em `~/Library/Application Support/TG2Recomp/`; uma cópia portátil grava
+ao lado do `TG2Recomp.app`, ou nessa pasta quando a sua própria pasta é
+somente leitura.
 
 ## Options (English)
 
 Every port option can be changed with only a controller, either before
 starting or from the in-game menu, and is saved immediately in `settings.ini`
-next to the executable (`TG2Recomp` / `TG2Recomp.exe`).
+next to the executable (`TG2Recomp` / `TG2Recomp.exe`). On macOS it goes
+where the end-user instructions above describe.
 
 | Option | Values | Default | Persisted as |
 |---|---|---|---|
@@ -236,7 +255,8 @@ next to the executable (`TG2Recomp` / `TG2Recomp.exe`).
 
 Todas as opções do port podem ser alteradas só com o controle, antes de
 começar ou pelo menu dentro do jogo, e são salvas na hora em `settings.ini`,
-ao lado do executável (`TG2Recomp` / `TG2Recomp.exe`).
+ao lado do executável (`TG2Recomp` / `TG2Recomp.exe`). No macOS, ele fica
+onde as instruções para o usuário acima indicam.
 
 | Opção | Valores | Padrão | Salva como |
 |---|---|---|---|

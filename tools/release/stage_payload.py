@@ -39,26 +39,46 @@ WHAT YOU NEED
   1,048,576 bytes. Other regions and revisions are not supported.
 
 HOW TO RUN (ENGLISH)
-  1. Put the ROM file in this folder, next to {exe}.
-     Any filename and any extension works: the game identifies the cartridge
-     by its content, not by its name.
-  2. Run {exe}.
-  3. Done. No installation, no setup, no emulator configuration.
-  If no matching ROM is found the launcher/picker opens instead.
-
+{steps_en}
 COMO JOGAR (PORTUGUÊS)
-  1. Coloque o arquivo da ROM nesta pasta, ao lado de {exe}.
-     Qualquer nome e qualquer extensão funcionam: o jogo identifica o
-     cartucho pelo conteúdo, não pelo nome do arquivo.
-  2. Execute {exe}.
-  3. Pronto. Não precisa instalar, configurar nem usar emulador.
-  Se nenhuma ROM compatível for encontrada, o seletor de arquivos abre.
-
+{steps_pt}
 {extra}CONTENTS
 {contents}
 
 Top Gear 2 is a trademark of its respective owners. This port ships no game
 data; the ROM is supplied by the user.
+"""
+
+FLAT_STEPS_EN = """  1. Put the ROM file in this folder, next to {exe}.
+     Any filename and any extension works: the game identifies the cartridge
+     by its content, not by its name.
+  2. Run {exe}.
+  3. Done. No installation, no setup, no emulator configuration.
+  If no matching ROM is found the launcher/picker opens instead.
+"""
+
+FLAT_STEPS_PT = """  1. Coloque o arquivo da ROM nesta pasta, ao lado de {exe}.
+     Qualquer nome e qualquer extensão funcionam: o jogo identifica o
+     cartucho pelo conteúdo, não pelo nome do arquivo.
+  2. Execute {exe}.
+  3. Pronto. Não precisa instalar, configurar nem usar emulador.
+  Se nenhuma ROM compatível for encontrada, o seletor de arquivos abre.
+"""
+
+BUNDLE_STEPS_EN = """  1. Move {exe} to Applications.
+  2. The build is not signed by Apple. Clear the download quarantine once,
+     in Terminal: xattr -dr com.apple.quarantine /Applications/{exe}
+  3. Open {exe} and pick the ROM in the launcher. Any filename and any
+     extension works: the game identifies the cartridge by its content.
+     The app keeps a copy and starts the game directly from then on.
+"""
+
+BUNDLE_STEPS_PT = """  1. Mova {exe} para Aplicativos.
+  2. O build não é assinado pela Apple. Remova a quarentena do download uma
+     vez, no Terminal: xattr -dr com.apple.quarantine /Applications/{exe}
+  3. Abra {exe} e escolha a ROM no launcher. Qualquer nome e qualquer
+     extensão funcionam: o jogo identifica o cartucho pelo conteúdo.
+     O app guarda uma cópia e, daí em diante, abre o jogo direto.
 """
 
 FLAT_CONTENTS = """  {exe:<22} game executable
@@ -89,18 +109,17 @@ LINUX_EXTRA = """STEAM DECK / STEAMOS (controller only)
 
 """
 
-MACOS_EXTRA = """macOS: FIRST LAUNCH (unsigned build)
-  This build is not signed or notarized. macOS quarantines downloaded files,
-  so the first launch is blocked. Move {app} to Applications, then run once:
-    xattr -dr com.apple.quarantine /Applications/{app}
-  (System Settings > Privacy & Security > Open Anyway also works; if the icon
-  then keeps bouncing, restart the Mac and run the command above.)
-  On the first launch, pick the ROM in the launcher. An app in Applications
-  copies it to ~/Library/Application Support/TG2Recomp/, together with
-  settings, logs and saves, and boots straight in from then on.
-  Portable: outside Applications, put the ROM next to {app} (same folder as
-  the bundle, not inside it); data is written next to {app} when that folder
-  is writable.
+MACOS_EXTRA = """macOS DETAILS
+  Gatekeeper: this build is not signed or notarized, so macOS blocks the
+  first launch until the quarantine is cleared (step 2 above). System
+  Settings > Privacy & Security > Open Anyway also works; if the icon then
+  keeps bouncing and the game never opens, restart the Mac and run step 2.
+  Files: an app in Applications keeps the ROM copy, settings, logs and saves
+  in ~/Library/Application Support/TG2Recomp/. Replacing {app}
+  with a newer version keeps them.
+  Portable: outside Applications, put the ROM next to {app}
+  (in the same folder as the bundle, not inside it). Data is then written
+  next to {app} when that folder is writable.
 
 """
 
@@ -206,9 +225,13 @@ def readme_text(args, binary_name, contents, app=None, app_short=None):
     # In a bundle the thing the player runs (and drops the ROM beside) is the
     # .app, not the Mach-O executable inside Contents/MacOS.
     run_name = app or binary_name
+    steps_en, steps_pt = ((BUNDLE_STEPS_EN, BUNDLE_STEPS_PT) if app
+                          else (FLAT_STEPS_EN, FLAT_STEPS_PT))
     return README.format(
         version=args.version,
         platform=args.platform,
+        steps_en=steps_en.format(exe=run_name),
+        steps_pt=steps_pt.format(exe=run_name),
         exe=run_name,
         app=app or "",
         extra=extra,
