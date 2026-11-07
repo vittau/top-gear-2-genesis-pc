@@ -15,7 +15,7 @@ from pathlib import Path
 def check(path, max_brief_frames=3):
     totals = dict(rows=0, frames=0, black_violations=0, ground_colour_violations=0,
                   band_colour_violations=0, brief_backdrop_lines=0,
-                  solid_band_samples=0,
+                  solid_band_samples=0, plane_a_short_extension=0,
                   examples=[], brief_examples=[])
     frames, slopes, lines = {}, set(), set()
     # Backdrop rows that appear for only a few consecutive presented pictures
@@ -47,12 +47,19 @@ def check(path, max_brief_frames=3):
                       and row['margin'] != row['native_b'])
             band = row['edge_solid'] and (row['window_band'] or row['backdrop_band'])
             totals['solid_band_samples'] += int(bool(band))
+            # Weather (rain/snow) is a point feature on the otherwise
+            # transparent plane A. Continuing such a texel's colour paints a
+            # one-line streak across the whole margin; only a surface that owns
+            # the edge (an opaque run) may be continued. pa_run/pa_extend are
+            # emitted by tg2_video.c since the task 22 fix.
+            short_extend = bool(row.get('pa_extend', 0) and row.get('pa_run', 8) < 8)
+            totals['plane_a_short_extension'] += int(short_extend)
             band_bad = band and row['margin'] != row['native']
             totals['band_colour_violations'] += int(bool(band_bad))
             totals['ground_colour_violations'] += int(ground)
             if black:
                 totals['black_violations'] += 1
-            if (black or ground or band_bad) and len(totals['examples']) < 20:
+            if (black or ground or band_bad or short_extend) and len(totals['examples']) < 20:
                 row['source'] = ('window' if row['window_band'] else
                                  'backdrop' if row['backdrop_band'] else
                                  'road' if row['atlas_y'] < 432 else
@@ -93,6 +100,7 @@ def check(path, max_brief_frames=3):
                         and not totals['black_violations']
                         and not totals['ground_colour_violations']
                         and not totals['band_colour_violations']
+                        and not totals['plane_a_short_extension']
                         and not totals['brief_backdrop_lines'])
     return totals
 

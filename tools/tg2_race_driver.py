@@ -319,20 +319,8 @@ class Driver:
 
 
 def manifests(out: Path) -> dict:
-    counts = {}
-    for name in ('dispatch_misses.toml', 'floor_coverage.toml',
-                 'interior_label_misses.toml', 'floor_unsafe.toml'):
-        path = out / name
-        if not path.exists():
-            counts[name] = None
-            continue
-        entries = 0
-        for line in path.read_text(errors='replace').splitlines():
-            s = line.strip()
-            if s.startswith('[[`') or s.startswith('[['):
-                entries += 1
-        counts[name] = entries
-    return counts
+    from tg2_runner import manifest_counts
+    return manifest_counts(out)
 
 
 def main():

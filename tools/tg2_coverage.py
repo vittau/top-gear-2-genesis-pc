@@ -38,20 +38,16 @@ MODES = {
     'ws169-edges':  dict(widescreen='16:9', env={'TG2_HUD_MODE': 'edges'}),
     'ws169-60':     dict(widescreen='16:9', env={'TG2_HUD_MODE': 'edges',
                                                  'TG2_RACE_60FPS': '1'}),
+    # Release defaults: Adaptive 16:9 canvas, 60 fps races, HUD Centered,
+    # Hide overscan on, stock race sound.
+    'defaults':     dict(widescreen='16:9', env={'TG2_RACE_60FPS': '1',
+                                                 'TG2_HIDE_OVERSCAN': '1'}),
 }
 
 
 def manifests(out: Path) -> dict:
-    counts = {}
-    for name in ('dispatch_misses.toml', 'floor_coverage.toml',
-                 'interior_label_misses.toml', 'floor_unsafe.toml'):
-        path = out / name
-        if not path.exists():
-            counts[name] = None
-            continue
-        counts[name] = sum(1 for line in path.read_text(errors='replace').splitlines()
-                           if line.strip().startswith('[['))
-    return counts
+    from tg2_runner import manifest_counts
+    return manifest_counts(out)
 
 
 class Coverage:
@@ -152,6 +148,8 @@ def main():
     p.add_argument('--port', type=int, default=4490)
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--country', type=int, required=True)
+    p.add_argument('--stage', type=int, default=0,
+                   help='password stage field 0..2 (picks the race within the country)')
     p.add_argument('--mode', choices=sorted(MODES), default='off')
     p.add_argument('--seconds', type=float, default=62.0,
                    help='wall seconds of driving after the race clock starts')
@@ -183,7 +181,7 @@ def main():
         r.start()
         cov = Coverage(r, a)
         cov.ui.to_password_screen()
-        password = pw.encode(country=a.country)
+        password = pw.encode(country=a.country, stage=a.stage)
         cov.ui.type_symbols(password['symbols'])
         before = cov.ui.submit()
         cov.ui.shot('setup')
@@ -219,15 +217,16 @@ def main():
                 '\n'.join(f"{t['frame']},{t['clock']},{t['lap']},{t['speed']},"
                           f"{t['lat']},{t['phase']},{t.get('pad', 0)}"
                           for t in cov.trace) + '\n')
-        summary = dict(country=a.country, mode=a.mode, result=result,
-                       password=pw.spaced(pw.encode(country=a.country)['symbols']),
-                       fields=pw.encode(country=a.country),
+        summary = dict(country=a.country, stage=a.stage, mode=a.mode, result=result,
+                       password=pw.spaced(pw.encode(country=a.country,
+                                                   stage=a.stage)['symbols']),
+                       fields=pw.encode(country=a.country, stage=a.stage),
                        shots=(cov.shots if cov else []), meta=meta,
                        exit_code=code, manifests=manifests(out))
         if cov is not None and getattr(cov, 'nitro', None):
             summary['nitro'] = cov.nitro
         (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-        print(json.dumps(dict(country=a.country, mode=a.mode, result=result,
+        print(json.dumps(dict(country=a.country, stage=a.stage, mode=a.mode, result=result,
                               manifests=summary['manifests'], **meta)))
 
 

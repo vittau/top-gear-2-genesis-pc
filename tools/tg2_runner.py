@@ -44,6 +44,31 @@ def mask(*names: str) -> int:
     return value
 
 
+def manifest_counts(out) -> dict:
+    """Entries in each runtime manifest (`# entries: N` or array items).
+
+    The manifests are TOML documents with either an `# entries:` header or an
+    `extra`/`addresses` array. Counting `[[table]]` lines (as the first version
+    of these helpers did) always returned 0 and hid every real miss.
+    """
+    import re
+    names = ('dispatch_misses.toml', 'floor_coverage.toml',
+             'interior_label_misses.toml', 'floor_unsafe.toml')
+    counts = {}
+    for name in names:
+        path = Path(out) / name
+        if not path.exists():
+            counts[name] = None
+            continue
+        text = path.read_text(errors='replace')
+        match = re.search(r'^# entries:\s*(\d+)', text, re.M)
+        if match:
+            counts[name] = int(match.group(1))
+            continue
+        counts[name] = len(re.findall(r'^\s+0x[0-9A-Fa-f]+', text, re.M))
+    return counts
+
+
 def port_is_free(port: int) -> bool:
     with socket.socket() as s:
         return s.connect_ex(('127.0.0.1', port)) != 0

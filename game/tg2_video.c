@@ -452,6 +452,22 @@ static unsigned window_margins(const GVDP *v, int line, const uint32_t *native,
         for (int x = origin + nw; x < w; ++x) out[x] = native[nw - 1];
     return mask;
 }
+/* A surface that owns the native edge covers several adjacent plane-A
+ * texels. The weather overlay (rain/snow) is the opposite: one or two
+ * high-priority texels on an otherwise transparent plane, moving with the
+ * raster scroll. Continuing a weather texel's colour painted a full-width
+ * one-line streak into both margins (task 22 finding), while the tunnel wall
+ * must still continue. The opaque run length separates the two. */
+static int plane_a_edge_run(const GVDP *v, int line, int ha, int va,
+                            unsigned ba, int nw, int side) {
+    int edge = side ? nw - 1 : 0, step = side ? -1 : 1, run = 0;
+    for (int i = 0; i < 8; ++i) {
+        unsigned attr, ap = pixel(v, ba, edge + step * i - ha, line + va, &attr);
+        if (!ap || !(attr & 0x8000)) break;
+        ++run;
+    }
+    return run;
+}
 /* Plane A also carries raster-positioned full-screen effects, such as the
  * Auckland tunnel wall and its opening. When an opaque high-priority plane-A
  * texel is the visible native edge pixel, the margin continues that native
@@ -460,6 +476,7 @@ static unsigned window_margins(const GVDP *v, int line, const uint32_t *native,
  * overlay's silhouette can end exactly at the native edge, and continuing a
  * neighbouring texel would leave a seam. The native centre is untouched, and
  * an ordinary plane-B edge (or a sprite over it) never qualifies. */
+static unsigned pa_extend_mask;
 static void plane_a_margins(const GVDP *v, int line, const uint32_t *native,
                             int nw, const uint32_t *pal, uint32_t *out, int w,
                             int ha, int va, unsigned ba) {
@@ -468,6 +485,8 @@ static void plane_a_margins(const GVDP *v, int line, const uint32_t *native,
         int edge = side ? nw - 1 : 0;
         unsigned attr, ap = pixel(v, ba, edge - ha, line + va, &attr);
         if (!ap || !(attr & 0x8000) || pal[ap] != native[edge]) continue;
+        if (plane_a_edge_run(v, line, ha, va, ba, nw, side) < 8) continue;
+        pa_extend_mask |= 1u << side;
         if (side)
             for (int x = origin + nw; x < w; ++x) out[x] = native[edge];
         else
@@ -492,7 +511,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         if (path && *path) {
             margin_audit = fopen(path, "w");
             if (!margin_audit) { perror(path); exit(1); }
-            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band\n");
+            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band,pa_run,pa_extend\n");
         }
     }
     if (!margin_audit || w <= nw) return;
@@ -519,12 +538,14 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                 (pixel(v, ba, x - ha, line + va, &attr) ||
                  pixel(v, bb, x - hb, line + vb, &attr))) backdrop = 0;
         }
-        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d\n",
+        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d,%d,%d\n",
                 (unsigned long long)present_frame, line, side, native[edge],
                 out[origin + (side ? nw : -1)], ap, aa, bp, ab,
                 v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0), mb,
                 genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0),
-                solid, window_band_edge(v, line, native, nw, side), backdrop);
+                solid, window_band_edge(v, line, native, nw, side), backdrop,
+                plane_a_edge_run(v, line, ha, va, ba, nw, side),
+                (pa_extend_mask >> side) & 1);
     }
     if (line == 223) fflush(margin_audit);
 }
@@ -550,6 +571,7 @@ static void note_crop_row(int line, const uint32_t *out, int w) {
 static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     int origin = (w - nw) / 2;
+    pa_extend_mask = 0;
     if (!line) {
         audit_race_frame = nw == 256 && race(v);
         crop_race_ok = audit_race_frame;
