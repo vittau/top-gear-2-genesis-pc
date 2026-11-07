@@ -428,3 +428,181 @@ not. The facts, all from the ROM and confirmed at runtime:
 
 The coverage table below therefore names races by country and slot, not by
 `stage`. `stage = 0` (AMATEUR) was used for the progression runs.
+
+### Coverage: 45 of 64 races driven to the finish (default options)
+
+Every run below is `tools/tg2_progress.py` on the release defaults (16:9
+canvas, 60 fps races, HUD Centered, Hide overscan On, stock RACE SOUND),
+uncapped guest, TCP 4610, one runtime at a time, under the heavy lock. Each
+country starts from a generated password that carries money and full upgrades
+(the checksum allows 150k with every part at max), then races the country's
+four races in order; the race index is read back before every race. A race is
+"passed" when it reached the finish (the clock froze with speed 0); "NOT
+REACHED" means the country's top-ten gate stopped the run at the previous
+race, which is a driver-pace limit, not a crash or a hang.
+
+Manifests (dispatch / floor coverage / interior labels / floor unsafe) are the
+counts from that country's batch run. The batch ran before the discovery fix
+below, so Egypt and Australasia show the floor miss and countries 6..15 show
+the `0x00650C` interior-label miss; the post-fix re-runs are listed separately.
+
+| Country | Race | Track | Length | Laps | Descriptor | Result | Splits | Manifests | Evidence |
+|---|---:|---|---:|---:|---|---|---|---|---|
+| Australasia | 1 | Auckland | 1.6 mi | 4 | 0x01b9e8 | passed | 5 | 0/2/0/0 | `build/qual/qa-prog/c00` |
+| Australasia | 2 | Ayers Rock | 1.2 mi | 5 | 0x01ba96 | passed | 6 | 0/2/0/0 | `build/qual/qa-prog/c00` |
+| Australasia | 3 | Canterbury Plains | 1.5 mi | 4 | 0x01bb44 | passed | 5 | 0/2/0/0 | `build/qual/qa-prog/c00` |
+| Australasia | 4 | Sydney | 3.2 mi | 3 | 0x01bbf2 | passed | 4 | 0/2/0/0 | `build/qual/qa-prog/c00` |
+| Britain | 1 | Loch Ness | 1.7 mi | 5 | 0x01bca0 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c01` |
+| Britain | 2 | London | 2.0 mi | 4 | 0x01bd4e | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c01` |
+| Britain | 3 | Sheffield | 2.4 mi | 4 | 0x01bdfc | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c01` |
+| Britain | 4 | Stonehenge | 2.5 mi | 4 | 0x01beaa | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c01` |
+| Canada | 1 | Banff | 1.4 mi | 5 | 0x01bf58 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c02` |
+| Canada | 2 | Niagara | 2.7 mi | 3 | 0x01c006 | passed | 4 | 0/0/0/0 | `build/qual/qa-prog/c02` |
+| Canada | 3 | Toronto | 2.8 mi | 3 | 0x01c0b4 | passed | 4 | 0/0/0/0 | `build/qual/qa-prog/c02` |
+| Canada | 4 | – | 2.7 mi | 4 | 0x01c162 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c02` |
+| Egypt | 1 | Abu Simbel | 0.7 mi | 8 | 0x01c210 | passed | 9 | 0/2/0/0 | `build/qual/qa-prog/c03` |
+| Egypt | 2 | – | 0.9 mi | 7 | 0x01c2be | NOT REACHED (failed to qualify) | 0 | 0/2/0/0 | `build/qual/qa-prog/c03` |
+| Egypt | 3 | – | 1.1 mi | 5 | 0x01c36c | NOT REACHED (failed to qualify) | 0 | 0/2/0/0 | `build/qual/qa-prog/c03` |
+| Egypt | 4 | – | 1.6 mi | 5 | 0x01c41a | NOT REACHED (failed to qualify) | 0 | 0/2/0/0 | `build/qual/qa-prog/c03` |
+| France | 1 | Bordeaux | 1.1 mi | 5 | 0x01c4c8 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c04` |
+| France | 2 | Monaco | 1.9 mi | 5 | 0x01c576 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c04` |
+| France | 3 | Nice | 2.3 mi | 4 | 0x01c624 | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c04` |
+| France | 4 | Paris | 2.6 mi | 3 | 0x01c6d2 | passed | 4 | 0/0/0/0 | `build/qual/qa-prog/c04` |
+| Germany | 1 | Bavaria | 1.2 mi | 5 | 0x01c780 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c05` |
+| Germany | 2 | Cologne | 2.0 mi | 4 | 0x01c82e | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c05` |
+| Germany | 3 | Frankfurt | 1.6 mi | 4 | 0x01c8dc | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c05` |
+| Germany | 4 | Munich | 2.8 mi | 3 | 0x01c98a | passed | 4 | 0/0/0/0 | `build/qual/qa-prog/c05` |
+| Greece | 1 | Athens | 1.0 mi | 7 | 0x01ca38 | passed | 8 | 0/0/1/1 | `build/qual/qa-prog/c06` |
+| Greece | 2 | Meteora | 2.5 mi | 4 | 0x01cae6 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c06` |
+| Greece | 3 | Mykanos | 2.6 mi | 4 | 0x01cb94 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c06` |
+| Greece | 4 | Santorini | 2.5 mi | 4 | 0x01cc42 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c06` |
+| India | 1 | Amber Port | 0.9 mi | 8 | 0x01ccf0 | passed | 9 | 0/0/1/1 | `build/qual/qa-prog/c07` |
+| India | 2 | – | 1.4 mi | 5 | 0x01cd9e | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c07` |
+| India | 3 | – | 2.1 mi | 4 | 0x01ce4c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c07` |
+| India | 4 | – | 2.4 mi | 4 | 0x01cefa | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c07` |
+| Ireland | 1 | Dublin | 1.5 mi | 5 | 0x01cfa8 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c08` |
+| Ireland | 2 | Galway | 1.3 mi | 5 | 0x01d056 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c08` |
+| Ireland | 3 | Killarney | 1.8 mi | 4 | 0x01d104 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c08` |
+| Ireland | 4 | Limerick | 1.8 mi | 4 | 0x01d1b2 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c08` |
+| Italy | 1 | Florence | 1.6 mi | 4 | 0x01d260 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c09` |
+| Italy | 2 | Pisa | 2.3 mi | 4 | 0x01d30e | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c09` |
+| Italy | 3 | Rome | 2.5 mi | 4 | 0x01d3bc | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c09` |
+| Italy | 4 | – | 2.3 mi | 4 | 0x01d46a | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c09` |
+| Japan | 1 | Hiroshima | 1.9 mi | 5 | 0x01d518 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c10` |
+| Japan | 2 | Kyoto | 2.8 mi | 3 | 0x01d5c6 | passed | 4 | 0/0/1/1 | `build/qual/qa-prog/c10` |
+| Japan | 3 | Tokyo | 3.0 mi | 3 | 0x01d674 | passed | 4 | 0/0/1/1 | `build/qual/qa-prog/c10` |
+| Japan | 4 | Yokohama | 2.6 mi | 4 | 0x01d722 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c10` |
+| Scandinavia | 1 | Copenhagen | 1.5 mi | 4 | 0x01d7d0 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c11` |
+| Scandinavia | 2 | Helsinki | 1.7 mi | 5 | 0x01d87e | passed | 7 | 0/0/1/1 | `build/qual/qa-prog/c11` |
+| Scandinavia | 3 | – | 2.1 mi | 4 | 0x01d92c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c11` |
+| Scandinavia | 4 | – | 2.1 mi | 4 | 0x01d9da | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c11` |
+| South America | 1 | Chile | 1.6 mi | 5 | 0x01da88 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c12` |
+| South America | 2 | Mexico | 2.3 mi | 4 | 0x01db36 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c12` |
+| South America | 3 | – | 2.6 mi | 4 | 0x01dbe4 | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c12` |
+| South America | 4 | – | 2.5 mi | 4 | 0x01dc92 | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c12` |
+| Spain | 1 | Andalusia | 0.9 mi | 7 | 0x01dd40 | passed | 8 | 0/0/1/1 | `build/qual/qa-prog/c13` |
+| Spain | 2 | Barcelona | 1.2 mi | 6 | 0x01ddee | passed | 7 | 0/0/1/1 | `build/qual/qa-prog/c13` |
+| Spain | 3 | – | 2.4 mi | 4 | 0x01de9c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c13` |
+| Spain | 4 | – | 2.2 mi | 4 | 0x01df4a | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c13` |
+| Switzerland | 1 | Geneva | 1.6 mi | 4 | 0x01dff8 | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c14` |
+| Switzerland | 2 | – | 1.8 mi | 5 | 0x01e0a6 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c14` |
+| Switzerland | 3 | – | 2.2 mi | 4 | 0x01e154 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c14` |
+| Switzerland | 4 | – | 2.9 mi | 4 | 0x01e202 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c14` |
+| U.S.A. | 1 | Las Vegas | 2.2 mi | 4 | 0x01e2b0 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c15` |
+| U.S.A. | 2 | Los Angeles | 2.2 mi | 5 | 0x01e35e | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c15` |
+| U.S.A. | 3 | – | 2.7 mi | 4 | 0x01e40c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c15` |
+| U.S.A. | 4 | – | 2.5 mi | 4 | 0x01e4ba | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c15` |
+
+Evidence per country: `build/qual/qa-prog/cNN/` (trace.csv, route.json,
+summary.json, intro panels, a screenshot every 900 frames, finish frame).
+Post-fix re-runs: `build/qual/qa-fixcheck/c00` (Auckland + Ayers Rock, all
+manifests 0) and `c06` (Greece race 1, still the open 0x00650C miss).
+
+### Bug list (severity, reproduction, state)
+
+1. **BLOCKER, fixed — tier-3 floor ran `0x00E46C` / `0x00445A`.**
+   The owner's release playtest (session 3, frames 12900/13069) and our own
+   batch runs (Australasia race 2 Ayers Rock, frame 19289; Egypt race 1)
+   reached the interpreter floor. Both addresses are real ROM code: the
+   small-object animator registered with `MOVE.L #$E46C,$C(A4)` at `$003D40`
+   (the sibling of the already-seeded `$00E436` at `$003CE8`) and the
+   `$00445A` PRNG step it calls. The object table lives in RAM (`$FF2736`),
+   so static scanning cannot see the callback. Fixed by seeding both in
+   `game/driver.discovery.toml`; the generated C now contains
+   `func_00E46C` and the dispatcher entry. Verified on the exact track: a
+   post-fix 2-race Australasia run reports 0/0/0/0.
+2. **MAJOR, open (engine) — interior-label dispatch at `0x00650C`.**
+   `interior_label_misses.toml` and `floor_unsafe.toml` list `0x00650C` in
+   nine country runs (Greece onward), first at race 1 frame ~8593. The game
+   dispatches into the middle of the scene-init block that starts at
+   `$64C2` (the pushed target is `$650C`, which is the fall-through
+   continuation after three `bsr`s). The recompiler has no in-function label
+   there, so the floor capsule runs it and cannot return (`exit_pc $007F18`,
+   `expected_ret $001E82`, "capsule exit_pc != native loose-A7 return"); the
+   call is skipped for the session. It needs in-function dispatch codegen in
+   the engine, not a game seed (seeding would split the parent). Reproduced
+   after the merge: `tools/tg2_progress.py --country 6 --races 1`.
+3. **MAJOR, fixed — rain/snow particles smear across the widescreen margins.**
+   In every rain/snow race a particle that landed on the old 256-px edge was
+   continued by `plane_a_margins()` as a full-width one-line streak in both
+   margins (`build/qual/qa-prog/c04/c4-r4-start.png`,
+   `.../c05/c5-r4-start.png`). Plane A carries both the raster-positioned
+   tunnel wall and the weather overlay; the fix only continues an edge that
+   an opaque plane-A run of >= 8 texels owns, so a 1-2 texel particle keeps
+   the plane-B continuation. Before/after:
+   `build/qual/qa-weather-after/c04-full/c4-r4-start.png` (night rain) and
+   `.../c05-full/c5-r4-start.png` (blizzard). The margin audit exports
+   `pa_run`/`pa_extend`; `tools/check_margin_artifacts.py` now fails on a
+   short-run extension. Two full rain/snow races: 1168 + 1167 frames audited,
+   `plane_a_short_extension` 0, all violation classes 0, `passed: true`.
+   Weather particles still do not populate the margins themselves (the margin
+   fill composites plane B); that is a separate enhancement, not a streak.
+4. **MAJOR, open (game adapter + engine) — a quickstate loaded in a fresh
+   process freezes the race picture.**
+   Save at the GO frame in France, then: same process, run 120 frames, load,
+   hold throttle -> 8 distinct pictures, speed 5144, clock advances (rewind
+   works). Fresh process, boot 600 frames, load the same file, hold throttle
+   -> 1 distinct picture, clock advances to 27197274, speed 4540: the guest
+   runs and RAM changes but the picture never updates. TG2 sets neither
+   `resume_main_loop_pc` nor `save_resume_pc` (and `game_mode` is 0 in
+   `game.toml`), so the loader restores the CPU inside the *current* native
+   call chain (here the title/attract chain) instead of re-entering the
+   game's per-frame loop top. Same-process rewind is fine, so this is not a
+   release blocker; the fix is a real game-mode address plus resume PCs.
+   Evidence: `build/qual/qa-state/summary.json`,
+   `tools/tg2_state_freeze.py`.
+5. **MINOR, known — BOTH still lacks the engine/nitro PCM** (needs a second
+   Z80 core, task 20b). Checked here for noise: reference below.
+
+### Release-config smoke and stock identity
+
+* Release-profile build (`-DGEN_ENABLE_TRACE=OFF -DSONIC_REVERSE_DEBUG=OFF`,
+  Release, no IPO) in `build-rel/`.
+* `tools/tg2_release_smoke.py`: the executable and the ROM (renamed
+  `fixture-cartridge.dat`, detected by CRC) in a scratch directory, SDL dummy
+  drivers, a controller-only input script that boots to a 1P race; exit 0,
+  `input_script: loaded`, race picture captured
+  (`build/qual/qa-release-smoke2/run/race-4.png`, `race-5.png`).
+* With every presentation option off (`TG2_RACE_60FPS=0
+  TG2_HIDE_OVERSCAN=0`, widescreen off): frame 60 `2A0B972960C5E325`, frame
+  300 `1131D937D70234FD`, 0 manifests (`tools/verify_widescreen.py --modes
+  off`, `build/qual/qa-ws-off`). Re-checked after merging origin/main at
+  `2e42151` (engine patches 0015/0016 + HUD popup fix).
+
+### Sound modes (one race each, 40 s capture)
+
+`tools/tg2_both_route.py --mode {music,sfx,both} --widescreen 16:9 --60fps`,
+then `tools/audio_glitch_detect.py` on each `race.wav`:
+
+| Mode | Pops | digital-silence dropouts | DC-hold runs | envelope collapses |
+|---|---:|---:|---:|---:|
+| MUSIC | 0 | 0 | 9 | 400 |
+| SFX | 0 | 0 | 0 | 0 |
+| BOTH | 0 | 0 | 0 | 49 |
+
+Zero pops and zero digital-silence dropouts in all three. The MUSIC
+DC-hold/envelope counts are the PSG square wave's identical samples and the
+music's own note envelopes on an offline capture (the detector's 2 ms hold
+and 20 dB collapse tests were designed against a device capture of steady
+music); BOTH has neither. Device-side confirmation still needs the owner's
+speakers (the same detector, `--device` capture).

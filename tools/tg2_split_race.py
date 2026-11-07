@@ -105,7 +105,7 @@ def main():
     p.add_argument('--drive-frames', type=int, default=40000)
     p.add_argument('--press-count', type=int, default=4)
     p.add_argument('--press-gap', type=int, default=280)
-    p.add_argument('--unpause-at', default='3700')
+    p.add_argument('--unpause-at', default='')
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     script, race_start = build_script(a.press_count, a.press_gap,
@@ -127,13 +127,16 @@ def main():
         r.start()
         d = Driver(r, da)
         st = None
-        # Keep polling for the whole scripted boot; the runner is uncapped and
-        # can be well past the estimated race frame by the first sample.
+        # Poll in wall-frame steps for the whole scripted boot: a tight
+        # frame_info loop can outrun the uncapped guest on the first sample.
         deadline = script.frame
-        while r.frame() < deadline:
+        target = r.frame() + 120
+        while target < deadline:
+            r.wait_frame(target)
             st = r.state_and_frame()
             if st.clock > 0:
                 break
+            target += 120
         if st is None or st.clock == 0:
             evidence['result'] = 'no-race'
         else:
