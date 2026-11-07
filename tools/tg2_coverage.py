@@ -152,6 +152,8 @@ def main():
     p.add_argument('--port', type=int, default=4490)
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--country', type=int, required=True)
+    p.add_argument('--stage', type=int, default=0,
+                   help='password stage field 0..2 (picks the race within the country)')
     p.add_argument('--mode', choices=sorted(MODES), default='off')
     p.add_argument('--seconds', type=float, default=62.0,
                    help='wall seconds of driving after the race clock starts')
@@ -183,7 +185,7 @@ def main():
         r.start()
         cov = Coverage(r, a)
         cov.ui.to_password_screen()
-        password = pw.encode(country=a.country)
+        password = pw.encode(country=a.country, stage=a.stage)
         cov.ui.type_symbols(password['symbols'])
         before = cov.ui.submit()
         cov.ui.shot('setup')
@@ -219,15 +221,16 @@ def main():
                 '\n'.join(f"{t['frame']},{t['clock']},{t['lap']},{t['speed']},"
                           f"{t['lat']},{t['phase']},{t.get('pad', 0)}"
                           for t in cov.trace) + '\n')
-        summary = dict(country=a.country, mode=a.mode, result=result,
-                       password=pw.spaced(pw.encode(country=a.country)['symbols']),
-                       fields=pw.encode(country=a.country),
+        summary = dict(country=a.country, stage=a.stage, mode=a.mode, result=result,
+                       password=pw.spaced(pw.encode(country=a.country,
+                                                   stage=a.stage)['symbols']),
+                       fields=pw.encode(country=a.country, stage=a.stage),
                        shots=(cov.shots if cov else []), meta=meta,
                        exit_code=code, manifests=manifests(out))
         if cov is not None and getattr(cov, 'nitro', None):
             summary['nitro'] = cov.nitro
         (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-        print(json.dumps(dict(country=a.country, mode=a.mode, result=result,
+        print(json.dumps(dict(country=a.country, stage=a.stage, mode=a.mode, result=result,
                               manifests=summary['manifests'], **meta)))
 
 
