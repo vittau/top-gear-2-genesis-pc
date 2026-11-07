@@ -540,7 +540,9 @@ route.json, summary.json, intro panels, a screenshot every 900 frames, finish
 frame). Evidence per index-override race: `build/qual/qa-reach/cNN-sN/` (same
 artifacts, one process per race; `batch.json` summarises all 19).
 Post-fix re-runs: `build/qual/qa-fixcheck/c00` (Auckland + Ayers Rock, all
-manifests 0) and `c06` (Greece race 1, still the open 0x00650C miss).
+manifests 0) and `build/qual/qa-650c-fix/cNN` (task 24: Greece, India, Italy,
+Japan, Spain, Switzerland, race 1 each, all manifests 0/0/0/0). The `0/0/1/1`
+cells above predate task 24; that 1 is the `0x00650C` miss, now fixed.
 
 ### Bug list (severity, reproduction, state)
 
@@ -555,17 +557,22 @@ manifests 0) and `c06` (Greece race 1, still the open 0x00650C miss).
    `game/driver.discovery.toml`; the generated C now contains
    `func_00E46C` and the dispatcher entry. Verified on the exact track: a
    post-fix 2-race Australasia run reports 0/0/0/0.
-2. **MAJOR, open (engine) — interior-label dispatch at `0x00650C`.**
-   `interior_label_misses.toml` and `floor_unsafe.toml` list `0x00650C` in
-   nine country runs (Greece onward), first at race 1 frame ~8593. The game
-   dispatches into the middle of the scene-init block that starts at
-   `$64C2` (the pushed target is `$650C`, which is the fall-through
-   continuation after three `bsr`s). The recompiler has no in-function label
-   there, so the floor capsule runs it and cannot return (`exit_pc $007F18`,
-   `expected_ret $001E82`, "capsule exit_pc != native loose-A7 return"); the
-   call is skipped for the session. It needs in-function dispatch codegen in
-   the engine, not a game seed (seeding would split the parent). Reproduced
-   after the merge: `tools/tg2_progress.py --country 6 --races 1`.
+2. **MAJOR, fixed (task 24, engine core patch `core-0004`) — interior-label
+   dispatch at `0x00650C`, the scene-init continuation skipped.**
+   `interior_label_misses.toml` and `floor_unsafe.toml` listed `0x00650C` in
+   nine country runs (Greece onward), first at race 1 frame ~8585. `$650C` is
+   not an entry point: it is the fall-through continuation after the three
+   setup `bsr`s at `$6500..$6508`, and `0x000650C` never appears in the ROM as
+   data. The value could only come from the return slot those `bsr`s push, and
+   the dispatcher was the plain `rts` at `$754A` at the end of `$7336`. Cause:
+   the split-function stack counter (`_sp_popped`) credited only the
+   MOVE/MOVEA/MOVEM/PEA and `ADDQ/SUBQ #n,SP` forms, so `add.w (sp)+,d0` at
+   `$740C` moved the guest stack without the counter noticing; sixteen
+   iterations of func `$7336`'s sprite loop left the delta at -32 and the RTS
+   was read as "the guest pushed a jump target", dispatching `$650C` instead
+   of returning to it. Fixed in the engine with one exact stack-delta rule for
+   every mnemonic (see "Task 24" below). The repro now reports 0/0/0/0, and so
+   do Greece, India, Italy, Japan, Spain and Switzerland with `--races 1`.
 3. **MAJOR, fixed — rain/snow particles smear across the widescreen margins.**
    In every rain/snow race a particle that landed on the old 256-px edge was
    continued by `plane_a_margins()` as a full-width one-line streak in both
@@ -758,3 +765,89 @@ boot leaves the game's own PAUSE overlay up (the known task-22 scripted-boot
 pause) and TCP `set_input` does not clear it, so the resumed 2P picture is the
 correct paused race rather than a live one; a full unpaused 2P race is still
 the open item from the 2P section above.
+
+## Task 24 — the skipped scene-init call at `$650C`
+
+### Ground truth (raw ROM, `tools/disasm_tg2.py`)
+
+* `$64C2` is the race scene init. It is called with `jsr $64c2.l` from
+  `$001E7C` (return `$001E82`, the attract/new-race driver that walks the
+  64-entry race table at `$01B8E8`) and from `$001FDE` (the 1P race path).
+* Its first three calls are `bsr.w $754C`, `bsr.w $8B32` and `bsr.w $7336` at
+  `$6500/$6504/$6508`. `$650C` is the instruction after them (`jsr $2520`,
+  `jsr $2628`, `jsr $F7FA`). Those three callees have no other caller in the
+  ROM, so the continuation is only reachable as the fall-through of `$6508`.
+* `0x000650C` appears nowhere in the 1 MB ROM as data, and no `bra`/`bsr`/
+  `jmp`/`jsr` in the ROM targets it. A "missing entry point" reading is
+  therefore wrong: the value can only come from the return slot that the
+  `bsr.w $7336` at `$6508` pushes, i.e. the plain `rts` at `$754A` at the end
+  of func `$7336`.
+* `$754A` closes a loop over the sprite list (`$7524..$7546`) whose body calls
+  `$8AC4`/`$8AD2`, and earlier in the same function `move.w d0,-(sp)` at
+  `$73FE` is paired with `add.w (sp)+,d0` at `$740C`.
+
+### Root cause (engine, not a game seed)
+
+The engine tracks a path-local guest stack delta (`_sp_popped`, carried into
+split-function tails through `g_split_sp_popped`). An RTS whose total is
+negative is interpreted as "the guest pushed a jump target"
+(`MOVE.L #target,-(SP); RTS`) and its stack top is dispatched instead of
+returning to the native caller (patch `core-0003`). That interpretation needs
+an *exact* delta, but only the MOVE/MOVEA/MOVEM/PEA forms and `ADDQ/SUBQ #n,SP`
+credited it.
+
+`add.w (sp)+,d0` at `$740C` pops two bytes the counter never saw, so each pass
+of func `$7336`'s sprite loop leaked -2. Sixteen passes left `_sp_popped` at
+-32 at the RTS in `$754A`, which then popped the `$650C` return slot and
+dispatched it. `$650C` is interior to func `$64C2`, so the runner recorded an
+interior-label miss, the floor capsule ran `$650C..$6656` and could not return
+to the live frame (`exit_pc $007F18`, `expected_ret $001E82`), and the dispatch
+was declined. `$650C..$6656` is the countdown/presentation path of every race,
+so from Greece onward (the tracks whose sprite loop runs 16+ times) it was
+skipped for the rest of the session.
+
+### Fix
+
+* Engine patch `core-0004-exact-stack-delta.patch` (`external/m68k-recomp-core`)
+  replaces the per-mnemonic accounting with one `stack_delta_bytes()` rule used
+  by both the `has_sp_adjust` pre-scan and the single emission point: `(A7)+`
+  releases 4 bytes for a long / 2 otherwise, `-(A7)` allocates the same, plus
+  PEA, `ADDQ/SUBQ #n,SP` and MOVEM; control flow is excluded because it owns its
+  return slot explicitly. Pre-scan and emission can no longer disagree.
+* No game seed, no in-function label, no generated-C edit. In this ROM exactly
+  one instruction's accounting changes (`$740C`, in the buggy function);
+  `tools/check_stack_delta.py` reports 1902 accounted instructions and, after
+  the fix, 0 mismatches across the whole generated program.
+* Residual gap, unchanged and honest: a *genuine* `MOVE.L #target,-(SP); RTS`
+  whose target is an interior address still needs in-function dispatch codegen.
+  TG2 has no such site (the Duff's-device tables at `$7B08/$7CE4/$7E78` point at
+  their own seeded entries), so the miss is gone, not hidden.
+
+### Evidence
+
+| Check | Before | After |
+|---|---|---|
+| `tg2_progress --country 6 --races 1` manifests | 1/1 interior+unsafe at frame 8585 | `build/qual/qa-650c-fix/c06` 0/0/0/0 |
+| Greece/India/Italy/Japan/Spain, race 1 each | 0/0/1/1 each (task 22 batch) | 0/0/0/0 each (`qa-650c-fix/c06,c07,c09,c10,c13`) |
+| Switzerland, race 1 | 0/0/0/0 in the task 22 batch (its sprite count never reached the drift) | 0/0/0/0 (`qa-650c-fix/c14`) |
+| floor-capsule executed PCs (`executed-pcs.txt`) | contains `$650C,$6512,$6518,$651E..$6594`, `$2520..$25FC`, `$F702..$F7FA` | none of them |
+| race 1 start frame (Greece) | 9057 | 8997 |
+| Off-mode frame 60 / 300 | `2A0B972960C5E325` / `1131D937D70234FD` | unchanged (`qa-ws-off-650c`) |
+
+Every post-fix run reached the finish: Greece Athens 8 laps, India Amber Fort
+9, Italy Florence 5, Japan Hiroshima 6, Spain Andalusia 8, Switzerland Geneva
+5 (`summary.json` in each directory). The three `jsr` targets that only the
+`$650C` block calls ($2520, $2628, $F7FA) no longer appear in the floor's
+executed-PC set, i.e. the continuation now runs as native code inside
+`func_0064C2` instead of being handed to the interpreter and discarded.
+
+Race-start capture diff (same frame, 356x200): 27 pixels in a 13x6 HUD area
+(`c6-r1-start.png`, before vs after) — the countdown/presentation path now
+completes; the boot menus are pixel-identical, which also shows the runs are
+frame-aligned up to the race.
+
+Regression check: `python3 tools/check_stack_delta.py` re-derives every
+instruction's stack delta from the ROM with capstone and fails on a missing or
+wrong `_sp_popped` line. Removing the `$740C` accounting line from a copy of the
+generated tree makes it report exactly
+`$00740C add.w (a7)+, d0: expected delta +2, generated +0` (exit 1).

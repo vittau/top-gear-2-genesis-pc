@@ -37,10 +37,15 @@ major bugs. Release path:
 
 1. **Done (313ae46):** BOTH via two chips and a second Z80 core (task 20b):
    music, engine, nitro and impacts all play.
-2. **Release qualification** (after task 20): reach every race of every
-   country via passwords, including each country's still-unvisited second race,
-   and 2-player. Run the release build with the default options. Gate on
-   no crashes, empty manifests and no audio glitches.
+2. **Done (tasks 22, 24, 25):** release qualification, 64/64 races driven to the
+   finish with the release defaults (docs/VALIDATION.md). The tier-3 floor seeds,
+   the weather margin smear, cross-session quickstates (patch 0018) and the
+   skipped scene init at `$650C` (core-0004 exact stack delta) are fixed. Not
+   driven live: a 2P race.
+   **In progress (task 26, `tg2-playtest-fix`):** owner playtest of e586c00.
+   RACE SOUND page empty and then garbled; P2 cannot press Start (P2 device 0
+   by default); the feedback replay diverges at execution 0; `[DUAL-DBG]` log
+   noise. After it merges: a play build for the owner, then step 4.
 3. Task 21 (crop + HUD Edges fix) merged 2026-11-06. README screenshots refreshed without bands (2026-11-07).
 4. CI `platforms=all` dry run → owner playtest of the candidate, **including on his Steam Deck** (the AppImage from the dry-run artifacts; controller only, Game Mode) → tag
    `v0.1.0` with the owner's go-ahead → the owner publishes the draft and
@@ -52,11 +57,13 @@ Release bugs from owner playtests (2026-11-07):
   mailbox could be read mid-write). BUSREQ now halts the Z80 in BOTH too;
   `tools/verify_both_boot.py` boots BOTH/MUSIC/SFX from a clean settings dir and
   requires the title/menu music to correlate >= 0.99 (0.9952 both vs music).
-- Tier-3 floor ran `$00E46C` / `$00445A` in real play. Sent to task 22.
-- **Major:** in rain/snow races the weather particles don't continue into the
-  widescreen margins; long stretched horizontal lines show there instead.
-  Seen in task 22's captures (Switzerland blizzard, a night rain race). Sent
-  to task 22.
+- **Fixed (task 22):** the tier-3 floor ran `$00E46C` / `$00445A` in real play
+  (discovery seeds).
+- **Fixed (task 22):** rain/snow particles smeared into long lines across the
+  widescreen margins.
+- **Fixed (task 24, 33f4c5e):** from Greece onward a scene-init continuation at
+  `$650C` was skipped (the stack delta missed `add.w (sp)+,d0`, so a plain
+  RTS read as a jump target). Patch `core-0004`, `tools/check_stack_delta.py`.
 - **Fixed (3a92c4f):** "Internal resolution" did nothing visible for TG2,
   because the game renders through its own `GameVideo` at native resolution.
   Patch 0017 hides the row; high-resolution rendering may bring it back.

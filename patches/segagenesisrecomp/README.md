@@ -8,6 +8,8 @@
 
 - `core-0003-rts-stack-dispatch.patch`: emit computed tail dispatch for guest-pushed RTS targets, preventing the road renderer from leaking its guest stack (applies to `external/m68k-recomp-core/`).
 
+- `core-0004-exact-stack-delta.patch`: account every instruction that moves the guest stack in the split-function counter (`_sp_popped` / `g_split_sp_popped`), not just the MOVE/MOVEA/MOVEM/PEA and `ADDQ/SUBQ #n,SP` forms. One rule now drives both the `has_sp_adjust` pre-scan and the emission, so an arithmetic/logical form with a `(SP)+` or `-(SP)` effective address can no longer drift the counter. A drift used to turn a plain RTS into a "guest pushed a jump target" dispatch: Top Gear 2's `$7336` RTS at `$754A` dispatched the `$650C` return slot after sixteen `move.w d0,-(sp)` / `add.w (sp)+,d0` iterations, which skipped the whole scene-init continuation (task 24). `tools/check_stack_delta.py` cross-checks the generated C against the ROM (applies to `external/m68k-recomp-core/`).
+
 - `0004-executable-base-path-and-replay-logs.patch`: resolve the base directory from the running image, honoring `$APPIMAGE` only when the executable really lives inside that AppImage (an inherited variable from a parent AppImage sent logs, settings, evidence and save states to `~/.local/bin`).
 
 - `0005-exact-guest-clock-and-frame-telemetry.patch`: keep the guest clock exact (a late frame repays its tick instead of resetting the cadence; presentation-only work is skipped and the picture dropped), and record an always-on per-frame wall/CPU/DRC statistics ring.
