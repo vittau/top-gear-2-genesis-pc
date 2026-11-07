@@ -19,8 +19,9 @@ window for evidence that a test may want; the default capture stays the
 verified guest framebuffer.
 
 Dev builds also gain the probes that drive the real menu over TCP (`key`,
-`ui_open`, `ui_rows`, `pad`), because SDL_GetKeyboardState cannot be set from
-outside the process.
+`ui_open`, `ui_rows`, `pad`) and a virtual controller (`virtual_pad`), because
+SDL_GetKeyboardState and a physical pad cannot be provided from outside the
+process in a headless run.
 ---
 diff --git a/runner/overlay_draw.c b/runner/overlay_draw.c
 --- a/runner/overlay_draw.c
@@ -303,7 +304,7 @@ diff --git a/runner/main.c b/runner/main.c
  #include "diagnostic_replay.h"
  #include "rom_autodetect.h"
  
-@@ -539,7 +540,84 @@
+@@ -539,7 +540,127 @@
  {
      s_ws_user_on = on ? 1 : 0;
      return s_ws_user_on;
@@ -349,6 +350,49 @@ diff --git a/runner/main.c b/runner/main.c
 +    }
 +    return 0;
 +}
++/* Dev/TCP virtual pad: a headless probe can attach an SDL virtual controller
++ * and hold its buttons, which is the only way to exercise the gamepad half of
++ * the menu-dismiss release latch without hardware. */
++static SDL_Joystick *s_virtual_pad;
++int runner_debug_virtual_pad(int attach, const char *button, int down)
++{
++    if (attach && !s_virtual_pad) {
++        /* A headless window never takes keyboard focus, and SDL then ignores
++         * every joystick state update; a probe needs the device to be live. */
++        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
++        SDL_JoystickID id = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER,
++                                                      6, 16, 0);
++        if (id < 0) return 0;
++        /* AttachVirtual returns an instance id; find the device index that
++         * carries it, because SDL_JoystickOpen takes a device index. */
++        for (int i = 0; i < SDL_NumJoysticks() && !s_virtual_pad; ++i) {
++            SDL_Joystick *candidate = SDL_JoystickOpen(i);
++            if (!candidate) continue;
++            if (SDL_JoystickInstanceID(candidate) == id) s_virtual_pad = candidate;
++            else SDL_JoystickClose(candidate);
++        }
++        if (!s_virtual_pad) return 0;
++    }
++    if (!button || !*button) return 1;
++    if (!s_virtual_pad) return 0;
++    static const struct { const char *name; int button; } names[] = {
++        { "a", SDL_CONTROLLER_BUTTON_A }, { "b", SDL_CONTROLLER_BUTTON_B },
++        { "x", SDL_CONTROLLER_BUTTON_X }, { "y", SDL_CONTROLLER_BUTTON_Y },
++        { "back", SDL_CONTROLLER_BUTTON_BACK }, { "start", SDL_CONTROLLER_BUTTON_START },
++        { "lb", SDL_CONTROLLER_BUTTON_LEFTSHOULDER },
++        { "rb", SDL_CONTROLLER_BUTTON_RIGHTSHOULDER },
++        { "up", SDL_CONTROLLER_BUTTON_DPAD_UP }, { "down", SDL_CONTROLLER_BUTTON_DPAD_DOWN },
++        { "left", SDL_CONTROLLER_BUTTON_DPAD_LEFT },
++        { "right", SDL_CONTROLLER_BUTTON_DPAD_RIGHT },
++    };
++    for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
++        if (strcmp(button, names[i].name) != 0) continue;
++        SDL_JoystickSetVirtualButton(s_virtual_pad, names[i].button, down ? 1 : 0);
++        SDL_JoystickUpdate();
++        return 1;
++    }
++    return 0;
++}
 +int runner_debug_ui_open(const char *section)
 +{
 +#if RECOMP_LAUNCHER
@@ -367,7 +411,7 @@ diff --git a/runner/main.c b/runner/main.c
 +#else
 +    return 0;
 +#endif
- }
++}
 +int runner_debug_ui_row(int index, char *label, size_t label_cap,
 +                        char *value, size_t value_cap, int *selected)
 +{
@@ -383,12 +427,12 @@ diff --git a/runner/main.c b/runner/main.c
 +    (void)index; (void)label; (void)label_cap; (void)value; (void)value_cap;
 +    (void)selected; return 0;
 +#endif
-+}
+ }
 +#endif /* GEN_ENABLE_TRACE */
  
  /* Widescreen window/output geometry (valid after widescreen_setup()). */
  #define WS_ASPECT_W 16
-@@ -1126,6 +1204,18 @@
+@@ -1126,6 +1247,18 @@
              in->human_mask |= 1u << p;
  }
  
@@ -407,7 +451,7 @@ diff --git a/runner/main.c b/runner/main.c
  /*
   * Audio accumulation buffers.
   *
-@@ -1302,13 +1392,103 @@
+@@ -1302,13 +1435,103 @@
   * the glue state. GROWNS2 used the declown-headers machine
   * layout (superzazu z80 embedded in g_machine, no side ext blob); GROWNS1
   * and GROWNS2 saves are rejected with a clear message rather than misloaded. */
@@ -512,7 +556,7 @@ diff --git a/runner/main.c b/runner/main.c
      char full_path[512];
      const char *resolved = resolve_runner_path(path, full_path, sizeof(full_path));
      if (g_game_spec.state_size) {
-@@ -1319,6 +1499,7 @@
+@@ -1319,6 +1542,7 @@
      FILE *sf = fopen(resolved, "wb");
      if (!sf) {
          fprintf(stderr, "[SAVE] failed to open %s\n", resolved);
@@ -520,7 +564,7 @@ diff --git a/runner/main.c b/runner/main.c
          return 0;
      }
  
-@@ -1336,13 +1517,15 @@
+@@ -1336,13 +1560,15 @@
          fprintf(stderr, "[SAVE] saved %s\n", resolved);
      else
          fprintf(stderr, "[SAVE] failed while writing %s\n", resolved);
@@ -537,7 +581,7 @@ diff --git a/runner/main.c b/runner/main.c
      char full_path[512];
      const char *resolved = resolve_runner_path(path, full_path, sizeof(full_path));
      if (g_game_spec.state_size) {
-@@ -1359,6 +1542,7 @@
+@@ -1359,6 +1585,7 @@
      FILE *sf = fopen(resolved, "rb");
      if (!sf) {
          fprintf(stderr, "[LOAD] empty/missing %s\n", resolved);
@@ -545,10 +589,13 @@ diff --git a/runner/main.c b/runner/main.c
          return 0;
      }
  
-@@ -1725,6 +1909,39 @@
-     return ok;
- }
- 
+@@ -1722,6 +1949,39 @@
+         fprintf(stderr, "[SCREENSHOT] wrote %s\n", resolved);
+     else
+         fprintf(stderr, "[SCREENSHOT] failed to write %s\n", resolved);
++    return ok;
++}
++
 +/* Capture of the presented window itself (renderer target), which is the only
 + * place host overlays such as the state notice exist. Explicitly separate from
 + * runner_write_screenshot_file so every probe/test capture stays the verified
@@ -579,13 +626,10 @@ diff --git a/runner/main.c b/runner/main.c
 +    free(pixels);
 +    if (ok) fprintf(stderr, "[SCREENSHOT] presented %dx%d -> %s\n", w, h, resolved);
 +    else fprintf(stderr, "[SCREENSHOT] presented capture failed for %s\n", resolved);
-+    return ok;
-+}
-+
- /* =========================================================================
-  * Frame logging (main-loop version, works in ALL build modes)
-  * ========================================================================= */
-@@ -4141,6 +4358,7 @@
+     return ok;
+ }
+ 
+@@ -4141,6 +4401,7 @@
          frame_num++;
  
          if (g_game_spec.state_size) host_state_tick();
@@ -593,7 +637,7 @@ diff --git a/runner/main.c b/runner/main.c
  
          /* Tick the input script (if loaded). RAM read helpers route
           * through clownmdemu's main RAM via emu_read8/16 â€” same
-@@ -4427,6 +4645,7 @@
+@@ -4427,6 +4688,7 @@
                      genesis_host_wait_until(at,perf_frequency);
                      frame_wait_us+=(uint32_t)((SDL_GetPerformanceCounter()-wait_begin)*1000000ull/perf_frequency);
                  }
@@ -601,7 +645,7 @@ diff --git a/runner/main.c b/runner/main.c
                  { Uint64 present_begin=SDL_GetPerformanceCounter();
                    SDL_RenderPresent(renderer);
                    frame_present_us+=(uint32_t)((SDL_GetPerformanceCounter()-present_begin)*1000000ull/perf_frequency); }
-@@ -4458,6 +4677,7 @@
+@@ -4458,6 +4720,7 @@
                  frame_wait_cpu_us=(uint32_t)(genesis_thread_cpu_us()-cpu_begin);
                  frame_wait_us=(uint32_t)((SDL_GetPerformanceCounter()-wait_begin)*1000000ull/perf_frequency);
              }
@@ -609,7 +653,7 @@ diff --git a/runner/main.c b/runner/main.c
              { Uint64 present_begin=SDL_GetPerformanceCounter();
                SDL_RenderPresent(renderer);
                frame_present_us=(uint32_t)((SDL_GetPerformanceCounter()-present_begin)*1000000ull/perf_frequency); }
-@@ -4711,6 +4931,7 @@
+@@ -4711,6 +4974,7 @@
      genesis_hd_gpu_destroy(hd_gpu);
      SDL_DestroyTexture(peer_view_texture);
      SDL_DestroyTexture(texture);
@@ -620,7 +664,7 @@ diff --git a/runner/main.c b/runner/main.c
 diff --git a/runner/cmd_server.c b/runner/cmd_server.c
 --- a/runner/cmd_server.c
 +++ b/runner/cmd_server.c
-@@ -521,15 +521,93 @@
+@@ -521,15 +521,106 @@
          snprintf(path, sizeof(path), "tcp_save.bin");
      send_file_action_result(id, "load_state", path, runner_load_state_file(path));
  }
@@ -641,8 +685,8 @@ diff --git a/runner/cmd_server.c b/runner/cmd_server.c
 +                                runner_write_presented_screenshot_file(path));
 +    else
 +        send_file_action_result(id, "screenshot", path, runner_write_screenshot_file(path));
-+}
-+
+ }
+ 
 +/* Dev-only: the runner's own input seam, so a headless probe can drive the
 + * runtime menu and the quickstate hotkeys with real SDL key events and the
 + * held-key state they imply. {"key":"return","down":1,"shift":0} */
@@ -667,6 +711,19 @@ diff --git a/runner/cmd_server.c b/runner/cmd_server.c
 +    else send_err(id, "unknown key (return escape space tab up down left right f1..f9)");
 +}
 +
++extern int runner_debug_virtual_pad(int attach, const char *button, int down);
++
++static void handle_virtual_pad(int id, const char *json)
++{
++    char button[24] = {0};
++    json_get_str(json, "button", button, sizeof(button));
++    if (runner_debug_virtual_pad(json_get_int(json, "attach", 0), button,
++                                 json_get_int(json, "held", 1)))
++        send_ok(id);
++    else
++        send_err(id, "virtual controller unavailable or unknown button");
++}
++
 +static void handle_ui_open(int id, const char *json)
 +{
 +    char section[64] = {0};
@@ -685,8 +742,8 @@ diff --git a/runner/cmd_server.c b/runner/cmd_server.c
 +             "{\"id\":%d,\"ok\":true,\"pad0\":%d,\"pad1\":%d,\"blocked\":%d}",
 +             id, runner_debug_pad_mask(0), runner_debug_pad_mask(1), input_gameplay_blocked());
 +    send_response(buf);
- }
- 
++}
++
 +static void handle_ui_rows(int id)
 +{
 +    int count = runner_debug_ui_row_count();
@@ -715,7 +772,7 @@ diff --git a/runner/cmd_server.c b/runner/cmd_server.c
  /* Query the always-on crash_report block ring (recent recompiled block
   * entries, oldest first) without waiting for a crash dump. */
  static void handle_crash_trail(int id)
-@@ -2212,6 +2290,14 @@
+@@ -2212,6 +2303,16 @@
          handle_load_state(id, json);
      } else if (strcmp(cmd, "screenshot") == 0) {
          handle_screenshot(id, json);
@@ -723,6 +780,8 @@ diff --git a/runner/cmd_server.c b/runner/cmd_server.c
 +        handle_key(id, json);
 +    } else if (strcmp(cmd, "ui_open") == 0) {
 +        handle_ui_open(id, json);
++    } else if (strcmp(cmd, "virtual_pad") == 0) {
++        handle_virtual_pad(id, json);
 +    } else if (strcmp(cmd, "ui_rows") == 0) {
 +        handle_ui_rows(id);
 +    } else if (strcmp(cmd, "pad") == 0) {
