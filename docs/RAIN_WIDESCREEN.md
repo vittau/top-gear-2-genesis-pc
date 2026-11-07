@@ -27,3 +27,33 @@ The 60 fps path uses the same discrete source picture for weather and the
 native centre, so weather timing also follows the existing synthesis policy.
 
 Validation evidence is recorded below after running the probes.
+
+## Rain replay evidence (macOS arm64)
+
+A stock Germany/Bavaria password was entered through the real menu. The
+234 input transitions were replayed with exact-frame input-script captures
+at frames 9434 / 9554 / 9674, selecting 16:9 / Adaptive (1600×900) / 21:9.
+Before and after processes exited 0; all four runtime manifests had 0 entries.
+Private captures and scripts: `build/qual/rain/{before,after}-replay/`.
+
+`build/rain-venv/bin/python tools/check_weather_captures.py
+build/qual/rain/before-replay build/qual/rain/after-replay` exited 0:
+
+| Mode | Presented size | Native 256-pixel centre | Changed left/right pixels |
+|---|---|---|---|
+| 16:9 | 356×200 | identical | 348 / 329 |
+| Adaptive | 356×200 | identical | 326 / 348 |
+| 21:9 | 467×200 | identical | 696 / 698 |
+
+Only particle texels change in the margins; both sides have the same sparse
+coverage. Sampling the same 512-pixel map across the old boundary preserves
+particle shape, density, phase, and the original raster motion.
+
+| | Before | After |
+|---|---|---|
+| 16:9 | ![Dry margins](images/rain-before-169.png) | ![Rain throughout](images/rain-after-169.png) |
+| 21:9 | ![Dry margins](images/rain-before-219.png) | ![Rain throughout](images/rain-after-219.png) |
+
+`TG2_RACE_60FPS=0 python3 tools/probe_run.py --exe build/TG2Recomp
+--out build/qual/rain/off --frames 360 --port 4620 --widescreen off --shots 300`
+exited 0: frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`.
