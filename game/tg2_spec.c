@@ -5,6 +5,7 @@
  * 4:3 port. The optional "60 fps race" mode is described below and in
  * docs/FRAMERATE.md; its preference is latched at each race start. */
 #include "game_spec.h"
+#include "tg2_icon.h"
 #include "genesis_runtime.h"
 #include "tg2_video.h"
 #include "tg2_options.h"
@@ -84,6 +85,10 @@ const GameSpec g_game_spec = {
     .command_count = sizeof commands / sizeof commands[0],
     .display_name = "Top Gear 2",
     .short_name = "TG2",
+    .app_id = "tg2recomp",
+    .icon_rgba = tg2_icon_rgba,
+    .icon_width = 32,
+    .icon_height = 32,
     .expected_rom_crc32 = 0xBD3074D2u,
     .expected_rom_size = 0x100000u,
     .tier3_floor_default = 1,

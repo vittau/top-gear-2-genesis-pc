@@ -70,10 +70,14 @@ iconset="$build/icon.iconset"
 rm -rf "$iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$repo/tools/release/tg2recomp.png" \
+    source="$repo/tools/release/tg2recomp.png"
+    if [ "$size" -le 32 ]; then source="$repo/tools/release/icon/tg2recomp-$size.png"; fi
+    sips -z "$size" "$size" "$source" \
         --out "$iconset/icon_${size}x${size}.png" >/dev/null
     double=$((size * 2))
-    sips -z "$double" "$double" "$repo/tools/release/tg2recomp.png" \
+    source="$repo/tools/release/tg2recomp.png"
+    if [ "$double" -le 32 ]; then source="$repo/tools/release/icon/tg2recomp-$double.png"; fi
+    sips -z "$double" "$double" "$source" \
         --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$build/TG2Recomp.icns"
