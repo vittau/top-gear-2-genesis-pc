@@ -73,9 +73,15 @@ tiles, and whether raster palette changes already occur.
 
 **Enhancement idea for after 0.1.0 (owner, 2026-11-07): NTSC filter and scanlines.**
 A Blargg NTSC composite filter and scanlines as presentation options. Blargg
-has a Genesis-specific variant, `md_ntsc`, besides `snes_ntsc`. The owner's
-reference is his modern-tyrian project, which took it from Cannonball. It is
-not on this machine; ask him for the path or the repo.
+has a Genesis-specific variant, `md_ntsc`, besides `snes_ntsc`. Reference:
+https://github.com/vittau/modern-tyrian (`docs/CRT.md`, `src/ntsc.c`,
+`src/crt_filter.c`, and regression captures in `test/regress/modern-crt-*`).
+It is a scalar C99 port of `snes_ntsc` 0.2.2 (via Deadly Dave): composite
+preset, RGB555-keyed kernel tables (about 16 MiB, built lazily), 3 input
+columns → 7 output columns, burst phase advanced per presented frame (smooth-
+motion frames too), half-row scanlines, and Off / Scanlines / NTSC / both. For
+TG2, consider `md_ntsc` or keying the tables on the Genesis 9-bit palette (512
+colours, so tiny tables), unless presented frames contain blended colours.
 - Run it on the final presented frame: after widescreen composition and the
   overscan crop, and for the 60 fps synthesized frames too. Then scale to the
   window, with scanlines matched to the output resolution.
