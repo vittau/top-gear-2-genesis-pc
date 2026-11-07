@@ -95,6 +95,15 @@ r·K_R + g·K_G + b·K_B, so three base kernels plus a few multiply-adds per tap
 not linear and must be applied separately. Plan: start with RGB555 like
 modern-tyrian, measure banding on the gradient skies, and switch to the
 three-kernel path if needed.
+- **Owner's queue and taste (2026-11-07):** the queue after 0.1.0 is
+  high-resolution rendering first, then NTSC + scanlines. Use Blargg's filter
+  for NTSC. For scanlines, the owner likes the look of *Animal Well*. A
+  community shader reproduces it:
+  https://godotshaders.com/shader/animal-well-inspired-crt-effect/ . Study its
+  effect (scanline profile, brightness compensation, any mask, bloom or
+  curvature) and reimplement it in our presentation path. Check the shader's
+  licence before copying any code, and prefer an original implementation of the
+  same look.
 - Run it on the final presented frame: after widescreen composition and the
   overscan crop, and for the 60 fps synthesized frames too. Then scale to the
   window, with scanlines matched to the output resolution.
