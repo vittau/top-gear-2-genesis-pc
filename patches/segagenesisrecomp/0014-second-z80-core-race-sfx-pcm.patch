@@ -110,7 +110,7 @@ index 5ac1f81..33d7d1f 100644
          s_dual_drained = 1;
          /* No chip may advance past the frame end (that would emit samples
           * belonging to the next frame); an overshooting write lands on the
-@@ -399,27 +407,33 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -399,14 +407,24 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
              if (evs[i].e.cycle_stamp > frame_end_cycle)
                  evs[i].e.cycle_stamp = frame_end_cycle;
          MixerChipJob fm0={evs,n_apply,frame_end_cycle,s_chip_fm[0],MIXER_CHIP_SAMPLES,0,0,
@@ -124,21 +124,6 @@ index 5ac1f81..33d7d1f 100644
 -                           !s_no_leftover,s_chip_psg_raw[1],1,AUDIO_ORIGIN_68K};
 +                           !s_no_leftover,s_chip_psg_raw[0],0,
 +                           MIXER_ORIGIN_BIT(AUDIO_ORIGIN_Z80)};
-         { static unsigned long dbg68, dbgz, dbg68fm; static unsigned long lastf;
-           size_t this68fm=0;
-           for (size_t di=0; di<n_apply; di++) { if (evs[di].e.origin==AUDIO_ORIGIN_68K) { dbg68++; if(evs[di].e.port!=AUDIO_PORT_PSG) this68fm++; } else dbgz++; }
-           dbg68fm+=this68fm;
-           if (g_snd_frame != lastf && (g_snd_frame % 600u)==0u) {
--              fprintf(stderr,"[DUAL-DBG] f=%lu n=%zu apply=%zu m68k=%lu z80=%lu fmA=%zu fmB=%zu fm0=%d,%d fm1=%d,%d psg1=%d,%d\n",
--                      g_snd_frame,n,n_apply,dbg68,dbgz,s_chip_fm_n[0],s_chip_fm_n[1],
--                      s_chip_fm[0][0],s_chip_fm[0][1],s_chip_fm[1][0],s_chip_fm[1][1],
--                      s_chip_psg[1][0],s_chip_psg[1][1]);
--              fprintf(stderr,"[DUAL-DBG] fm1.chip=%d origin=%d count=%zu this68fm=%zu total68fm=%lu\n",
--                      fm1.chip,fm1.origin,fm1.count,this68fm,dbg68fm);
-+              fprintf(stderr,"[DUAL-DBG] f=%lu n=%zu apply=%zu m68k=%lu z80=%lu\n",
-+                      g_snd_frame,n,n_apply,dbg68,dbgz);
-           }
-           lastf=g_snd_frame; }
          mixer_fm_job(&fm0);  mixer_psg_job(&psg0);
 +
 +        /* Compact chip B's writers into the front of the frame array (chip A is

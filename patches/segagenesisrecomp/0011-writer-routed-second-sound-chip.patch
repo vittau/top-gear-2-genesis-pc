@@ -314,7 +314,7 @@ index c15f4d5..5ac1f81 100644
          MixerMainJob main_job={&fm,&psg};
          s_executor(mixer_main_job,&main_job,mixer_shadow_job,&fm,s_executor_context);
          if(fm.output && fm.written)fm_shadow_verify_and_substitute(fm.output,fm.written);
-@@ -280,8 +387,79 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -280,8 +387,66 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
          if(psg_written)*psg_written=psg.written;
          return;
      }
@@ -337,19 +337,6 @@ index c15f4d5..5ac1f81 100644
 +                           !s_no_leftover,s_chip_psg_raw[0],0,AUDIO_ORIGIN_Z80};
 +        MixerChipJob psg1={evs,n_apply,frame_end_cycle,s_chip_psg[1],MIXER_CHIP_SAMPLES,0,
 +                           !s_no_leftover,s_chip_psg_raw[1],1,AUDIO_ORIGIN_68K};
-+        { static unsigned long dbg68, dbgz, dbg68fm; static unsigned long lastf;
-+          size_t this68fm=0;
-+          for (size_t di=0; di<n_apply; di++) { if (evs[di].e.origin==AUDIO_ORIGIN_68K) { dbg68++; if(evs[di].e.port!=AUDIO_PORT_PSG) this68fm++; } else dbgz++; }
-+          dbg68fm+=this68fm;
-+          if (g_snd_frame != lastf && (g_snd_frame % 600u)==0u) {
-+              fprintf(stderr,"[DUAL-DBG] f=%lu n=%zu apply=%zu m68k=%lu z80=%lu fmA=%zu fmB=%zu fm0=%d,%d fm1=%d,%d psg1=%d,%d\n",
-+                      g_snd_frame,n,n_apply,dbg68,dbgz,s_chip_fm_n[0],s_chip_fm_n[1],
-+                      s_chip_fm[0][0],s_chip_fm[0][1],s_chip_fm[1][0],s_chip_fm[1][1],
-+                      s_chip_psg[1][0],s_chip_psg[1][1]);
-+              fprintf(stderr,"[DUAL-DBG] fm1.chip=%d origin=%d count=%zu this68fm=%zu total68fm=%lu\n",
-+                      fm1.chip,fm1.origin,fm1.count,this68fm,dbg68fm);
-+          }
-+          lastf=g_snd_frame; }
 +        mixer_fm_job(&fm0);  mixer_psg_job(&psg0);
 +        mixer_fm_job(&fm1);  mixer_psg_job(&psg1);
 +        /* The mix uses the shorter of the two chips' frame; report the same
