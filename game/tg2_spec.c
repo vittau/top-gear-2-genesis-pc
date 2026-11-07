@@ -21,6 +21,7 @@ static const GameDebugCommand commands[] = {
 };
 
 #include <stdio.h>
+#include <string.h>
 
 /* The guest always runs at stock cycle cost. Only the host video adapter
  * uses this race-latched preference; no IRQ hooks or temporary RAM writes. */
@@ -60,6 +61,8 @@ static void tg2_entry(void)
  * RACE SOUND menu leaf and the race sound-policy sites. */
 static int tg2_instruction_hook(uint32_t pc)
 {
+    /* Frame boundary offered for a host snapshot (F-keys / overlay). */
+    glue_state_boundary(pc);
     if (tg2_audio_hook(pc)) return 1;
     return tg2_video_hook(pc);
 }
@@ -68,6 +71,62 @@ static void tg2_post_reset(void)
     tg2_audio_reset();
     tg2_video_reset();
 }
+
+/* ── Host snapshots ────────────────────────────────────────────────────────
+ * The guest half of a quickstate (CPU, WRAM, VDP/bus, Z80 cores, chips) is
+ * the engine's machine payload. What the machine cannot carry is where in
+ * the frame loop the snapshot was taken: TG2 has no single game-mode word and
+ * no shared WaitForVint routine, it spins on hardware flags inside each
+ * screen's own loop. The adapter declares those loop tops as snapshot
+ * boundaries (a game hook calls glue_state_boundary there), stores the one
+ * the snapshot used, and on load resumes the game fiber at that same
+ * instruction (the seeded in-function entry), so the restored CPU continues
+ * the exact loop instead of the boot chain that happened to be running. */
+#define TG2_STATE_MAGIC   0x54473253u  /* "TG2S" */
+#define TG2_STATE_VERSION 1u
+typedef struct Tg2HostState {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t poll_site;      /* loop instruction to re-enter */
+    uint32_t reserved;
+} Tg2HostState;
+static uint32_t s_state_poll_site;    /* boundary captured for the save */
+static uint32_t s_state_resume_site;  /* loop to re-enter after a load */
+
+/* Frame-loop tops whose re-entry continues the current screen in place. Each
+ * is a branch target seeded as an in-function entry in game.toml, so the
+ * recompiler emits a callable entry that continues the same host body. */
+static const uint32_t tg2_resume_sites[] = {
+    0x0065F2u,   /* race: picture-ready wait between frame builds */
+    0x001E18u,   /* top-level loop: title/attract screens */
+    0x001E9D8u,  /* title: "press START" input spin */
+    0x001EBF6u,  /* main menu: per-frame page draw/input loop */
+};
+
+static int tg2_state_at_boundary_site(uint32_t site)
+{
+    for (unsigned i = 0; i < sizeof tg2_resume_sites / sizeof tg2_resume_sites[0]; i++)
+        if (tg2_resume_sites[i] == site) { s_state_poll_site = site; return 1; }
+    return 0;
+}
+static size_t tg2_state_size(void) { return sizeof(Tg2HostState); }
+static int tg2_state_save(void *data, size_t size)
+{
+    if (!data || size != sizeof(Tg2HostState) || !s_state_poll_site) return 0;
+    Tg2HostState st = { TG2_STATE_MAGIC, TG2_STATE_VERSION, s_state_poll_site, 0 };
+    memcpy(data, &st, sizeof st);
+    return 1;
+}
+static int tg2_state_load(const void *data, size_t size, int apply)
+{
+    if (!data || size != sizeof(Tg2HostState)) return 0;
+    Tg2HostState st;
+    memcpy(&st, data, sizeof st);
+    if (st.magic != TG2_STATE_MAGIC || st.version != TG2_STATE_VERSION) return 0;
+    if (apply) s_state_resume_site = st.poll_site;
+    return 1;
+}
+static uint32_t tg2_state_resume_pc(void) { return s_state_resume_site; }
 static void tg2_vblank(void) { recomp_call_addr(0xFF01EAu); }
 static void tg2_hblank(void) { recomp_call_addr(0xFFF9FEu); }
 const GameSpec g_game_spec = {
@@ -81,6 +140,15 @@ const GameSpec g_game_spec = {
     .mods = tg2_mods,
     .on_post_reset = tg2_post_reset,
     .on_state_loaded = tg2_post_reset,
+    .state_build_id = "tg2-0.1.0-bd3074d2-state1",
+    .state_size = tg2_state_size,
+    .state_save = tg2_state_save,
+    .state_load = tg2_state_load,
+    .state_at_boundary_site = tg2_state_at_boundary_site,
+    .state_resume_pc = tg2_state_resume_pc,
+    /* If a resumed screen finishes (race over, menu left), continue at the
+     * top-level loop, which picks the next scene. */
+    .dispatch_main_loop_pc = 0x001E18u,
     .commands = commands,
     .command_count = sizeof commands / sizeof commands[0],
     .display_name = "Top Gear 2",

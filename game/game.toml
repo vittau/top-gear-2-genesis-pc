@@ -16,7 +16,10 @@ player_object = 0
 level_modes = []
 
 [functions]
-extra = [0x000200]
+# 0x0065F2 / 0x001E18 are per-frame loop tops seeded as in-function entries
+# (the recompiler folds them into their hosts and emits callable aliases), so
+# a quickstate can resume the race / top-level loop in place.
+extra = [0x000200, 0x0065F2, 0x001E18, 0x001E9D8, 0x001EBF6]
 
 # --- Simultaneous music + SFX (game/tg2_audio_both.c) -----------------------
 # Audited pre-instruction sites. All are stock instruction boundaries checked
@@ -127,4 +130,19 @@ addr = 0x00B5FA
 kind = "game_hook"
 [[widescreen_site]]
 addr = 0x006982
+kind = "game_hook"
+
+# Host-snapshot frame boundaries: the race picture-ready loop and the
+# top-level title/menu loop. The adapter parks a queued quickstate here.
+[[widescreen_site]]
+addr = 0x0065F2
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x001E18
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x001E9D8
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x001EBF6
 kind = "game_hook"
