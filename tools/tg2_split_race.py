@@ -87,14 +87,8 @@ def build_script(press_count=4, press_gap=280, unpause_at=(3700,)):
 
 
 def manifests(out: Path) -> dict:
-    counts = {}
-    for name in ('dispatch_misses.toml', 'floor_coverage.toml',
-                 'interior_label_misses.toml', 'floor_unsafe.toml'):
-        path = out / name
-        counts[name] = (None if not path.exists() else
-                        sum(1 for line in path.read_text(errors='replace').splitlines()
-                            if line.strip().startswith('[[')))
-    return counts
+    from tg2_runner import manifest_counts
+    return manifest_counts(out)
 
 
 def main():

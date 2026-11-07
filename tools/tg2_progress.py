@@ -49,16 +49,8 @@ UPGRADES = ('u32', 'u34', 'u36', 'u38', 'u3a', 'u3c', 'u3e', 'u40', 'u42',
 
 
 def manifests(out: Path) -> dict:
-    counts = {}
-    for name in ('dispatch_misses.toml', 'floor_coverage.toml',
-                 'interior_label_misses.toml', 'floor_unsafe.toml'):
-        path = out / name
-        if not path.exists():
-            counts[name] = None
-            continue
-        counts[name] = sum(1 for line in path.read_text(errors='replace').splitlines()
-                           if line.strip().startswith('[['))
-    return counts
+    from tg2_runner import manifest_counts
+    return manifest_counts(out)
 
 
 class NitroDriver(Driver):

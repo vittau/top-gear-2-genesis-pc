@@ -38,20 +38,16 @@ MODES = {
     'ws169-edges':  dict(widescreen='16:9', env={'TG2_HUD_MODE': 'edges'}),
     'ws169-60':     dict(widescreen='16:9', env={'TG2_HUD_MODE': 'edges',
                                                  'TG2_RACE_60FPS': '1'}),
+    # Release defaults: Adaptive 16:9 canvas, 60 fps races, HUD Centered,
+    # Hide overscan on, stock race sound.
+    'defaults':     dict(widescreen='16:9', env={'TG2_RACE_60FPS': '1',
+                                                 'TG2_HIDE_OVERSCAN': '1'}),
 }
 
 
 def manifests(out: Path) -> dict:
-    counts = {}
-    for name in ('dispatch_misses.toml', 'floor_coverage.toml',
-                 'interior_label_misses.toml', 'floor_unsafe.toml'):
-        path = out / name
-        if not path.exists():
-            counts[name] = None
-            continue
-        counts[name] = sum(1 for line in path.read_text(errors='replace').splitlines()
-                           if line.strip().startswith('[['))
-    return counts
+    from tg2_runner import manifest_counts
+    return manifest_counts(out)
 
 
 class Coverage:
