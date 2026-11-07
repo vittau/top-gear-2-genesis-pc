@@ -1,0 +1,137 @@
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Subject: [PATCH] A menu-dismissing button does not also reach the game
+
+Closing the in-game runtime menu with Enter unblocked gameplay input at once,
+and the Enter that accepted the row was still physically held: the game then
+read it as its own START on the same frame. In a race that pauses the race the
+player just asked to save, and every save or load then competes with a button
+the player never pressed for the game.
+
+Buttons and pad buttons that are held at the moment gameplay capture ends are
+now latched and suppressed until released. Nothing held means no change.
+---
+diff --git a/runner/input_map.c b/runner/input_map.c
+--- a/runner/input_map.c
++++ b/runner/input_map.c
+@@ -9,8 +9,59 @@
+ 
+ InputMap g_input_map;
+ static int s_gameplay_blocked;
++/* Buttons still held at the instant gameplay input was unblocked (the key or
++ * pad button that accepted the runtime-menu row). They stay out of the guest
++ * until the player releases them, so dismissing the menu cannot also press
++ * START/accept in the game. */
++static uint16_t s_held_on_unblock[INPUT_MAX_PLAYERS];
+ 
+-void input_set_gameplay_blocked(int blocked) { s_gameplay_blocked = !!blocked; }
++#if GEN_ENABLE_TRACE
++/* Dev/TCP test seam: headless SDL cannot fake SDL_GetKeyboardState, so a probe
++ * may stand in for a physically held key. It feeds exactly the same reads the
++ * real keyboard state does (input_map_key_mask). */
++static Uint8 s_test_keys[SDL_NUM_SCANCODES];
++static int s_test_keys_on;
++void input_test_key_hold(int scancode, int down)
++{
++    if (scancode < 0 || scancode >= SDL_NUM_SCANCODES) return;
++    s_test_keys_on = 1;
++    s_test_keys[scancode] = down ? 1 : 0;
++}
++void input_test_keys_clear(void)
++{
++    memset(s_test_keys, 0, sizeof s_test_keys);
++    s_test_keys_on = 1;
++}
++static const Uint8 *keyboard_state(void)
++{
++    return s_test_keys_on ? s_test_keys : SDL_GetKeyboardState(NULL);
++}
++#else
++static const Uint8 *keyboard_state(void) { return SDL_GetKeyboardState(NULL); }
++#endif
++
++/* Keyboard + gamepad contribution, ignoring the gameplay block and the
++ * release latch: the true physical state. */
++static uint16_t raw_mask(int player)
++{
++    const PlayerInput *pi = &g_input_map.p[player];
++    uint16_t m = 0;
++    if (pi->device & INPUT_DEV_KEYBOARD) m |= input_map_key_mask(player);
++    if (pi->device & INPUT_DEV_GAMEPAD)  m |= gamepad_player_mask(player);
++    return m;
++}
++
++void input_set_gameplay_blocked(int blocked)
++{
++    blocked = !!blocked;
++    if (blocked) {
++        memset(s_held_on_unblock, 0, sizeof s_held_on_unblock);
++    } else if (s_gameplay_blocked) {
++        for (int p = 0; p < INPUT_MAX_PLAYERS; ++p)
++            s_held_on_unblock[p] = raw_mask(p);
++    }
++    s_gameplay_blocked = blocked;
++}
+ int input_gameplay_blocked(void) { return s_gameplay_blocked; }
+ void input_gameplay_capture_changed(void *context,int open)
+ { (void)context;input_set_gameplay_blocked(open); }
+@@ -45,6 +96,7 @@
+ {
+     memset(&g_input_map, 0, sizeof(g_input_map));
+     s_gameplay_blocked = 0;
++    memset(s_held_on_unblock, 0, sizeof s_held_on_unblock);
+ 
+     PlayerInput *p1 = &g_input_map.p[0];
+     /* Default = keyboard AND gamepad, additive (same merge rule as the
+@@ -103,7 +155,7 @@
+ uint16_t input_map_key_mask(int player)
+ {
+     if (player < 0 || player >= INPUT_MAX_PLAYERS) return 0;
+-    const Uint8 *ks = SDL_GetKeyboardState(NULL);
++    const Uint8 *ks = keyboard_state();
+     if (!ks) return 0;
+     const PlayerInput *pi = &g_input_map.p[player];
+     uint16_t m = 0;
+@@ -119,11 +171,11 @@
+ {
+     if (s_gameplay_blocked) return 0;
+     if (player < 0 || player >= INPUT_MAX_PLAYERS) return 0;
+-    const PlayerInput *pi = &g_input_map.p[player];
+-    uint16_t m = 0;
+-    if (pi->device & INPUT_DEV_KEYBOARD) m |= input_map_key_mask(player);
+-    if (pi->device & INPUT_DEV_GAMEPAD)  m |= gamepad_player_mask(player);
+-    return m;
++    uint16_t m = raw_mask(player);
++    /* Suppress only while still held: the release clears the latch, so the
++     * next real press of the same button reaches the game normally. */
++    s_held_on_unblock[player] &= m;
++    return (uint16_t)(m & (uint16_t)~s_held_on_unblock[player]);
+ }
+ 
+ cc_bool input_player_enabled(int player)
+diff --git a/runner/input_map.h b/runner/input_map.h
+--- a/runner/input_map.h
++++ b/runner/input_map.h
+@@ -84,12 +84,22 @@
+ uint16_t input_current_mask(int player);
+ 
+ /* Host UI capture suppresses gameplay reads without clearing physical held
+- * state. Keep UI navigation on its own event/raw-device path. */
++ * state. Keep UI navigation on its own event/raw-device path. Buttons that are
++ * still held when the capture ends (the key or pad button that accepted the
++ * menu row) stay suppressed until they are released: closing the runtime menu
++ * must not also press START/accept in the game. */
+ void input_set_gameplay_blocked(int blocked);
+ int input_gameplay_blocked(void);
+ /* Compatible with the runtime menu's visibility notification. */
+ void input_gameplay_capture_changed(void *context, int open);
+ 
++#if GEN_ENABLE_TRACE
++/* Dev/TCP seam: stand in for a physically held key in headless runs, where
++ * SDL_GetKeyboardState cannot be set from outside. Same reads, same path. */
++void input_test_key_hold(int scancode, int down);
++void input_test_keys_clear(void);
++#endif
++
+ /* Map a GenesisButton to its GPAD_* hardware bit (genesis_bus.h layout). */
+ uint16_t input_button_bit(GenesisButton b);
+ 
