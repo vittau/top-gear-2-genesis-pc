@@ -11,6 +11,7 @@
 extern int tg2_audio_hook(uint32_t pc);
 extern void tg2_audio_reset(void);
 extern void tg2_frame_post(uint64_t frame_count);
+extern void tg2_audio_frame_pre(void);
 struct RecompLauncherCModProvider;
 const struct RecompLauncherCModProvider *tg2_mods(const struct RecompLauncherCModProvider *base);
 static const GameDebugCommand commands[] = {
@@ -33,6 +34,7 @@ static int race_live(void)
 }
 static void tg2_frame_pre(uint64_t frame_count)
 {
+    tg2_audio_frame_pre();          /* BOTH: writer-routed second sound chip */
     int live = race_live();
     if (live && !s_race_live) s_race60 = tg2_race60_requested();
     s_race_live = live;
