@@ -606,3 +606,30 @@ music's own note envelopes on an offline capture (the detector's 2 ms hold
 and 20 dB collapse tests were designed against a device capture of steady
 music); BOTH has neither. Device-side confirmation still needs the owner's
 speakers (the same detector, `--device` capture).
+
+### Two-player split screen
+
+Not re-qualified as a full race this round. `tools/tg2_split_race.py` reaches
+the 2P race (`$FF189E` = 1, the race clock runs from frame ~3507) and drives
+player 1 closed-loop, but the scripted boot's last START lands just after GO
+and pauses the countdown, so the full-race attempt stops at the pause. The
+previous live 2P evidence (`build/qual/split-2p-race/`, section 4 above) still
+stands: two panels, both cars racing, 4:3 content, 60 fps disengaged. A full
+2P race remains open for the owner's playtest.
+
+### Save states under BOTH
+
+The 0014 second Z80 core serialises with the state. Re-checked with
+`TG2_RACE_SOUND=both` on the merged build: save at GO, run, load in the same
+process, hold throttle -> 8 distinct pictures, speed 5144, race clock still
+advancing, 0/0/0/0 manifests (`build/qual/qa-state-both/summary.json`). The
+second Z80 does not break rewind; the cross-process freeze below is the same
+one as with the stock sound.
+
+### Merge note
+
+Qualified again after merging `origin/main` at `3a92c4f` (engine patches
+0014 BOTH second Z80, 0015 icon, 0016 photo-freeze hotkey, 0017 internal
+resolution hidden; HUD-overtake popup fix): engine patches reset and
+re-applied, rebuilt with JOBS=3 under the heavy lock, stock Off hashes
+re-checked (`build/qual/qa-ws-off2`).
