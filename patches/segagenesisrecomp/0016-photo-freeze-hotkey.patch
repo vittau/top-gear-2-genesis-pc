@@ -2,7 +2,7 @@ From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Subject: [PATCH] runner: P freezes the game for screenshots
 
 P stops emulation on the current frame without the game's own pause
-screen; P or Esc resumes. Off until pressed.
+screen and pauses audio output; P or Esc resumes. Off until pressed.
 ---
 diff --git a/runner/main.c b/runner/main.c
 --- a/runner/main.c
@@ -18,7 +18,7 @@ diff --git a/runner/main.c b/runner/main.c
  static int      s_tcp_input_active = 0;
  static uint8_t  s_tcp_input_keys   = 0;  /* Genesis: Up=0,Down=1,Left=2,Right=3,B=4,C=5,A=6,Start=7 */
  #if GENESIS_HAS_RECOMP_NET
-@@ -3617,6 +3621,28 @@
+@@ -3636,6 +3640,29 @@
              continue;   /* re-check at loop top */
          }
  
@@ -35,6 +35,7 @@ diff --git a/runner/main.c b/runner/main.c
 +                    (pev.key.keysym.sym == SDLK_p || pev.key.keysym.sym == SDLK_ESCAPE))
 +                    s_photo_freeze = 0;
 +            }
++            if (!s_photo_freeze) audio_set_playback_enabled(!turbo);
 +            if (!running) break;
 +            if (s_debug_enabled) {
 +                CmdResult pcr = cmd_server_poll();
@@ -47,13 +48,15 @@ diff --git a/runner/main.c b/runner/main.c
          int overlay_request = 0;
          SDL_Event ev;
          while (window_poll_event(&ev)) {
-@@ -3637,6 +3663,10 @@
+@@ -3656,6 +3683,12 @@
  #endif
              if (ev.type == SDL_QUIT) { running = 0; window_close_requested = 1; break; }
              if (ev.type == SDL_KEYDOWN) {
 +                if (!ev.key.repeat && !(ev.key.keysym.mod & (KMOD_SHIFT | KMOD_CTRL | KMOD_ALT | KMOD_GUI)) &&
 +                    ev.key.keysym.sym == SDLK_p) {
-+                    s_photo_freeze = 1; continue;
++                    /* Stop the audio device too: without new samples the
++                     * bridge's stall concealment repeats the last waveform. */
++                    s_photo_freeze = 1; audio_set_playback_enabled(0); continue;
 +                }
                  if (!ev.key.repeat && !(ev.key.keysym.mod & (KMOD_SHIFT | KMOD_CTRL)) &&
                      ev.key.keysym.sym == SDLK_F7) {
