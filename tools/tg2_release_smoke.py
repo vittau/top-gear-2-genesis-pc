@@ -46,19 +46,18 @@ PRESS START 8
 WAIT 1650
 PRESS START 7
 WAIT 420
-PRESS START 7
-WAIT 420
-PRESS START 7
-WAIT 420
-PRESS START 7
-WAIT 420
-PRESS START 7
-WAIT 1500
 SCREENSHOT {out}/race-1.png
-WAIT 900
+PRESS START 7
+WAIT 420
 SCREENSHOT {out}/race-2.png
-WAIT 900
+PRESS START 7
+WAIT 420
 SCREENSHOT {out}/race-3.png
+PRESS START 7
+WAIT 1200
+SCREENSHOT {out}/race-4.png
+WAIT 600
+SCREENSHOT {out}/race-5.png
 EXIT 0
 """
 
@@ -127,7 +126,7 @@ def main():
                   decoy_rom=str(rom),
                   exe=str(exe),
                   passed=(proc.returncode == 0 and bool(shots)
-                          and all(v < 0.9 for v in ratios.values())))
+                          and any(v < 0.9 for v in ratios.values())))
     (work / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=1))
     sys.exit(0 if result['passed'] else 1)

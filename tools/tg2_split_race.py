@@ -127,7 +127,9 @@ def main():
         r.start()
         d = Driver(r, da)
         st = None
-        deadline = race_start + 3000
+        # Keep polling for the whole scripted boot; the runner is uncapped and
+        # can be well past the estimated race frame by the first sample.
+        deadline = script.frame
         while r.frame() < deadline:
             st = r.state_and_frame()
             if st.clock > 0:
