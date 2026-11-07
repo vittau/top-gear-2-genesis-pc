@@ -76,6 +76,12 @@ Recolour only the player car's sprite pieces, using the sprite capture,
 shifting hue and saturation and scaling lightness to keep the shading. Cover
 P1 and P2 in split screen, the HUD car icon, and the menu, shop and results
 car images. Persist the colours per player in `settings.ini`.
+Acceptance test for the shading logic (owner): each of the game's stock car
+colours must be reproducible with the HSL picker. For each stock colour, find
+the H/S/L setting that best matches all of the car's shade entries, and
+report the per-entry error after Genesis 9-bit quantisation. The target is
+exact, or at most one 9-bit step per channel. This forces the shading model
+to be fitted from the stock ramps rather than invented.
 
 ## Still in progress
 
