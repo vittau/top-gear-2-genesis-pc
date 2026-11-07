@@ -87,6 +87,12 @@ Release bugs from owner playtests (2026-11-07):
   restored stack and continues the guest's return addresses; `$001E82` and
   `$001E1E` are seeded entries. Evidence in VALIDATION.md, "Quickstate resume
   continues the guest's callers".
+- **Open (owner, 2026-11-07): visible save-state feedback.** Saving gives no
+  feedback the player can see: `host_state_notice` only rewrites the window
+  title for 5 s ("Top Gear 2 - State saved"), which fullscreen, the Steam Deck
+  and a hidden title bar never show. Draw the notice in the game picture,
+  top left, e.g. "STATE SAVED TO SLOT 1" (and the load/refusal messages the
+  same way).
 - Added for the owner (patch 0016): P freezes the frame without the game's
   PAUSE screen and pauses audio output (screenshot mode); P or Esc resumes.
 
