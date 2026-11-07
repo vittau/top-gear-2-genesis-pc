@@ -828,7 +828,8 @@ skipped for the rest of the session.
 | Check | Before | After |
 |---|---|---|
 | `tg2_progress --country 6 --races 1` manifests | 1/1 interior+unsafe at frame 8585 | `build/qual/qa-650c-fix/c06` 0/0/0/0 |
-| Greece/India/Italy/Japan/Spain/Switzerland, race 1 each | 0/0/1/1 each (task 22 batch) | 0/0/0/0 each (`qa-650c-fix/c06,c07,c09,c10,c13,c14`) |
+| Greece/India/Italy/Japan/Spain, race 1 each | 0/0/1/1 each (task 22 batch) | 0/0/0/0 each (`qa-650c-fix/c06,c07,c09,c10,c13`) |
+| Switzerland, race 1 | 0/0/0/0 in the task 22 batch (its sprite count never reached the drift) | 0/0/0/0 (`qa-650c-fix/c14`) |
 | floor-capsule executed PCs (`executed-pcs.txt`) | contains `$650C,$6512,$6518,$651E..$6594`, `$2520..$25FC`, `$F702..$F7FA` | none of them |
 | race 1 start frame (Greece) | 9057 | 8997 |
 | Off-mode frame 60 / 300 | `2A0B972960C5E325` / `1131D937D70234FD` | unchanged (`qa-ws-off-650c`) |
