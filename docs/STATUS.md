@@ -42,7 +42,7 @@ major bugs. Release path:
    and 2-player. Run the release build with the default options. Gate on
    no crashes, empty manifests and no audio glitches.
 3. Task 21 (crop + HUD Edges fix) merged 2026-11-06. Before the release candidate, refresh the README screenshots, which still show the bands.
-4. CI `platforms=all` dry run → owner playtest of the candidate → tag
+4. CI `platforms=all` dry run → owner playtest of the candidate, **including on his Steam Deck** (the AppImage from the dry-run artifacts; controller only, Game Mode) → tag
    `v0.1.0` with the owner's go-ahead → the owner publishes the draft and
    submits to Quiver.
 
