@@ -13,7 +13,10 @@ Scope: does the native port play the real game, and do the presentation options
 change what the game does? Every entry below was produced headlessly (SDL dummy
 or offscreen video, dummy audio, TCP port 4470 for sections 1/4/5 and 4490 for
 the all-track coverage, one runtime at a time) by controller input only: no RAM
-writes, no save states, no generated-code edits.
+writes, no save states, no generated-code edits. The task-25 coverage extension
+is the one deliberate exception: it selects a later race of an already-loaded
+country by writing the game's own selection words, grounded in the ROM (see
+"Coverage: 64 of 64").
 
 | Artifact | What |
 |---|---|
@@ -25,6 +28,8 @@ writes, no save states, no generated-code edits.
 | `tools/tg2_password_ui.py` | types a password through the game's ENTER PASSWORD screen, verifying each symbol in WRAM |
 | `tools/tg2_coverage.py` | one coverage cell: password → track → 62 s of driving → evidence |
 | `tools/tg2_coverage_batch.py` | the 16-track × 2-mode matrix, one process per cell |
+| `tools/tg2_reach_races.py` | the 19 races a password cannot name, one process per race (setup-screen index selection) |
+| `tools/tg2_state_matrix.py` | quickstate save → fresh-process load matrix (race modes, menus, rewind) |
 | `tools/tg2_margin_audit.py` | widescreen seam statistics + per-run contact sheets |
 | `tools/tg2_nitro_compare.py` | same-route nitro A/B speed measurement |
 | `tools/tg2_active_lines.py` | password route into a track, captures countdown/nitro/pause/cruise, reports which scanlines carry content |
@@ -354,12 +359,11 @@ discovery seeds were needed, so `game/game.toml` is unchanged by this task.
 
 ## Gaps / follow-ups
 
-* All 16 country tracks are covered, but a country's **second** championship
-  race (e.g. Ayers Rock after Auckland) is not loadable with the same
-  `country` field alone; it needs the championship to advance. The 16 picker
-  entries each gave one track, which is what section 2 covers. A dedicated
-  probe of the password's stage/upgrade fields might expose the second races
-  without racing for them.
+* The `stage` field is DIFFICULTY, not a race slot (see the task-22 section),
+  so a password cannot name a country's races 2..4. Task 25 reached them by
+  writing the selected index on the game-setup screen
+  (`tools/tg2_reach_races.py`); every race in the game is now driven to the
+  finish.
 * The coverage runs take a screenshot every 600 frames, so per-frame sprite
   pop-in/out at the widescreen edges was not measured; only still-frame
   margin continuity (section 2) and the visible absence of wrapped/missing
@@ -429,22 +433,35 @@ not. The facts, all from the ROM and confirmed at runtime:
 The coverage table below therefore names races by country and slot, not by
 `stage`. `stage = 0` (AMATEUR) was used for the progression runs.
 
-### Coverage: 45 of 64 races driven to the finish (default options)
+### Coverage: 64 of 64 races driven to the finish (default options)
 
 Every run below is `tools/tg2_progress.py` on the release defaults (16:9
 canvas, 60 fps races, HUD Centered, Hide overscan On, stock RACE SOUND),
 uncapped guest, TCP 4610, one runtime at a time, under the heavy lock. Each
 country starts from a generated password that carries money and full upgrades
-(the checksum allows 150k with every part at max), then races the country's
-four races in order; the race index is read back before every race. A race is
-"passed" when it reached the finish (the clock froze with speed 0); "NOT
-REACHED" means the country's top-ten gate stopped the run at the previous
-race, which is a driver-pace limit, not a crash or a hang.
+(the checksum allows 150k with every part at max), then races in order; the
+race index is read back before every race. A race is "passed" when it reached
+the finish (the clock froze with speed 0).
+
+The first pass reached 45 of 64 races the same way and stopped at a country's
+top-ten gate. The 19 remaining races were then qualified one process per race:
+the password still names the country, and on the game-setup screen the run
+writes the race index `$FF16BE` and the matching descriptor from the ROM table
+`$01B8E8 + index*4` to `$FF241C` (grounded in the password loader at
+`$023B54` and the top-level copy at `$001E5E`; see `docs/RAM_MAP.md`). The
+intro panel then names the requested slot's own track and the HUD shows its
+own lap count, so the cell is the race it claims to be:
+`tools/tg2_reach_races.py` (`build/qual/qa-reach/`). No other guest write is
+made; the driving is controller input only. Result cells marked
+"race-index override" come from those per-race runs; all other cells are the
+original country progression runs.
 
 Manifests (dispatch / floor coverage / interior labels / floor unsafe) are the
-counts from that country's batch run. The batch ran before the discovery fix
-below, so Egypt and Australasia show the floor miss and countries 6..15 show
-the `0x00650C` interior-label miss; the post-fix re-runs are listed separately.
+counts from that run. The country-progression batch ran before the discovery
+fix below, so Egypt and Australasia show the floor miss there. The per-race
+runs confirm the open `0x00650C` interior-label miss is track-specific: it
+appears in the races that actually execute that scene-init block (1/1) and is
+absent in the others (0/0).
 
 | Country | Race | Track | Length | Laps | Descriptor | Result | Splits | Manifests | Evidence |
 |---|---:|---|---:|---:|---|---|---|---|---|
@@ -459,11 +476,11 @@ the `0x00650C` interior-label miss; the post-fix re-runs are listed separately.
 | Canada | 1 | Banff | 1.4 mi | 5 | 0x01bf58 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c02` |
 | Canada | 2 | Niagara | 2.7 mi | 3 | 0x01c006 | passed | 4 | 0/0/0/0 | `build/qual/qa-prog/c02` |
 | Canada | 3 | Toronto | 2.8 mi | 3 | 0x01c0b4 | passed | 4 | 0/0/0/0 | `build/qual/qa-prog/c02` |
-| Canada | 4 | – | 2.7 mi | 4 | 0x01c162 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c02` |
+| Canada | 4 | Vancouver | 2.7 mi | 4 | 0x01c162 | passed (race-index override) | 5 | 0/0/0/0 | `build/qual/qa-reach/c02-s4` |
 | Egypt | 1 | Abu Simbel | 0.7 mi | 8 | 0x01c210 | passed | 9 | 0/2/0/0 | `build/qual/qa-prog/c03` |
-| Egypt | 2 | – | 0.9 mi | 7 | 0x01c2be | NOT REACHED (failed to qualify) | 0 | 0/2/0/0 | `build/qual/qa-prog/c03` |
-| Egypt | 3 | – | 1.1 mi | 5 | 0x01c36c | NOT REACHED (failed to qualify) | 0 | 0/2/0/0 | `build/qual/qa-prog/c03` |
-| Egypt | 4 | – | 1.6 mi | 5 | 0x01c41a | NOT REACHED (failed to qualify) | 0 | 0/2/0/0 | `build/qual/qa-prog/c03` |
+| Egypt | 2 | Aswan | 0.9 mi | 7 | 0x01c2be | passed (race-index override) | 8 | 0/0/0/0 | `build/qual/qa-reach/c03-s2` |
+| Egypt | 3 | Cairo | 1.1 mi | 5 | 0x01c36c | passed (race-index override) | 6 | 0/0/0/0 | `build/qual/qa-reach/c03-s3` |
+| Egypt | 4 | Hush Sitton | 1.6 mi | 5 | 0x01c41a | passed (race-index override) | 6 | 0/0/0/0 | `build/qual/qa-reach/c03-s4` |
 | France | 1 | Bordeaux | 1.1 mi | 5 | 0x01c4c8 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c04` |
 | France | 2 | Monaco | 1.9 mi | 5 | 0x01c576 | passed | 6 | 0/0/0/0 | `build/qual/qa-prog/c04` |
 | France | 3 | Nice | 2.3 mi | 4 | 0x01c624 | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c04` |
@@ -477,9 +494,9 @@ the `0x00650C` interior-label miss; the post-fix re-runs are listed separately.
 | Greece | 3 | Mykanos | 2.6 mi | 4 | 0x01cb94 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c06` |
 | Greece | 4 | Santorini | 2.5 mi | 4 | 0x01cc42 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c06` |
 | India | 1 | Amber Port | 0.9 mi | 8 | 0x01ccf0 | passed | 9 | 0/0/1/1 | `build/qual/qa-prog/c07` |
-| India | 2 | – | 1.4 mi | 5 | 0x01cd9e | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c07` |
-| India | 3 | – | 2.1 mi | 4 | 0x01ce4c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c07` |
-| India | 4 | – | 2.4 mi | 4 | 0x01cefa | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c07` |
+| India | 2 | Bombay | 1.4 mi | 5 | 0x01cd9e | passed (race-index override) | 6 | 0/0/1/1 | `build/qual/qa-reach/c07-s2` |
+| India | 3 | Delhi | 2.1 mi | 4 | 0x01ce4c | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c07-s3` |
+| India | 4 | Taj Mahal | 2.4 mi | 4 | 0x01cefa | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c07-s4` |
 | Ireland | 1 | Dublin | 1.5 mi | 5 | 0x01cfa8 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c08` |
 | Ireland | 2 | Galway | 1.3 mi | 5 | 0x01d056 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c08` |
 | Ireland | 3 | Killarney | 1.8 mi | 4 | 0x01d104 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c08` |
@@ -487,34 +504,36 @@ the `0x00650C` interior-label miss; the post-fix re-runs are listed separately.
 | Italy | 1 | Florence | 1.6 mi | 4 | 0x01d260 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c09` |
 | Italy | 2 | Pisa | 2.3 mi | 4 | 0x01d30e | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c09` |
 | Italy | 3 | Rome | 2.5 mi | 4 | 0x01d3bc | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c09` |
-| Italy | 4 | – | 2.3 mi | 4 | 0x01d46a | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c09` |
+| Italy | 4 | Sicily | 2.3 mi | 4 | 0x01d46a | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c09-s4` |
 | Japan | 1 | Hiroshima | 1.9 mi | 5 | 0x01d518 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c10` |
 | Japan | 2 | Kyoto | 2.8 mi | 3 | 0x01d5c6 | passed | 4 | 0/0/1/1 | `build/qual/qa-prog/c10` |
 | Japan | 3 | Tokyo | 3.0 mi | 3 | 0x01d674 | passed | 4 | 0/0/1/1 | `build/qual/qa-prog/c10` |
 | Japan | 4 | Yokohama | 2.6 mi | 4 | 0x01d722 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c10` |
 | Scandinavia | 1 | Copenhagen | 1.5 mi | 4 | 0x01d7d0 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c11` |
 | Scandinavia | 2 | Helsinki | 1.7 mi | 5 | 0x01d87e | passed | 7 | 0/0/1/1 | `build/qual/qa-prog/c11` |
-| Scandinavia | 3 | – | 2.1 mi | 4 | 0x01d92c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c11` |
-| Scandinavia | 4 | – | 2.1 mi | 4 | 0x01d9da | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c11` |
+| Scandinavia | 3 | Reykjavik | 2.1 mi | 4 | 0x01d92c | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c11-s3` |
+| Scandinavia | 4 | Stockholm | 2.1 mi | 4 | 0x01d9da | passed (race-index override) | 5 | 0/0/0/0 | `build/qual/qa-reach/c11-s4` |
 | South America | 1 | Chile | 1.6 mi | 5 | 0x01da88 | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c12` |
 | South America | 2 | Mexico | 2.3 mi | 4 | 0x01db36 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c12` |
-| South America | 3 | – | 2.6 mi | 4 | 0x01dbe4 | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c12` |
-| South America | 4 | – | 2.5 mi | 4 | 0x01dc92 | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c12` |
+| South America | 3 | Peru | 2.6 mi | 4 | 0x01dbe4 | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c12-s3` |
+| South America | 4 | Brazil | 2.5 mi | 4 | 0x01dc92 | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c12-s4` |
 | Spain | 1 | Andalusia | 0.9 mi | 7 | 0x01dd40 | passed | 8 | 0/0/1/1 | `build/qual/qa-prog/c13` |
 | Spain | 2 | Barcelona | 1.2 mi | 6 | 0x01ddee | passed | 7 | 0/0/1/1 | `build/qual/qa-prog/c13` |
-| Spain | 3 | – | 2.4 mi | 4 | 0x01de9c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c13` |
-| Spain | 4 | – | 2.2 mi | 4 | 0x01df4a | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c13` |
+| Spain | 3 | Madrid | 2.4 mi | 4 | 0x01de9c | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c13-s3` |
+| Spain | 4 | Seville | 2.2 mi | 4 | 0x01df4a | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c13-s4` |
 | Switzerland | 1 | Geneva | 1.6 mi | 4 | 0x01dff8 | passed | 5 | 0/0/0/0 | `build/qual/qa-prog/c14` |
-| Switzerland | 2 | – | 1.8 mi | 5 | 0x01e0a6 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c14` |
-| Switzerland | 3 | – | 2.2 mi | 4 | 0x01e154 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c14` |
-| Switzerland | 4 | – | 2.9 mi | 4 | 0x01e202 | NOT REACHED (failed to qualify) | 0 | 0/0/0/0 | `build/qual/qa-prog/c14` |
+| Switzerland | 2 | Grindelwald | 1.8 mi | 5 | 0x01e0a6 | passed (race-index override) | 6 | 0/0/1/1 | `build/qual/qa-reach/c14-s2` |
+| Switzerland | 3 | Lucerne | 2.2 mi | 4 | 0x01e154 | passed (race-index override) | 5 | 0/0/0/0 | `build/qual/qa-reach/c14-s3` |
+| Switzerland | 4 | Zurich | 2.9 mi | 4 | 0x01e202 | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c14-s4` |
 | U.S.A. | 1 | Las Vegas | 2.2 mi | 4 | 0x01e2b0 | passed | 5 | 0/0/1/1 | `build/qual/qa-prog/c15` |
 | U.S.A. | 2 | Los Angeles | 2.2 mi | 5 | 0x01e35e | passed | 6 | 0/0/1/1 | `build/qual/qa-prog/c15` |
-| U.S.A. | 3 | – | 2.7 mi | 4 | 0x01e40c | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c15` |
-| U.S.A. | 4 | – | 2.5 mi | 4 | 0x01e4ba | NOT REACHED (failed to qualify) | 0 | 0/0/1/1 | `build/qual/qa-prog/c15` |
+| U.S.A. | 3 | New York | 2.7 mi | 4 | 0x01e40c | passed (race-index override) | 5 | 0/0/1/1 | `build/qual/qa-reach/c15-s3` |
+| U.S.A. | 4 | San Francisco | 2.5 mi | 4 | 0x01e4ba | passed (race-index override) | 5 | 0/0/0/0 | `build/qual/qa-reach/c15-s4` |
 
-Evidence per country: `build/qual/qa-prog/cNN/` (trace.csv, route.json,
-summary.json, intro panels, a screenshot every 900 frames, finish frame).
+Evidence per country progression: `build/qual/qa-prog/cNN/` (trace.csv,
+route.json, summary.json, intro panels, a screenshot every 900 frames, finish
+frame). Evidence per index-override race: `build/qual/qa-reach/cNN-sN/` (same
+artifacts, one process per race; `batch.json` summarises all 19).
 Post-fix re-runs: `build/qual/qa-fixcheck/c00` (Auckland + Ayers Rock, all
 manifests 0) and `c06` (Greece race 1, still the open 0x00650C miss).
 
@@ -557,20 +576,19 @@ manifests 0) and `c06` (Greece race 1, still the open 0x00650C miss).
    `plane_a_short_extension` 0, all violation classes 0, `passed: true`.
    Weather particles still do not populate the margins themselves (the margin
    fill composites plane B); that is a separate enhancement, not a streak.
-4. **MAJOR, open (game adapter + engine) — a quickstate loaded in a fresh
-   process freezes the race picture.**
-   Save at the GO frame in France, then: same process, run 120 frames, load,
-   hold throttle -> 8 distinct pictures, speed 5144, clock advances (rewind
-   works). Fresh process, boot 600 frames, load the same file, hold throttle
-   -> 1 distinct picture, clock advances to 27197274, speed 4540: the guest
-   runs and RAM changes but the picture never updates. TG2 sets neither
-   `resume_main_loop_pc` nor `save_resume_pc` (and `game_mode` is 0 in
-   `game.toml`), so the loader restores the CPU inside the *current* native
-   call chain (here the title/attract chain) instead of re-entering the
-   game's per-frame loop top. Same-process rewind is fine, so this is not a
-   release blocker; the fix is a real game-mode address plus resume PCs.
-   Evidence: `build/qual/qa-state/summary.json`,
-   `tools/tg2_state_freeze.py`.
+4. **MAJOR, fixed (task 25) — a quickstate loaded in a fresh process froze the
+   race picture.** Save at the GO frame in France, then: same process, run 120
+   frames, load, hold throttle -> 8 distinct pictures, speed 5144, clock
+   advances (rewind works). Fresh process, boot 600 frames, load the same file,
+   hold throttle -> 1 distinct picture, clock advances to 27197274, speed 4540:
+   the guest ran and RAM changed but the picture never updated. Cause: TG2 has
+   no shared WaitForVint park (it spins on its own hardware flags inside each
+   screen's loop) and set neither `resume_main_loop_pc` nor `save_resume_pc`, so
+   the save was taken mid-instruction and the loader restored the CPU inside the
+   new process's boot chain. Fixed with a declared per-frame boundary plus an
+   explicit resume PC; see "Task 25 — cross-session quickstates" below.
+   Evidence: `build/qual/qa-state`, `build/qual/qa-state-matrix`,
+   `tools/tg2_state_freeze.py`, `tools/tg2_state_matrix.py`.
 5. **MINOR, known — BOTH still lacks the engine/nitro PCM** (needs a second
    Z80 core, task 20b). Checked here for noise: reference below.
 
@@ -633,3 +651,93 @@ Qualified again after merging `origin/main` at `3a92c4f` (engine patches
 resolution hidden; HUD-overtake popup fix): engine patches reset and
 re-applied, rebuilt with JOBS=3 under the heavy lock, stock Off hashes
 re-checked (`build/qual/qa-ws-off2`).
+
+## Task 25 — cross-session quickstates
+
+### What was frozen
+
+Top Gear 2 has no single game-mode word and no shared WaitForVint routine: every
+screen spins on its own hardware flag (`tst/move+cmp` loops in the menu code,
+the picture-ready byte `$FF2424` in the race loop) and the game fiber yields
+from the scanline scheduler. The engine's host-snapshot path parks a save at a
+`WaitForVint` whose caller reports `state_at_boundary()`; TG2 never reaches that
+park, so the legacy save interrupted an arbitrary instruction. Loading such a
+file in a fresh process restored CPU and RAM but the C call chain was still the
+boot/title chain: the guest clock and RAM advanced while the picture stayed on
+"GO!" (docs/VALIDATION.md, task-22 bug 4).
+
+### Mechanism (engine patch 0018, game adapter)
+
+* Engine patch 0018 adds `glue_state_boundary(site)`: a game hook can offer a
+  per-frame instruction as a host-snapshot boundary. A queued save parks the
+  game fiber there *before* the instruction, so the snapshot is taken at a
+  repeatable loop point with the guest stack intact; the guest resumes in place
+  afterwards. It also adds `GameSpec.state_resume_pc`, consulted after the
+  adapter's `state_load(apply)` has prepared it, which names the PC the game
+  fiber restarts at.
+* `game/tg2_spec.c` saves a four-word host payload (magic, version, boundary
+  site), approves the race loop and the title/menu loops, and maps the saved
+  site to the same address on load. `tools/apply-engine-patches.sh` applies the
+  patch; a build id rejects states from another build before touching RAM.
+* `game/game.toml` seeds those loop tops as in-function entries
+  (`$0065F2` race picture-ready loop, `$001E18` top-level loop, `$001E9D8`
+  title START spin, `$001EBF6` main-menu page loop). The recompiler splits each
+  into a callable entry without changing its host body; the generated code path
+  is a tail transfer where a branch was, and the stock Off framebuffer hashes
+  prove the game still behaves identically.
+
+| Screen | Boundary instruction | Resume PC | Verified |
+|---|---|---|---|
+| Race (1P) | `$0065F2` picture-ready wait, once per frame | `$0065F2` | live, pixel-identical to the saved frame |
+| Title | `$001E9D8` START spin | `$001E9D8` | live, pixel-identical, START still advances |
+| Main menu | `$001EBF6` page draw/input loop | `$001EBF6` | live, pixel-identical, START still advances |
+| Password entry / game setup | no declared loop top | — | save **refused** ("Save unavailable in the current game mode", no file written) |
+| Any other screen | no declared loop top | — | save refused, nothing freezes |
+
+A state file from another build, a damaged file, or an old-format file is
+rejected with a clear message before any guest state is touched. The in-process
+path (rewind, F-keys within one session) uses the same boundary and payload.
+
+### Quickstate matrix (release defaults, one runtime at a time)
+
+`tools/tg2_state_matrix.py --out build/qual/qa-state-matrix`: each case saves
+through the same runner entry point the overlay/F-key path uses, then loads the
+file in a **second process** that boots 600 frames first. "Live" means the
+picture changed, the race clock advanced, and the manifests stayed empty.
+
+| Case | Options at save | Distinct pictures / 420 frames | Clock delta | Speed | Manifests | Evidence |
+|---|---|---:|---:|---|---|---|
+| `race-off` | 4:3, stock rate | 8 | +24 794 302 | 82 → 3803 | 0/0/0/0 | `build/qual/qa-state-matrix/race-off` |
+| `race-60fps` | 16:9 + 60 fps | 8 | +24 794 302 | 82 → 3768 | 0/0/0/0 | `build/qual/qa-state-matrix/race-60fps` |
+| `race-ws169` | 16:9, stock rate | 8 | +24 794 302 | 82 → 3803 | 0/0/0/0 | `build/qual/qa-state-matrix/race-ws169` |
+| `race-both` | 16:9 + 60 fps, RACE SOUND BOTH | 8 | +24 794 302 | 82 → 3803 | 0/0/0/0 | `build/qual/qa-state-matrix/race-both` |
+| `race-mid` | 16:9 + 60 fps, 240 frames into the race | 8 | +24 794 302 | 4270 → 3274 (throttle only) | 0/0/0/0 | `build/qual/qa-state-matrix/race-mid` |
+| `rewind` | same process save → run → load | 8 | +24 794 302 | 82 → 3709 | 0/0/0/0 | `build/qual/qa-state-matrix/rewind` |
+| `menu-title` | title screen | static (pixel-identical) | — | — | 0/0/0/0 | `build/qual/qa-state-matrix/menu-title` |
+| `menu-main` | main menu | static (pixel-identical) | — | — | 0/0/0/0 | `build/qual/qa-state-matrix/menu-main` |
+| `menu-password` | password entry | save refused | — | — | — | `build/qual/qa-state-matrix/menu-password` |
+| `menu-setup` | game setup | save refused | — | — | — | `build/qual/qa-state-matrix/menu-setup` |
+
+The loaded menu frame is the saved frame: both menu cases compare the saving
+process's screenshot with the loading process's first frame (0.0 % differing
+pixels). The original freeze reproduction (`tools/tg2_state_freeze.py`,
+`build/qual/qa-state-fix1`) now ends the fresh process on exactly the
+same-process values — 8 distinct pictures, speed 5144, clock 27251887 — where
+the pre-fix run gave 2 pictures and a diverged clock. The matrix also re-runs
+the same-process load for the stock sound (`rewind`), so rewind still works.
+
+The earlier freeze reproduction (`tools/tg2_state_freeze.py`,
+`build/qual/qa-state-fix1`) now reports **8 distinct pictures in the fresh
+process** (was 1-2), identical speed and clock to the same-process load; the
+same check on the clean rebuild from `tools/apply-engine-patches.sh --reset`
+(`build/qual/qa-state-fix2`) gives speed 5144 and clock 26978822 in both
+processes.
+
+Stock identity: with every presentation option off, frame 60
+`2A0B972960C5E325` and frame 300 `1131D937D70234FD` are unchanged
+(`tools/verify_widescreen.py --modes off`, `build/qual/qa-ws-off3`), and all
+four manifests stay empty.
+
+2P: save/load uses the same race loop (`$0065F2`) and the state carries
+`$FF189E`; the 2P full-race drive still has the known scripted-boot pause
+(section above), so no separate 2P quickstate run was added this round.

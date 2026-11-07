@@ -194,3 +194,12 @@ the line, one lap is 9.44 M units, and the results screen's own "TIME" column
 matches the sum of the clock deltas (run-up included). `tools/tg2_race_driver.py`
 reports the run-up separately from the four timed laps.
 
+### Race selection and quickstate boundaries (task 25)
+
+| Address | Size | Meaning | Evidence |
+|---|---|---|---|
+| `$FF16BE` | word | Selected race index, `country == index >> 2` and `slot == index & 3`, 0..63 | password loader writes `country << 2` at `$023B54`; the top-level loop copies `table[$01B8E8 + index*4]` to `$FF241C` at `$001E5E`; writing the word on the game-setup screen makes the next RACE load the chosen slot (all 19 later slots qualified) |
+| `$FF241C` | long | Descriptor pointer of the selected race (ROM `$01B8E8 + index*4`) | `$001E5E`; the scene reads the record's laps/length from here |
+| `$0065F2` | code | Race per-frame loop: `tst.b $FF2424` picture-ready wait after each `bsr $0067B6` frame build | host-snapshot boundary (task 25); also the `$65EE` call site |
+| `$001EBF6` | code | Main-menu per-frame loop top: draw page (`bsr $001F258`), wait on `$FF01C6`, read pads, handle input, loop | `$01EC46 tst.w d0; beq $01EBF6`; quickstate boundary |
+| `$001E9D8` | code | Title "press START" spin (`move.b $FF1BA9, d0; andi #$80; bne out; bra self`) | quickstate boundary |
