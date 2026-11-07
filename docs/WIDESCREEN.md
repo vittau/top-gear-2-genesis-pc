@@ -111,9 +111,11 @@ Object activation, collision and the object pool are untouched — this widens
   runner's 320-pixel minimum logical width and the 4096-pixel resource bound.
 
 A 224-line 16:9 frame requests 398 pixels (71 extra per side) and 21:9
-requests 523 (133/134 per side). Adaptive at a 1600×900 window gives 398, at
-1234×567 gives 488, at 1000×1000 gives 320 (the runner minimum), at 3840×720
-gives 1195.
+requests 523 (133/134 per side). With the overscan crop the same ratios at the
+presented 200 lines ask for 356 and 467 (50/50 and 105/106). Adaptive at a
+1600×900 window gives 356, at 1234×567 gives 435, at 1000×1000 gives 320 (the
+runner minimum), at 3840×720 gives 1067; with the crop off the same windows
+give 398 / 488 / 320 / 1195.
 
 Title, menus and shop screens are H40 (320×224) and are left at their native
 size, centred with pillarbox bars. Split-screen is detected with the 2P flag
@@ -683,13 +685,22 @@ host-only; no guest write or new hook was added.
 
 ## Still untested
 
-The route covers the first track, dry daylight, single player, one car and
-partial throttle. Not covered: other tracks (their plane-B atlas layouts may
-differ), rain and night, the finish/podium sequence, attract mode, full-race
-completion, split-screen 2P (intentionally left 4:3), LM/head-to-head,
+The widescreen margin work covers the first track, dry daylight, single player,
+one car and partial throttle. Not covered here: the plane-B atlas layouts of
+the other 15 tracks in the margins, attract mode, LM/head-to-head,
 controller-only launcher operation, Windows/macOS/Steam Deck builds, and
 physical display/audio. Network session configuration was not part of this
 work.
+
+The **crop** is qualified on all 16 tracks (password route: rain, night, fog,
+snow, dusk), race start countdown, cruise, nitro, both pause screens, the
+finish/results flow and 2P split-screen; see
+[Measured crop evidence](#measured-crop-evidence). A situation not in that
+list is still safe by construction: a picture that draws into either band is
+never cropped (`crop_withheld`).
+
+Split-screen remains intentionally 4:3 and uncropped: the two views use the
+whole 224-line frame.
 
 ## Reproduction
 
