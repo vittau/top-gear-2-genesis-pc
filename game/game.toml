@@ -16,9 +16,10 @@ player_object = 0
 level_modes = []
 
 [functions]
-# 0x0065F2 / 0x001E18 are per-frame loop tops seeded as in-function entries
-# (the recompiler folds them into their hosts and emits callable aliases), so
-# a quickstate can resume the race / top-level loop in place.
+# These are per-frame loop tops seeded as entries so a quickstate can resume
+# the current screen in place. Each sits inside a larger host routine; the
+# recompiler replaces the host's branch to it with a tail transfer, which keeps
+# the generated code's behaviour identical while making the loop callable.
 extra = [0x000200, 0x0065F2, 0x001E18, 0x001E9D8, 0x001EBF6]
 
 # --- Simultaneous music + SFX (game/tg2_audio_both.c) -----------------------
