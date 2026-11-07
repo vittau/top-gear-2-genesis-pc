@@ -266,7 +266,8 @@ static int hud_tile(unsigned attr) {
     return (attr & 0x8000) && tile >= 4 && tile <= 0x84
                ? (tile < 0x3D ? -1 : 1) : 0;
 }
-static unsigned hud_plane_pixels, hud_marker_pixels;
+static unsigned hud_plane_pixels, hud_marker_pixels, hud_sprite_pixels;
+static int window_at(const GVDP *v, int line, int x);
 static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                     unsigned ba, unsigned bb, const uint32_t *pal, int nw,
                     uint32_t *out, int w) {
@@ -282,11 +283,16 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     memset(shifted, 0, sizeof shifted);
     memset(spr_attr, 0, sizeof spr_attr);
     int dirty = 0;
-    /* The HUD raster phase uses signed-negative 10-bit V-scroll (-14 on
-     * this ROM). During the initial window-plane band, nonnegative plane-A
-     * scroll can point at HUD cells hidden behind that window. They are
-     * not displayed instruments and must not be relocated. */
-    for (int x = 0; (va & 512) && x < nw; ++x) {
+    /* Only relocate plane-A texels the display actually shows. The stock top
+     * window band hides plane A, and there a nonnegative plane-A V-scroll
+     * points at HUD cells that are not displayed instruments, so the window
+     * decides per pixel instead of the scroll phase. The HUD raster otherwise
+     * alternates between a signed-negative phase (-14 on this ROM) and a
+     * nonnegative one (+92..+102) that pins the same cells to the same rows:
+     * both display the same instruments and both must move. */
+    for (int x = 0; x < nw; ++x) {
+        if (window_at(v, line, x))
+            continue;
         unsigned attr, c = pixel(v, ba, x - ha, line + va, &attr);
         int side = hud_tile(attr);
         if (side && c) {
@@ -318,10 +324,18 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
             int x = xword - 128, sy = line - y;
             int marker = size == 5 && (attr & 0x8000) &&
                          ((attr & 2047) == 0x106 || (attr & 2047) == 0x10E);
+            /* The game also draws the whole instrument cluster as sprites,
+             * with the same pattern IDs the plane-A cells use, on frames where
+             * it takes the HUD off plane A (measured at baseline frames
+             * 3409..3585: patterns $04..$7D in eight 32-pixel sprites plus the
+             * two markers). They belong to the same left/right clusters and
+             * must move with them, or the map separates from its markers. */
+            int side = marker ? 1 : hud_tile(attr);
+            int hud = marker || side != 0;
             if (attr & 0x1000)
                 sy = sh - 1 - sy;
             for (int dx = 0; dx < sw; ++dx) {
-                int nx = x + dx, ox = origin + nx + (marker ? right : 0);
+                int nx = x + dx, ox = origin + nx + (hud ? (side < 0 ? -origin : right) : 0);
                 int sx = attr & 0x800 ? sw - 1 - dx : dx;
                 unsigned tile = ((attr & 2047) + (sx / 8) * (sh / 8) + sy / 8) & 2047;
                 unsigned data = v->vram[(tile * 32 + (sy & 7) * 4 + (sx & 7) / 2) & 65535];
@@ -329,16 +343,21 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                 if (!c)
                     continue;
                 c |= (attr >> 9) & 48;
-                if (marker && nx >= 0 && nx < nw) {
+                if (window_at(v, line, nx < 0 ? 0 : nx > nw - 1 ? nw - 1 : nx))
+                    continue;   /* the window hides plane A *and* sprites */
+                if (hud && nx >= 0 && nx < nw) {
                     removed[nx] = 1;
                     dirty = 1;
                 }
                 if (ox < 0 || ox >= w || occupied[ox])
                     continue;
                 occupied[ox] = 1;
-                if (marker) {
+                if (hud) {
                     shifted[ox] = c;
-                    ++hud_marker_pixels;
+                    if (marker)
+                        ++hud_marker_pixels;
+                    else
+                        ++hud_sprite_pixels;
                 } else if (nx >= 0 && nx < nw) {
                     sprites[nx] = c;
                     spr_attr[nx] = attr;
@@ -530,7 +549,7 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     }
     if (!line) {
         frame_margin_pixels = 0;
-        hud_plane_pixels = hud_marker_pixels = 0;
+        hud_plane_pixels = hud_marker_pixels = hud_sprite_pixels = 0;
     }
     for (int x = 0; x < w; ++x)
         out[x] = 0xFF000000;
@@ -955,11 +974,13 @@ void tg2_video_command(int id, const char *json) {
                      "\"published\":%u,\"displayed\":%u,\"pieces\":%u,\"overflow\":%u,"
                      "\"sat_matches\":%u,\"margin_pieces\":%u,\"sprite_margin_pixels\":%u,"
                      "\"hud_edges\":%d,\"hud_plane_pixels\":%u,\"hud_marker_pixels\":%u,"
+                     "\"hud_sprite_pixels\":%u,"
                      "\"hide_overscan\":%d,\"crop\":%d,\"crop_frames\":%u,"
                      "\"crop_withheld\":%u",
                      id, enabled(), wide_lines, native_lines, serial, shown ? shown->serial : 0,
                      shown ? shown->count : 0, overflow, matched_pieces, margin_pieces,
                      frame_margin_pixels, tg2_video_get_hud_mode(), hud_plane_pixels, hud_marker_pixels,
+                     hud_sprite_pixels,
                      tg2_video_get_hide_overscan(), presented_cropped, crop_frames,
                      crop_withheld);
     n += snprintf(out + n, sizeof out - n,
