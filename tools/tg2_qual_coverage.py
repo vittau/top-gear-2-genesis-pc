@@ -26,20 +26,20 @@ COUNTRIES = ['Australasia', 'Britain', 'Canada', 'Egypt', 'France', 'Germany',
 NAMES = {
     (0, 0): 'Auckland', (0, 1): 'Ayers Rock', (0, 2): 'Canterbury Plains', (0, 3): 'Sydney',
     (1, 0): 'Loch Ness', (1, 1): 'London', (1, 2): 'Sheffield', (1, 3): 'Stonehenge',
-    (2, 0): 'Banff', (2, 1): 'Niagara', (2, 2): 'Toronto',
-    (3, 0): 'Abu Simbel',
+    (2, 0): 'Banff', (2, 1): 'Niagara', (2, 2): 'Toronto', (2, 3): 'Vancouver',
+    (3, 0): 'Abu Simbel', (3, 1): 'Aswan', (3, 2): 'Cairo', (3, 3): 'Hush Sitton',
     (4, 0): 'Bordeaux', (4, 1): 'Monaco', (4, 2): 'Nice', (4, 3): 'Paris',
     (5, 0): 'Bavaria', (5, 1): 'Cologne', (5, 2): 'Frankfurt', (5, 3): 'Munich',
     (6, 0): 'Athens', (6, 1): 'Meteora', (6, 2): 'Mykanos', (6, 3): 'Santorini',
-    (7, 0): 'Amber Port',
+    (7, 0): 'Amber Port', (7, 1): 'Bombay', (7, 2): 'Delhi', (7, 3): 'Taj Mahal',
     (8, 0): 'Dublin', (8, 1): 'Galway', (8, 2): 'Killarney', (8, 3): 'Limerick',
-    (9, 0): 'Florence', (9, 1): 'Pisa', (9, 2): 'Rome',
+    (9, 0): 'Florence', (9, 1): 'Pisa', (9, 2): 'Rome', (9, 3): 'Sicily',
     (10, 0): 'Hiroshima', (10, 1): 'Kyoto', (10, 2): 'Tokyo', (10, 3): 'Yokohama',
-    (11, 0): 'Copenhagen', (11, 1): 'Helsinki',
-    (12, 0): 'Chile', (12, 1): 'Mexico',
-    (13, 0): 'Andalusia', (13, 1): 'Barcelona',
-    (14, 0): 'Geneva',
-    (15, 0): 'Las Vegas', (15, 1): 'Los Angeles',
+    (11, 0): 'Copenhagen', (11, 1): 'Helsinki', (11, 2): 'Reykjavik', (11, 3): 'Stockholm',
+    (12, 0): 'Chile', (12, 1): 'Mexico', (12, 2): 'Peru', (12, 3): 'Brazil',
+    (13, 0): 'Andalusia', (13, 1): 'Barcelona', (13, 2): 'Madrid', (13, 3): 'Seville',
+    (14, 0): 'Geneva', (14, 1): 'Grindelwald', (14, 2): 'Lucerne', (14, 3): 'Zurich',
+    (15, 0): 'Las Vegas', (15, 1): 'Los Angeles', (15, 2): 'New York', (15, 3): 'San Francisco',
 }
 
 ROM = Path.home() / 'roms/genesis/tg2.bin'
@@ -63,6 +63,8 @@ def race_table(rom: Path):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, default=Path('build/qual/qa-prog'))
+    p.add_argument('--reach', type=Path, default=Path('build/qual/qa-reach'),
+                   help='per-race runs that select a later slot by writing $FF16BE')
     p.add_argument('--rom', type=Path, default=ROM)
     p.add_argument('--out', type=Path)
     a = p.parse_args()
@@ -78,6 +80,20 @@ def main():
             index = c * 4 + slot
             info = table.get(index, {})
             race = races.get(slot + 1, {})
+            evidence = out
+            result = ('passed' if race.get('finish_frame') else
+                      ('NOT REACHED (failed to qualify)' if not summary
+                       else 'NOT REACHED (failed to qualify)'))
+            # A dedicated per-race run that set the index on the setup screen.
+            reach = a.reach / f'c{c:02d}-s{slot + 1}'
+            reach_summary = {}
+            if (reach / 'summary.json').exists():
+                reach_summary = json.loads((reach / 'summary.json').read_text())
+                rr = (reach_summary.get('races') or [{}])[0]
+                if rr.get('finish_frame'):
+                    race = rr
+                    evidence = reach
+                    result = 'passed (race-index override)'
             laps = [x['seconds'] for x in race.get('lap_times', [])]
             rows.append(dict(
                 country=c, slot=slot, index=index,
@@ -85,14 +101,12 @@ def main():
                 length=info.get('length', '?'), laps_total=info.get('laps', '?'),
                 weather=info.get('weather'),
                 descriptor=info.get('descriptor', '?'),
-                result=('passed' if race.get('finish_frame') else
-                        ('NOT REACHED (failed to qualify)' if not summary
-                         else 'NOT REACHED (failed to qualify)')),
+                result=result,
                 race_laps=[round(x) for x in race.get('lap_boundaries', []) and
                            [b['lap'] for b in race['lap_boundaries']]],
                 lap_seconds=laps,
-                manifests=manifest_counts(out),
-                evidence=str(out)))
+                manifests=manifest_counts(evidence),
+                evidence=str(evidence)))
     header = ('| Country | Race | Track | Length | Laps | Descriptor | Result | '
               'Splits | Manifests | Evidence |\n'
               '|---|---:|---|---:|---:|---|---|---|---|---|\n')

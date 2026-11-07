@@ -277,6 +277,10 @@ class Runner:
             keys = int(keys, 16)
         self.command('set_input', keys=f'{keys:02X}')
 
+    def write_memory(self, addr: int, hex_data: str):
+        """Probe-only guest write (the engine's write_memory command)."""
+        return self.command('write_memory', addr=f'0x{addr:06X}', hex=hex_data)
+
     def press(self, keys: int, frames: int = 6):
         """Hold `keys` for `frames` wall frames, then release."""
         self.set_input(keys)
