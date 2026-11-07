@@ -33,6 +33,16 @@ from tg2_password_ui import PasswordUI  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# ROM race table: 64 longword descriptors, entry i = country i>>2, slot i&3.
+RACE_TABLE = 0x1B8E8
+
+
+def race_descriptor(rom: Path, index: int) -> int | None:
+    if not rom.exists():
+        return None
+    data = rom.read_bytes()
+    return int.from_bytes(data[RACE_TABLE + index * 4:RACE_TABLE + index * 4 + 4], 'big')
+
 # Presentation modes used by the release qualification.
 MODES = {
     'off':          dict(widescreen='off',  env={}),
@@ -108,6 +118,10 @@ def main():
     p.add_argument('--races', type=int, default=4,
                    help='races to run inside the country (max 4)')
     p.add_argument('--mode', choices=sorted(MODES), default='defaults')
+    p.add_argument('--start-slot', type=int, default=0,
+                   help='race slot inside the country to load from the setup '
+                        'screen by writing the race index $FF16BE (0..3)')
+    p.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
     p.add_argument('--money', type=int, default=150,
                    help='password money in thousands; with full upgrades the sum stays valid')
     p.add_argument('--no-upgrades', dest='upgrades', action='store_false')
@@ -156,6 +170,26 @@ def main():
         ui.submit()
         r.wait_frame(r.frame() + 200)
         ui.shot('setup')
+        # The password always resumes at the country's first race ($FF16BE =
+        # country << 2, set by the loader at $023B54). The intro panel and the
+        # race scene both read the selected index from $FF16BE when RACE is
+        # pressed, so a later slot is reachable by setting the index here.
+        evidence['start_slot'] = a.start_slot
+        evidence['requested_index'] = a.country * 4 + a.start_slot
+        if a.start_slot:
+            index = a.country * 4 + a.start_slot
+            # Two cached selections drive the intro panel and the scene: the
+            # index itself and the descriptor pointer the top-level loop copied
+            # from table[$01B8E8 + index*4] at $001E5E. Set both, grounded in
+            # the ROM table rather than in the setup screen's stale copy.
+            descriptor = race_descriptor(a.rom, index)
+            r.write_memory(0xFF16BE, f'{index:04X}')
+            if descriptor is not None:
+                r.write_memory(0xFF241C, f'{descriptor:08X}')
+            evidence['requested_descriptor'] = (f'0x{descriptor:06x}'
+                                                if descriptor is not None else None)
+        evidence['index_on_setup'] = r.ram16(0x16BE)
+        evidence['descriptor_on_setup'] = f'0x{r.ram32(0x241C):06x}'
         ui.tap('START', 7, 50)      # RACE row -> intro panel
         prev_finish = None
         for i in range(a.races):

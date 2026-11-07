@@ -10,7 +10,7 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 | Area | State | Docs |
 |---|---|---|
 | Native 4:3 baseline | Boot → menus → full 4-lap race → results/shop/next race; 2P split-screen; 33.7-min soak, plus a 43.7-min soak with all options on (16:9 + Edges + 60 fps + Hide overscan, 13 races, SP stable). 0 dispatch misses. | `BRINGUP.md`, `VALIDATION.md` |
-| All 16 tracks | Password codec reversed (`PASSWORDS.md`, `tools/tg2_password.py`). All 16 countries raced for 62 s in Off and 16:9+Edges, 0 manifest entries; rain, night, fog and snow covered. Nitro = C button. | `VALIDATION.md` |
+| All 64 races | Password codec reversed (`PASSWORDS.md`, `tools/tg2_password.py`). All 16 countries raced for 62 s in Off and 16:9+Edges, 0 manifest entries; rain, night, fog and snow covered. Task 25 drove the last 19 races (index selected from the ROM table on the setup screen) to the finish: 64/64. Nitro = C button. | `VALIDATION.md` |
 | Widescreen | Adaptive / 16:9 / 21:9 race renderer: road, background, sprites in the margins. HUD Centered or Edges. Off is byte-identical to stock. | `WIDESCREEN.md` |
 | Widescreen fixes from playtests | Black bands on downhills, the top-window line, tunnel margins (now follow the walls), and the motion-only flicker in 60 fps synthesized frames. Full-presented-frame margin audit: 1019 → 0. | `WIDESCREEN.md` |
 | Hide overscan | Default On: crops the 8 top and 16 bottom empty race lines (the top band's stock red marks go with them), so the picture fills the window. Menus, results and split-screen keep their full height. | `WIDESCREEN.md` |
@@ -63,9 +63,14 @@ Release bugs from owner playtests (2026-11-07):
 - **Fixed (2e42151):** with the HUD at edges, the overtake popup ("18TH"
   rising over the car) was carried to the right edge with the right cluster.
   Only the cluster columns move now.
-- **Major, open (task 22):** loading a save state in a race freezes it at
-  "GO!" (picture static, 0 MPH). Seen in a cross-process load; same-process
-  load (rewind) still to check. Suspect: `on_state_loaded = tg2_post_reset`.
+- **Fixed (task 25):** loading a save state in a race froze it at "GO!" in a
+  fresh process (picture static, guest clock still running). Cause: the save
+  interrupted an arbitrary instruction and TG2 has no shared WaitForVint park,
+  so the loader restored the CPU inside the new process's boot chain. Engine
+  patch 0018 + `game/tg2_spec.c` now park quickstates at a declared per-frame
+  boundary and resume the game fiber at that boundary; races and the title/main
+  menu resume live, screens without a declared loop refuse the save with a
+  clear message. Same-process rewind still works.
 - Added for the owner (patch 0016): P freezes the frame without the game's
   PAUSE screen and pauses audio output (screenshot mode); P or Esc resumes.
 
@@ -244,7 +249,7 @@ to be fitted from the stock ramps rather than invented.
   engine sound is a 68k FM effect, not a PCM sample.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
-- Task 22 found that the password `stage` field is the **difficulty**, not a race selector. The game has 64 races (16 countries × 4). Coverage is in progress.
+- Task 22 found that the password `stage` field is the **difficulty**, not a race selector. The game has 64 races (16 countries × 4); task 25 qualified the last 19 by selecting the race index on the game-setup screen, so **all 64 races are driven to the finish**.
 - Quiver Launcher listing: the owner submits the project after the first real release (v0.1.0) exists, so
   Quiver can review it. Window screenshot for the form: `~/Pictures/tg2-quiver-screenshot.png` (outside git).
 - First public release: the owner decides when to make the repo public.
