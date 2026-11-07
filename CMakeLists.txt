@@ -52,6 +52,23 @@ genesisrecomp_add_generated_sources(GENERATED tg2 "${CMAKE_SOURCE_DIR}/game" "${
 genesisrecomp_runner_sources(RUNNER TRACE "${GEN_ENABLE_TRACE}" REVERSE_DEBUG "${SONIC_REVERSE_DEBUG}")
 add_executable(TG2Recomp ${RUNNER} ${GENERATED} game/tg2_spec.c game/tg2_video.c game/tg2_options.c game/tg2_audio_both.c)
 add_dependencies(TG2Recomp ${GENERATED_TARGET})
+# Embed the approved small icon from the checked-in ICO. Only the Python
+# standard library is needed for builds; Pillow is artwork tooling only.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(TG2_ICON_HEADER "${CMAKE_CURRENT_BINARY_DIR}/icon/tg2_icon.h")
+add_custom_command(OUTPUT "${TG2_ICON_HEADER}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/release/icon/embed_icon.py"
+        "${CMAKE_SOURCE_DIR}/tools/release/tg2recomp.ico" "${TG2_ICON_HEADER}"
+    DEPENDS tools/release/tg2recomp.ico tools/release/icon/embed_icon.py
+    VERBATIM)
+target_sources(TG2Recomp PRIVATE "${TG2_ICON_HEADER}")
+target_include_directories(TG2Recomp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/icon")
+if(WIN32)
+    enable_language(RC)
+    set(TG2_WINDOWS_ICON "${CMAKE_SOURCE_DIR}/tools/release/tg2recomp.ico")
+    configure_file(tools/release/tg2recomp.rc.in "${CMAKE_CURRENT_BINARY_DIR}/tg2recomp.rc" @ONLY)
+    target_sources(TG2Recomp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/tg2recomp.rc")
+endif()
 target_include_directories(TG2Recomp PRIVATE
     "${RUNNER_ROOT}" "${RUNNER_ROOT}/include" "${RUNNER_ROOT}/video"
     "${RUNNER_ROOT}/external/ymfm/src" "${RUNNER_ROOT}/external/superzazu"

@@ -20,7 +20,7 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 | Real-device audio (owner bug) | Root cause: every host hitch was concealed and then became permanent latency, until the ring cap cut audio in bursts (delays, then pops). Fix: a cushioned, latency-bounded DRC (100 ms target, 250 ms ring, ±0.5%, latency bound 160 ms, quick resume). Measured on a PipeWire null-sink recording: 4×3-min races at 0 pops, dropouts and underruns. Needs the owner's listening confirmation. | `PERFORMANCE.md` §10 |
 | BOTH fix + music tempo | BOTH is now session-owned host state (it engages on every route, persisted as `[mods.racesound]`), and its text uses the game's own menu font. Exact audio sample clock (patch 0008; it was -402 ppm). Tempo-stable slow-integral DRC (patch 0009): speed swings 1233 → 37 ppm/s. Reference pipeline: headless Genesis Plus GX renderer (`tools/gpgx_render.c`). A/B files in `~/Music/tg2-ab/`. | `AUDIO.md` §6-7, §11-12 |
 | Music tempo (owner bug) | Root cause: the port re-armed the YM2612 timer B on every `$27` reload instead of letting it run free (patch 0010). Title theme went from -6.99% ±2% to +0.194% flat. **Owner confirmed 2026-11-06: music speed is great.** All 4 owner VGM rips align at +0.194%, and Genesis Plus GX agrees with the port to 0.02%, so the residual is the rips' own time base. Logic match vs the VGMs: 89.7–99.5% (open item: Auckland ch1-2 re-attacks). | `AUDIO.md` §11 |
-| Race band crop + HUD Edges fix (owner request) | Hide overscan (default On) now crops the race's empty 8 top / 16 bottom lines: 256×200 Off, 356×200 16:9, 467×200 21:9. A per-frame guard crops only single-player race pictures whose bands are empty. Menus and split screen are unchanged. Engine patch 0012 (`present_window`). HUD Edges map/marker split fixed (the HUD moves to sprites on frames 3409–3585). 16 tracks, 181 race pictures checked; margin audits 0; Off hashes unchanged. Before release: refresh the README screenshots. | `WIDESCREEN.md` |
+| Race band crop + HUD Edges fix (owner request) | Hide overscan (default On) now crops the race's empty 8 top / 16 bottom lines: 256×200 Off, 356×200 16:9, 467×200 21:9. A per-frame guard crops only single-player race pictures whose bands are empty. Menus and split screen are unchanged. Engine patch 0012 (`present_window`). HUD Edges map/marker split fixed (the HUD moves to sprites on frames 3409–3585). 16 tracks, 181 race pictures checked; margin audits 0; Off hashes unchanged. | `WIDESCREEN.md` |
 | Quit from the menu (owner request) | The in-game menu (Esc / Back+RB) has a **Quit game** row (two presses) that exits through the normal window-close path, so settings are saved. Meant for controller-only play on Steam Deck. Engine patch 0013. Compiles; needs a hands-on check in the next play build. | |
 | Options | Widescreen / 60 fps / HUD / Hide overscan in the launcher and the in-game overlay (gamepad: Back+RB), persisted in `settings.ini [mods.*]`. | `RELEASING.md` |
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
@@ -41,10 +41,22 @@ major bugs. Release path:
    country via passwords, including each country's still-unvisited second race,
    and 2-player. Run the release build with the default options. Gate on
    no crashes, empty manifests and no audio glitches.
-3. Task 21 (crop + HUD Edges fix) merged 2026-11-06. Before the release candidate, refresh the README screenshots, which still show the bands.
-4. CI `platforms=all` dry run → owner playtest of the candidate → tag
+3. Task 21 (crop + HUD Edges fix) merged 2026-11-06. README screenshots refreshed without bands (2026-11-07).
+4. CI `platforms=all` dry run → owner playtest of the candidate, **including on his Steam Deck** (the AppImage from the dry-run artifacts; controller only, Game Mode) → tag
    `v0.1.0` with the owner's go-ahead → the owner publishes the draft and
    submits to Quiver.
+
+Release bugs from owner playtests (2026-11-07):
+- **Blocker:** with BOTH persisted in `settings.ini`, the music is silent from
+  boot. Sent to the BOTH worker; it is fixed before the second Z80.
+- Tier-3 floor ran `$00E46C` / `$00445A` in real play. Sent to task 22.
+- **Major:** in rain/snow races the weather particles don't continue into the
+  widescreen margins; long stretched horizontal lines show there instead.
+  Seen in task 22's captures (Switzerland blizzard, a night rain race). Sent
+  to task 22.
+- Minor: "Internal resolution" in the menu does nothing visible for TG2,
+  because the game renders through its own `GameVideo` at native resolution.
+  Hide the option or make it meaningful.
 
 Deferred until after 0.1.0: the clean FM option and music/SFX volumes, task
 17 (widescreen menus), and the Auckland music re-attack divergence.
@@ -58,6 +70,81 @@ horizon on hills, and handle tunnels, flashes and split screen. Make it an
 option; with it off, the picture stays byte-identical. A worker should first
 answer how the sky is drawn today: the backdrop colour or background-layer
 tiles, and whether raster palette changes already occur.
+
+**Enhancement idea for after 0.1.0 (owner, 2026-11-07): NTSC filter and scanlines.**
+A Blargg NTSC composite filter and scanlines as presentation options. Blargg
+has a Genesis-specific variant, `md_ntsc`, besides `snes_ntsc`. Reference:
+https://github.com/vittau/modern-tyrian (`docs/CRT.md`, `src/ntsc.c`,
+`src/crt_filter.c`, and regression captures in `test/regress/modern-crt-*`).
+It is a scalar C99 port of `snes_ntsc` 0.2.2 (via Deadly Dave): composite
+preset, RGB555-keyed kernel tables (about 16 MiB, built lazily), 3 input
+columns → 7 output columns, burst phase advanced per presented frame (smooth-
+motion frames too), half-row scanlines, and Off / Scanlines / NTSC / both. The filter
+needs no palette. The per-colour kernel table is only a speed-up, since the
+filter is linear. Because later enhancements (gradient skies, HSL car colours,
+high-resolution rendering) put arbitrary colours in the presented frame, the
+filter must accept any colour. Choose between RGB555-keyed tables, as in
+modern-tyrian (slight gradient quantisation, mostly hidden by the composite
+blur), and direct per-pixel filtering on the CPU or in a GPU shader (exact
+colour, higher cost). Don't key the tables on the Genesis 512-colour palette. Precomputing at startup is
+cheap for RGB555 (about 16 MiB, a fraction of a second). Finer keys grow fast:
+565 is about 32 MiB, 666 about 128 MiB, and full 888 about 8 GiB, which is not
+feasible. For exact full colour, use the filter's linearity: a pixel's kernel is
+r·K_R + g·K_G + b·K_B, so three base kernels plus a few multiply-adds per tap
+(SIMD) replace the per-colour table. Blargg's gamma and hue adjustments are
+not linear and must be applied separately. Plan: start with RGB555 like
+modern-tyrian, measure banding on the gradient skies, and switch to the
+three-kernel path if needed.
+- **Owner's queue and taste (2026-11-07):** the queue after 0.1.0 is
+  high-resolution rendering first, then NTSC + scanlines. Use Blargg's filter
+  for NTSC. For scanlines, the owner likes the look of *Animal Well*. A
+  community shader reproduces it:
+  https://godotshaders.com/shader/animal-well-inspired-crt-effect/ . Study its
+  effect (scanline profile, brightness compensation, any mask, bloom or
+  curvature) and reimplement it in our presentation path. Check the shader's
+  licence before copying any code, and prefer an original implementation of the
+  same look.
+- Run it on the final presented frame: after widescreen composition and the
+  overscan crop, and for the 60 fps synthesized frames too. Then scale to the
+  window, with scanlines matched to the output resolution.
+- Presets (composite / S-Video / RGB) and scanline strength. Off stays
+  byte-identical.
+- It conflicts with high-resolution rendering, which aims at the opposite
+  look, so make them mutually exclusive or order them clearly.
+- Check the license before vendoring: Blargg's libraries are LGPL 2.1, and
+  static linking in a PolyForm-NC project needs care. Also measure the CPU cost
+  on the 3500U and on the Deck.
+
+**Enhancement idea for after 0.1.0 (owner, 2026-11-07): high-resolution rendering.**
+Render races above 224p in our renderer. This would also give the
+"Internal resolution" option a real meaning; today it is a no-op for TG2.
+- **Road:** redraw the road from the game's own per-line parameters (curve,
+  hill, scale and stripe phase) at N× resolution, instead of upscaling the
+  224-line raster. Sub-line interpolation also helps the 60 fps frames.
+- **Sprite LOD:** the game picks smaller, lower-detail sprite variants with
+  distance (trees, signs, cars). Map each object's LOD set, then always draw the
+  most detailed variant, scaled to the on-screen size with good filtering, at
+  the higher render resolution, with sub-pixel positions.
+- **Background and HUD:** scale the background layers cleanly; keep the HUD
+  sharp.
+
+It uses the same assets, only better, which fits the owner's rule on foreign
+assets.
+Later extension (owner, 2026-11-07): redraw the menus, fonts and HUD art in
+high resolution. Do it as a data-driven replacement pack keyed by the
+original tile/pattern content (like Dolphin or RT64 texture packs), so the
+game logic is untouched, missing entries fall back to the original art, and
+the pack is optional. The redraws must be faithful HD versions of the
+originals, not new designs. It pairs with task 17 (widescreen menus). Acceptance test (owner):
+downsampling each HD asset back to the original size must give art very close
+to the original tile. A tool scores every pack entry: box-filter downsample,
+quantise to the Genesis 9-bit palette, then compare per pixel against the
+original, with a threshold. Entries that fail are rejected. This is the same
+idea as the car-colour test: the enhancement must reproduce the stock asset. Before
+publishing a pack, decide how to distribute it: it is a derivative of the
+game's copyrighted art, so it is a riskier thing to host than code. Make it an option; at 1× with it off, the output stays byte-identical.
+First steps: map the LOD tables (pattern sets per object and distance
+thresholds), and find which per-line road state is enough to re-rasterise.
 
 **Enhancement idea for after 0.1.0 (owner, 2026-11-07): cheats in the menu.**
 An easy "Cheats" page in the in-game menu (Esc): pick the circuit (any of the

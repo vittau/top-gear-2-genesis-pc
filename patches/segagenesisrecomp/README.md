@@ -37,3 +37,7 @@ commit; local fixes remain visible as its applied working-tree diff.
 - `0014-second-z80-core-race-sfx-pcm.patch`: run a second Z80 core alongside the resident music driver, only while a game enables it (Top Gear 2's BOTH mode). It has its own 8 KB RAM, bank register and bus-request/reset state, so the 68K's upload of a second sound image cannot overwrite or reset the music driver (the first prototype's fatal side effects). A game-owned predicate tells the bus which 68K Z80-space accesses reach the second core; its chip writes carry `AUDIO_ORIGIN_Z80_SFX` and the mixer feeds them to virtual chip B together with the 68K engine, applied in the stock merged-stamp order so chip B reproduces SOUND EFFECTS mode. The core and its RAM are in every save state and rollback snapshot; stock modes never instantiate or step it.
 
 - `0013-runtime-menu-quit-row.patch`: enable the recomp-ui standard "Quit game" row (two presses) in the in-game menu and leave through the normal window-close path, so a controller-only player (Steam Deck) can exit without the system menu.
+
+- `0015-game-application-icon.patch`: expose game-owned desktop app id and embedded RGBA window icon, set SDL2 Wayland/X11 identity before video initialization, and call `SDL_SetWindowIcon` for the gameplay window.
+
+- `0016-photo-freeze-hotkey.patch`: P freezes emulation on the current frame without the game's own PAUSE screen (P or Esc resumes), so a player can line up a clean screenshot of the window. Nothing changes until P is pressed.

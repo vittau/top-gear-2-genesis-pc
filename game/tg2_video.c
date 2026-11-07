@@ -266,6 +266,16 @@ static int hud_tile(unsigned attr) {
     return (attr & 0x8000) && tile >= 4 && tile <= 0x84
                ? (tile < 0x3D ? -1 : 1) : 0;
 }
+/* The instrument clusters sit in fixed columns: the left one at x 16..79 and
+ * the right one (map, lap, position) at x 176..239 (SAT at baseline frame
+ * 180). The overtake popup ("18TH" rising over your car, x ~112..145) uses
+ * the same font cells, so a tile match alone carried it to the right edge.
+ * Only texels in the cluster columns move. Columns, not lines, so a split
+ * screen's lower HUD keeps working. */
+static int hud_region(int line, int x, int side) {
+    (void)line;
+    return side < 0 ? x < 96 : x >= 160;
+}
 static unsigned hud_plane_pixels, hud_marker_pixels, hud_sprite_pixels;
 static int window_at(const GVDP *v, int line, int x);
 static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
@@ -295,6 +305,8 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
             continue;
         unsigned attr, c = pixel(v, ba, x - ha, line + va, &attr);
         int side = hud_tile(attr);
+        if (side && !hud_region(line, x, side))
+            side = 0;
         if (side && c) {
             removed[x] = 1;
             shifted[origin + x + (side < 0 ? -origin : right)] = c;
@@ -331,6 +343,8 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
              * two markers). They belong to the same left/right clusters and
              * must move with them, or the map separates from its markers. */
             int side = marker ? 1 : hud_tile(attr);
+            if (!marker && side && !hud_region(line, x, side))
+                side = 0;
             int hud = marker || side != 0;
             if (attr & 0x1000)
                 sy = sh - 1 - sy;

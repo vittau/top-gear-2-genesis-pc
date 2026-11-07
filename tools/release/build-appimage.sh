@@ -77,6 +77,7 @@ Name=Top Gear 2 Recomp
 Comment=Native recompilation of Top Gear 2 (USA) for Sega Genesis
 Exec=$binary
 Icon=tg2recomp
+StartupWMClass=tg2recomp
 Categories=Game;
 Terminal=false
 X-AppImage-Version=$version
