@@ -679,6 +679,9 @@ boot/title chain: the guest clock and RAM advanced while the picture stayed on
   site), approves the race loop and the title/menu loops, and maps the saved
   site to the same address on load. `tools/apply-engine-patches.sh` applies the
   patch; a build id rejects states from another build before touching RAM.
+* The reference port for this project (RocketKnightAdventuresRecomp) leaves
+  `resume_main_loop_pc` at 0 with no host payload, so it has the same gap;
+  there was nothing to copy from it.
 * `game/game.toml` seeds those loop tops as in-function entries
   (`$0065F2` race picture-ready loop, `$001E18` top-level loop, `$001E9D8`
   title START spin, `$001EBF6` main-menu page loop). The recompiler splits each
