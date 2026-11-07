@@ -63,9 +63,9 @@ tiles, and whether raster palette changes already occur.
 Proportional steering from an analog stick, with optional analog throttle and
 brake on the triggers, similar to Cannonball (the OutRun recomp). Top Gear 2
 only reads a digital pad, so there are two levels:
-- Quick: pulse LEFT/RIGHT with a duty cycle proportional to the stick. It is
-  game-agnostic but can feel jittery.
-- Proper: find the routine that turns LEFT/RIGHT into the car's steering
+- Quick (rejected by the owner): pulse LEFT/RIGHT with a duty cycle
+  proportional to the stick.
+- Proper (**owner's choice, 2026-11-07**): find the routine that turns LEFT/RIGHT into the car's steering
   delta, and inject a scaled value from the stick there. Add a deadzone,
   a response curve and a sensitivity option.
 
