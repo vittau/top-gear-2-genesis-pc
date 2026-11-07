@@ -159,6 +159,18 @@ static void restore_value(void)
 static void present_sfx(void)   { present_value(0); }   /* SFX-side read */
 static void present_music(void) { present_value(1); }   /* music-side read */
 
+/* Page entry (0x01ED3A) runs in every sound mode, not just BOTH: the page must
+ * show the player's choice even when the cartridge word still holds the boot
+ * value. BOTH presents MUSIC's 1, so the page's own row and palette are built
+ * in stock state and repainted afterwards. */
+static void present_session_value(void)
+{
+    uint16_t want = (uint16_t)(s_mode == TG2_SOUND_SFX ? 0 : 1);
+    uint16_t cur = ram_read16(0xFF0000u + RAM_SOUND_MODE);
+    if (s_patched < PATCH_DEPTH) s_patch_stack[s_patched++] = cur;
+    if (cur != want) ram_write16(0xFF0000u + RAM_SOUND_MODE, want);
+}
+
 /* ---- RACE SOUND page value handler ($01F0D4) replacement -----------------
  * d0 = active-low button mask (bit0 up, bit1 down, bits 4-6 A/B/C, bit7
  * start).  The stock handler cycles 0..1; this one adds BOTH above MUSIC.
@@ -254,6 +266,25 @@ int tg2_audio_hook(uint32_t pc)
 
     case 0x0701DAu:                    /* SFX engine writes command $025E */
         sfx_cmd_log(g_cpu.D[0], g_cpu.D[1], g_cpu.D[2], g_cpu.D[3]);
+        return 0;
+
+    /* --- RACE SOUND page entry: load the value word from $FF240E ----------
+     * The page profile loader copies the cartridge word into the page's value
+     * (A4+$0C) at entry. That word is only written by the menu teardown, so on
+     * a fresh boot (or after a state load) it still holds SOUND EFFECTS while
+     * the player's choice may be MUSIC or BOTH. Present the session choice for
+     * this instruction only: the page then builds its own row and palette from
+     * a stock state, and the frame hook repaints that row as "BOTH".
+     *
+     * Writing the page value after the page was already building (the old
+     * approach) skipped the profile's own palette upload: the first open of
+     * the RACE SOUND page was entirely black and the next one drew mismatched
+     * glyphs, because the tiles were recovered from a half-built row. */
+    case 0x01ED3Au:
+        present_session_value();
+        return 0;
+    case 0x01ED40u:
+        restore_value();
         return 0;
 
     /* --- SFX-side policy sites: present 0 while BOTH is live --- */
@@ -544,12 +575,11 @@ void tg2_frame_post(uint64_t frame_count)
 {
     (void)frame_count;
 
-    /* The page's own entry path reloads its value from $FF240E, which can only
-     * hold the cartridge's 0/1. BOTH reuses MUSIC's value, so after leaving and
-     * re-entering the page the game draws "MUSIC" even though BOTH is the
-     * choice in effect. Detect the open page from the menu controller itself
-     * (no button press is required) and repaint the row from the session
-     * choice on every frame, whichever route entered the page. */
+    /* The page's entry hook (0x01ED3A) loads the page value from the session
+     * choice, so the cartridge always builds its own MUSIC or SOUND EFFECTS
+     * row in stock state. While BOTH is the choice that row says "MUSIC", so
+     * repaint it as "BOTH" on every frame the page is open (the page can be
+     * re-entered from several routes and its tiles are rebuilt per visit). */
     int open = race_sound_page_open();
     s_page_seen = open;
 
@@ -559,15 +589,6 @@ void tg2_frame_post(uint64_t frame_count)
     }
 
     if (s_mode == TG2_SOUND_BOTH) {
-        /* Keep the page value consistent with what is painted. The stock
-         * state machine, sprite builder and teardown all stay in {0,1}. */
-        uint16_t page = ram_read16(0xFF0000u + RAM_MENU_VALUE);
-        if (page != 1u) {
-            ram_write16(0xFF0000u + RAM_MENU_VALUE, 1u);
-            ram_write16(0xFF0000u + RAM_MENU_DIRTY,
-                        (uint16_t)(ram_read16(0xFF0000u + RAM_MENU_DIRTY) + 1u));
-            ram_write16(0xFF0000u + RAM_MENU_STATE, 2u);
-        }
         paint_both();
         return;
     }

@@ -54,6 +54,15 @@ kind = "game_hook"
 [[widescreen_site]]
 addr = 0x0048E2
 kind = "game_hook"
+# RACE SOUND page entry: the page profile loader copies $FF240E into the page
+# value word (A4+$0C). Present MUSIC's 1 while BOTH is selected so the page
+# builds its own row and palette from a stock state; restore at the RTS.
+[[widescreen_site]]
+addr = 0x01ED3A
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x01ED40
+kind = "game_hook"
 [[widescreen_site]]
 addr = 0x0250E2
 kind = "game_hook"
