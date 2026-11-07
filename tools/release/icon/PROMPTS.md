@@ -34,3 +34,11 @@ Generation files (retained outside git):
 - C: `build/icon/photo/generated-c.png`, generated tool file `exec-1397f685-a90f-4a78-8571-8826f952d4ac.png`; 1024 master SHA-256 `8b0094d4e8c5e2f7d7a32cf0e3f463faeab409f373a476921ce276dd1a938236`.
 
 Run `python3 tools/release/icon/preview_concepts.py` from the repository root after placing those files in `build/icon/photo/`. Uses Pillow; selection tooling only, with no new runtime or packaging dependency.
+
+## Approved master: C — Crest of Fire
+
+The owner selected C as-is. The authoritative source is now `tools/release/tg2recomp.png` (1024×1024 RGB, SHA-256 `8b0094d4e8c5e2f7d7a32cf0e3f463faeab409f373a476921ce276dd1a938236`). Keep this generated source; rerunning the generative prompt is an exploration, not a deterministic rebuild. The rejected concepts and generated 1254px working files remain outside git.
+
+`python3 tools/release/make_icon.py --all` deterministically derives the approved car-front detail PNGs (16/24/32), the multi-size Windows ICO, and the 1280×640 social preview. This artwork command uses Pillow and DejaVu Sans (`--font` can supply its path); it is never needed for a normal build or release packaging. The plain social-preview heading reads “TG2Recomp”; it does not use the original cover lettering.
+
+Normal builds use the stdlib-only `icon/embed_icon.py` to extract the ICO's 32px RGBA data into a build-local header. No generated C/header or additional runtime image decoder is stored in git or required in the release. macOS packaging uses the checked-in detail PNGs at 16/32 physical pixels and the approved master for larger sizes, through the existing `sips`/`iconutil` path.
