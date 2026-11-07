@@ -59,6 +59,19 @@ option; with it off, the picture stays byte-identical. A worker should first
 answer how the sky is drawn today: the backdrop colour or background-layer
 tiles, and whether raster palette changes already occur.
 
+**Enhancement idea for after 0.1.0 (owner, 2026-11-07): cheats in the menu.**
+An easy "Cheats" page in the in-game menu (Esc): pick the circuit (any of the
+64 races) and set the money (and the car upgrades, if cheap). Preferred
+mechanism: build the state through the game's own password path. The codec is
+reversed (`docs/PASSWORDS.md`, `tools/tg2_password.py`), so the game loads a
+consistent championship state as if a password had been typed. Apply it at a
+safe point (menu or between races), never mid-race. The password checksum caps
+money + upgrades (a sum of 255 or less); if a cheat needs more, write the RAM
+fields after a valid load. Open question from task 22: how a password selects
+races 2–4 of a country. `stage` turned out to be the difficulty. Using a cheat
+changes nothing in stock behaviour; with no cheat applied, output stays
+byte-identical.
+
 **Enhancement idea for after 0.1.0 (owner, 2026-11-07): analog control.**
 Proportional steering from an analog stick, with optional analog throttle and
 brake on the triggers, similar to Cannonball (the OutRun recomp). Top Gear 2
