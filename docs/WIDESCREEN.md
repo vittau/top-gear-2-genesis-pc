@@ -757,3 +757,10 @@ Probes launch `build/TG2Recomp` directly, so they must not inherit the host's
 build directory. Both project probe tools strip `APPIMAGE` explicitly. The
 tool needs Pillow (present in `build/analysis-venv`), writes only under
 `build/`, and uses port 4400; the output stays out of git.
+
+## Final linear filtering
+
+The runner clamps linear sampling to the active presented picture, including
+the overscan-cropped 200-line race and viewport size changes. Nearest output
+is unchanged and a fresh configuration defaults to filtering Off. See
+[Metal edge captures and default-preference validation](LINEAR_FILTER.md).
