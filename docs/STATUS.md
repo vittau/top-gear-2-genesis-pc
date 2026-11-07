@@ -79,9 +79,14 @@ https://github.com/vittau/modern-tyrian (`docs/CRT.md`, `src/ntsc.c`,
 It is a scalar C99 port of `snes_ntsc` 0.2.2 (via Deadly Dave): composite
 preset, RGB555-keyed kernel tables (about 16 MiB, built lazily), 3 input
 columns → 7 output columns, burst phase advanced per presented frame (smooth-
-motion frames too), half-row scanlines, and Off / Scanlines / NTSC / both. For
-TG2, consider `md_ntsc` or keying the tables on the Genesis 9-bit palette (512
-colours, so tiny tables), unless presented frames contain blended colours.
+motion frames too), half-row scanlines, and Off / Scanlines / NTSC / both. The filter
+needs no palette. The per-colour kernel table is only a speed-up, since the
+filter is linear. Because later enhancements (gradient skies, HSL car colours,
+high-resolution rendering) put arbitrary colours in the presented frame, the
+filter must accept any colour. Choose between RGB555-keyed tables, as in
+modern-tyrian (slight gradient quantisation, mostly hidden by the composite
+blur), and direct per-pixel filtering on the CPU or in a GPU shader (exact
+colour, higher cost). Don't key the tables on the Genesis 512-colour palette.
 - Run it on the final presented frame: after widescreen composition and the
   overscan crop, and for the 60 fps synthesized frames too. Then scale to the
   window, with scanlines matched to the output resolution.
