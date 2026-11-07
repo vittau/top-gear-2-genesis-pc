@@ -85,7 +85,15 @@ Render races above 224p in our renderer. This would also give the
   sharp.
 
 It uses the same assets, only better, which fits the owner's rule on foreign
-assets. Make it an option; at 1× with it off, the output stays byte-identical.
+assets.
+Later extension (owner, 2026-11-07): redraw the menus, fonts and HUD art in
+high resolution. Do it as a data-driven replacement pack keyed by the
+original tile/pattern content (like Dolphin or RT64 texture packs), so the
+game logic is untouched, missing entries fall back to the original art, and
+the pack is optional. The redraws must be faithful HD versions of the
+originals, not new designs. It pairs with task 17 (widescreen menus). Before
+publishing a pack, decide how to distribute it: it is a derivative of the
+game's copyrighted art, so it is a riskier thing to host than code. Make it an option; at 1× with it off, the output stays byte-identical.
 First steps: map the LOD tables (pattern sets per object and distance
 thresholds), and find which per-line road state is enough to re-rasterise.
 
