@@ -1,0 +1,261 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 11:15:00 -0300
+Subject: [PATCH] Exact guest stack delta for every SP-touching instruction
+
+The split-function stack counter (_sp_popped, carried into tails through
+g_split_sp_popped) decides at an RTS whether the guest left a synthetic jump
+target on the stack (MOVE.L #target,-(SP); RTS) or simply returns. Only the
+MOVE/MOVEA/MOVEM/PEA forms and ADDQ/SUBQ #n,SP credited it, so any arithmetic
+or logical instruction with a stack effective address moved the guest SP
+without the counter noticing. A loop that pushes a word and pops it through
+ADD.W (SP)+,Dn therefore drifted the delta negative by two bytes per pass, and
+the RTS turned a plain return into a dispatch to whatever value sat in the
+return slot.
+
+Top Gear 2 (USA) hits it at the end of the sprite loop in func $7336: sixteen
+passes of `move.w d0,-(sp)` / `add.w (sp)+,d0` left the delta at -32, so the
+RTS at $754A dispatched the $650C pushed by the enclosing `bsr.w $7336` at
+$6508. $650C is an interior label of func $64C2, so the dispatch was recorded
+as an interior-label miss and declined: the whole scene-init continuation
+($650C..$6656, which calls $2520, $2628 and $F7FA) was skipped for the rest
+of the session in every race from Greece onward.
+
+One rule now covers every mnemonic, and the has_sp_adjust pre-scan and the
+single emission point in emit_instr share it, so the two cannot disagree.
+
+---
+diff --git a/profiles/genesis/code_generator.c b/profiles/genesis/code_generator.c
+index 2a02db3..b8d1479 100644
+--- a/profiles/genesis/code_generator.c
++++ b/profiles/genesis/code_generator.c
+@@ -1963,6 +1963,77 @@ static void emit_mem_shift(FILE *f, const M68KInstr *instr,
+ 
+ static unsigned step_operand_cost(unsigned ea,bool is_long);
+ 
++/* Exact guest stack-pointer delta of one instruction, in bytes; negative when
++ * the instruction leaves the stack lower (a push).
++ *
++ * `_sp_popped` (the path-local net delta carried into split-function tails) and
++ * the RTS rule both depend on this being exact: an RTS whose total is negative
++ * is read as "the guest left a jump target on the stack" (MOVE.L #target,-(SP);
++ * RTS) and dispatches it instead of returning to the native caller. Crediting
++ * only the MOVE family left every other form with a stack effective address
++ * unaccounted — ADD.W (SP)+,Dn popped a word `_sp_popped` never saw — so a loop
++ * that pushes a word and pops it through ADD.W drifted the delta negative by
++ * 2 bytes per iteration and turned a plain return into a dispatch to whatever
++ * sat in the return slot. Top Gear 2's $7336 RTS at $754A dispatched to $650C
++ * (an interior label) after sixteen iterations of its sprite loop; the
++ * scene-init continuation was then skipped for the rest of the session.
++ *
++ * One rule for every mnemonic, used both by the has_sp_adjust pre-scan and by
++ * the single accounting emission in emit_instr, so the two cannot disagree. */
++static int stack_delta_bytes(const M68KInstr *ins)
++{
++    int step = (ins->size == M68K_SIZE_L) ? 4 : 2;  /* .B still moves a word */
++
++    switch (ins->mnemonic) {
++    /* Control flow owns its return slot explicitly: JSR/BSR through
++     * recomp_push_return, RTS/RTR/RTE through the epilogue that also uses this
++     * delta, exceptions through glue's frame push. Counting them here would
++     * double the slot. */
++    case MN_JSR:  case MN_BSR:  case MN_JMP:  case MN_BRA:  case MN_Bcc:
++    case MN_DBcc: case MN_RTS:  case MN_RTR:  case MN_RTE:  case MN_TRAP:
++    case MN_TRAPV: case MN_STOP: case MN_RESET: case MN_NOP: case MN_ILLEGAL:
++        return 0;
++
++    case MN_MOVEM: {
++        int dir  = (ins->words[0] >> 10) & 1;
++        int mode = (ins->src_ea >> 3) & 7;
++        int reg  = ins->src_ea & 7;
++        if (reg != 7) return 0;
++        int n = 0;
++        for (int bit = 0; bit < 16; bit++)
++            if (ins->words[1] & (1u << bit)) n++;
++        if (dir == 1 && mode == 3) return  n * step;   /* MOVEM (SP)+,<regs> */
++        if (dir == 0 && mode == 4) return -n * step;   /* MOVEM <regs>,-(SP) */
++        return 0;
++    }
++
++    case MN_PEA:
++        return -4;                                     /* PEA pushes a longword */
++
++    case MN_ADDQ:
++    case MN_SUBQ: {
++        int mode = (ins->src_ea >> 3) & 7;
++        int reg  = ins->src_ea & 7;
++        if (mode != 1 || reg != 7) return 0;           /* ADDQ/SUBQ #imm,SP */
++        return ins->mnemonic == MN_ADDQ ? (int)ins->imm32 : -(int)ins->imm32;
++    }
++
++    default:
++        break;
++    }
++
++    /* Every other effective-address form: (A7)+ releases one operand and
++     * -(A7) allocates one, on either side of the instruction. */
++    int delta = 0;
++    int sm = (ins->src_ea >> 3) & 7, sr = ins->src_ea & 7;
++    int dm = (ins->dst_ea >> 3) & 7, dr = ins->dst_ea & 7;
++    if (sr == 7 && (sm == EA_An_POST || sm == EA_An_PRE))
++        delta += (sm == EA_An_POST) ? step : -step;
++    if (dr == 7 && (dm == EA_An_POST || dm == EA_An_PRE))
++        delta += (dm == EA_An_POST) ? step : -step;
++    return delta;
++}
++
+ static void emit_instr(FILE *f, const GenesisRom *rom,
+                         const M68KInstr *instr,
+                         const AddrSet *instrs,
+@@ -1985,6 +2056,16 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+ 
+     char src_expr[256], addr_expr[256];
+ 
++    /* Single stack-delta accounting point for every instruction (see
++     * stack_delta_bytes). Emitted before the body only because the delta is a
++     * compile-time constant; nothing reads _sp_popped mid-instruction. */
++    if (*has_sp_adjust) {
++        int d = stack_delta_bytes(instr);
++        if (d)
++            fprintf(f, "  _sp_popped %s= %d; /* stack operand */\n",
++                    d < 0 ? "-" : "+", d < 0 ? -d : d);
++    }
++
+     if (ws_site_for_kind(addr, WS_SITE_GAME_HOOK, WS_SITE_GAME_HOOK))
+         fprintf(f, "  if (genesis_game_instruction_hook(0x%06Xu)) return; /* game-owned extension */\n", addr);
+ 
+@@ -2599,15 +2680,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+             /* Update N,Z; clear V,C */
+             emit_flags_logic(f, src_expr, sz);
+         }
+-        if (*has_sp_adjust) {
+-            /* A7 advances by two even for a byte operand. Track bytes so
+-             * two word data pushes balance one longword data pop. */
+-            int stack_bytes = sz == M68K_SIZE_L ? 4 : 2;
+-            if (src_ea == ((EA_An_POST << 3) | 7))
+-                fprintf(f, "  _sp_popped += %d; /* MOVE (SP)+ bytes */\n", stack_bytes);
+-            if (dst_ea == ((EA_An_PRE << 3) | 7))
+-                fprintf(f, "  _sp_popped -= %d; /* MOVE -(SP) bytes */\n", stack_bytes);
+-        }
+         break;
+     }
+ 
+@@ -2621,10 +2693,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+         } else {
+             fprintf(f, "  g_cpu.A[%d] = (uint32_t)(%s);\n", areg, src_expr);
+         }
+-        if (*has_sp_adjust
+-                && instr->src_ea == ((EA_An_POST << 3) | 7))
+-            fprintf(f, "  _sp_popped += %d; /* MOVEA (SP)+ bytes */\n",
+-                    sz == M68K_SIZE_L ? 4 : 2);
+         break;
+     }
+ 
+@@ -2640,8 +2708,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+     case MN_PEA: {
+         emit_ea_addr(f, instr, instr->src_ea, &er, addr_expr);
+         fprintf(f, "  g_cpu.A[7] -= 4; m68k_write32(g_cpu.A[7], %s);\n", addr_expr);
+-        if (*has_sp_adjust)
+-            fprintf(f, "  _sp_popped -= 4; /* PEA pushes one longword */\n");
+         break;
+     }
+ 
+@@ -2672,10 +2738,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+         if (mode == 1) {
+             /* ADDQ to An: no flags */
+             fprintf(f, "  g_cpu.A[%d] += %uu;\n", reg, imm);
+-            /* Account data releases as well as whole return-slot skips. */
+-            if (reg == 7 && imm > 0 && *has_sp_adjust) {
+-                fprintf(f, "  _sp_popped += %u;\n", imm);
+-            }
+         } else {
+             /* RMW: use emit_ea_load_ex with rmw=1 so (An)+ doesn't
+              * double-increment (read suppresses increment, store does it) */
+@@ -2728,11 +2790,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+ 
+         if (mode == 1) {
+             fprintf(f, "  g_cpu.A[%d] -= %uu;\n", reg, imm);
+-            /* Reverse of the ADDQ early-exit pattern: pushing onto the stack
+-             * cancels a pending early return level. */
+-            if (reg == 7 && imm > 0 && *has_sp_adjust) {
+-                fprintf(f, "  _sp_popped -= %u;\n", imm);
+-            }
+         } else {
+             /* RMW: suppress (An)+ increment on read */
+             emit_ea_load_ex(f, instr, ea, sz, &er, tmp, src_expr, 1);
+@@ -3617,18 +3674,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+             else
+                 fprintf(f, "  }\n");
+         }
+-        if (*has_sp_adjust && reg == 7) {
+-            int reg_count = 0;
+-            for (int bit = 0; bit < 16; bit++)
+-                if (mask & (1u << bit))
+-                    reg_count++;
+-            if (dir == 1 && mode == 3)
+-                fprintf(f, "  _sp_popped += %d; /* MOVEM (SP)+ bytes */\n",
+-                        reg_count * (sz == M68K_SIZE_L ? 4 : 2));
+-            else if (dir == 0 && mode == 4)
+-                fprintf(f, "  _sp_popped -= %d; /* MOVEM -(SP) bytes */\n",
+-                        reg_count * (sz == M68K_SIZE_L ? 4 : 2));
+-        }
+         break;
+     }
+ 
+@@ -5115,47 +5160,18 @@ bool codegen_emit(const GenesisRom *rom, const FunctionList *funcs,
+             }
+         }
+ 
+-        /* Pre-scan for explicit stack operands of every width.
+-         * `_sp_popped` tracks the path-local net delta in BYTES. Besides explicit
+-         * ADDQ stack skips, this must include MOVE/MOVEM postincrement pops:
+-         * a helper may consume its JSR return slot on only one branch, which
+-         * cannot be classified as either an ordinary or an unconditional
+-         * return-capturing callee at the call site. */
++        /* Pre-scan for any instruction that moves the guest stack.
++         * `_sp_popped` tracks the path-local net delta in BYTES, and the RTS
++         * rule reads a negative total as "a jump target was pushed". Both the
++         * scan and the accounting call stack_delta_bytes() so every form that
++         * touches SP is seen — not just the MOVE family (see the helper). */
+         int has_sp_adjust = 0;
+         for (int j = 0; j < instrs.count; j++) {
+             M68KInstr pre;
+-            if (m68k_decode(rom, instrs.addrs[j], &pre)) {
+-                if ((pre.mnemonic == MN_ADDQ || pre.mnemonic == MN_SUBQ) &&
+-                    ((pre.src_ea >> 3) & 7) == 1 && (pre.src_ea & 7) == 7 &&
+-                    pre.imm32 > 0) {
+-                    has_sp_adjust = 1;
+-                    break;
+-                }
+-                if ((pre.mnemonic == MN_MOVE || pre.mnemonic == MN_MOVEA)
+-                        && pre.src_ea == ((EA_An_POST << 3) | 7)) {
+-                    has_sp_adjust = 1;
+-                    break;
+-                }
+-                if (pre.mnemonic == MN_MOVE
+-                        && pre.dst_ea == ((EA_An_PRE << 3) | 7)) {
+-                    has_sp_adjust = 1;
+-                    break;
+-                }
+-                if (pre.mnemonic == MN_PEA) {
+-                    has_sp_adjust = 1;
+-                    break;
+-                }
+-                if (pre.mnemonic == MN_MOVEM) {
+-                    int dir = (pre.words[0] >> 10) & 1;
+-                    int mode = (pre.src_ea >> 3) & 7;
+-                    int reg = pre.src_ea & 7;
+-                    if (reg == 7
+-                            && ((dir == 1 && mode == 3)
+-                                || (dir == 0 && mode == 4))) {
+-                        has_sp_adjust = 1;
+-                        break;
+-                    }
+-                }
++            if (m68k_decode(rom, instrs.addrs[j], &pre)
++                    && stack_delta_bytes(&pre) != 0) {
++                has_sp_adjust = 1;
++                break;
+             }
+         }
+         if (has_sp_adjust) {
