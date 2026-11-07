@@ -9,7 +9,7 @@ included, and generated C is not part of the source repository.
 
 <p align="center">
   <a href="docs/images/title.png"><img src="docs/images/title.png" width="32%" alt="Top Gear 2 title screen"></a>
-  <a href="docs/images/race-16x9-edges.png"><img src="docs/images/race-16x9-edges.png" width="35%" alt="A race in 16:9 with the HUD at the screen edges"></a>
+  <a href="docs/images/race-egypt.png"><img src="docs/images/race-egypt.png" width="35%" alt="The start of a race in Egypt in 16:9"></a>
   <a href="docs/images/sound-both.png"><img src="docs/images/sound-both.png" width="32%" alt="The game's Race Sound menu showing the new BOTH choice"></a>
 </p>
 
@@ -50,15 +50,16 @@ state and open items.
 
 ### Widescreen
 
-The same moment of a race in Original (8:7 with square pixels, the
-Genesis's 256 × 224 race frame), 16:9 and 21:9. The wider views reveal
-the tyre stack on the left and the tree on the right, which the original
-frame cuts off.
+The same moment of a race in Original (the Genesis's 256-pixel-wide race
+frame), 16:9 and 21:9. The wider views reveal the tyre stack on the left and
+the tree on the right, which the original frame cuts off. All three have
+*Hide overscan* on, so the empty black bands above and below the race are
+cropped.
 
 <p align="center">
-  <a href="docs/images/aspect-original.png"><img src="docs/images/aspect-original.png" width="40%" alt="Original 8:7 view of the race"></a>
+  <a href="docs/images/aspect-original.png"><img src="docs/images/aspect-original.png" width="40%" alt="Original view of the race"></a>
   <br>
-  <em>Original (8:7)</em>
+  <em>Original</em>
 </p>
 
 <p align="center">
@@ -75,6 +76,18 @@ frame cuts off.
 
 Menus, the shop and the results screens are shown in their original width,
 centred. Extending every non-race screen that has scenery is planned.
+
+### Tracks
+
+The game has 64 races in 16 countries, with night, snow, rain and fog.
+
+<p align="center">
+  <a href="docs/images/track-france.png"><img src="docs/images/track-france.png" width="32%" alt="A sunny race in France in 16:9"></a>
+  <a href="docs/images/track-night.png"><img src="docs/images/track-night.png" width="32%" alt="A night race in Australasia in 16:9"></a>
+  <a href="docs/images/track-snow.png"><img src="docs/images/track-snow.png" width="32%" alt="A snow race in Canada in 16:9"></a>
+  <br>
+  <em>France, Australasia at night, and Canada in the snow.</em>
+</p>
 
 ## ROM requirements
 
