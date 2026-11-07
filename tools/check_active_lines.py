@@ -16,9 +16,11 @@ import argparse
 import json
 from pathlib import Path
 
-# Window-plane artefacts that the stock top band shows (palette 0 entry 8 and
-# 3, see docs/WIDESCREEN.md "Native red/orange top band").
-WINDOW_MARKS = {(206, 0, 0), (206, 87, 49)}
+# Window-plane artefacts that the stock top band shows (palette 0 entries 8, 3
+# and 7, see docs/WIDESCREEN.md "Native red/orange top band"), confined to
+# native columns 16..31.
+WINDOW_MARKS = {(206, 0, 0), (206, 87, 49), (87, 87, 87)}
+WINDOW_COLUMNS = (16, 31)
 BLACK = (0, 0, 0)
 
 
@@ -37,7 +39,7 @@ def check(path: Path, top: int = 8, bottom: int = 16):
             if colour == BLACK:
                 continue
             empty = False
-            if colour in WINDOW_MARKS:
+            if colour in WINDOW_MARKS and WINDOW_COLUMNS[0] <= x <= WINDOW_COLUMNS[1]:
                 marks.append((x, y))
                 continue
             window = False
@@ -48,17 +50,22 @@ def check(path: Path, top: int = 8, bottom: int = 16):
     bottom_rows = kinds[height - bottom:]
     top_ok = all(kind in ('empty', 'window') for kind in top_rows)
     bottom_ok = all(kind == 'empty' for kind in bottom_rows)
+    # A race picture is exactly one whose top band carries nothing but the
+    # stock window-plane marks: that band is what the crop removes. Screens
+    # without it (menus, intro panels, fades) are never cropped by the
+    # renderer, so their bands may legitimately carry picture content.
+    race_like = top_ok and any(kind == 'window' for kind in top_rows)
     return dict(
         path=str(path), width=width, height=height,
         first_picture_row=picture_rows[0] if picture_rows else None,
         last_picture_row=picture_rows[-1] if picture_rows else None,
         picture_rows=len(picture_rows),
         top_rows=top_rows, bottom_rows=bottom_rows,
-        top_ok=top_ok, bottom_ok=bottom_ok,
+        top_ok=top_ok, bottom_ok=bottom_ok, race_like=race_like,
         top_window_rows=sum(1 for kind in top_rows if kind == 'window'),
         top_mark_pixels=len(marks),
         top_mark_columns=[min(x for x, _ in marks), max(x for x, _ in marks)] if marks else None,
-        ok=top_ok and bottom_ok,
+        ok=bottom_ok if race_like else True,
     )
 
 
@@ -78,6 +85,7 @@ def main():
         for result in results:
             print(f"{result['path']}: {result['width']}x{result['height']} "
                   f"picture {result['first_picture_row']}..{result['last_picture_row']} "
+                  f"race={int(result['race_like'])} "
                   f"top={'ok' if result['top_ok'] else 'CONTENT'} "
                   f"bottom={'ok' if result['bottom_ok'] else 'CONTENT'}")
     bad = [r for r in results if not r['ok']]

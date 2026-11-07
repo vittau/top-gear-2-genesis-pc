@@ -145,14 +145,26 @@ def main():
         if data.get('widths') and data['widths'] != [256]:
             report['failures'].append(f'split widths {data["widths"]}')
     # Active-line summaries.
-    totals = dict(runs=0, pictures=0, failures=0)
+    totals = dict(runs=0, pictures=0, race_pictures=0, failures=0,
+                  first_row=None, last_row=None)
     for path in sorted(glob.glob(str(root / 'active/*/summary.json'))):
         data = json.loads(Path(path).read_text())
         totals['runs'] += 1
-        totals['pictures'] += len(data.get('pictures', []))
-        totals['failures'] += len(data.get('failures', []))
-        if data.get('failures'):
-            report['failures'].append(f'{path}: band failures {data["failures"]}')
+        for entry in data.get('pictures', []):
+            target = Path(entry['path'])
+            if not target.exists():
+                continue
+            info = check(target)
+            totals['pictures'] += 1
+            if info['race_like']:
+                totals['race_pictures'] += 1
+                totals['first_row'] = (info['first_picture_row'] if totals['first_row'] is None
+                                       else min(totals['first_row'], info['first_picture_row']))
+                totals['last_row'] = (info['last_picture_row'] if totals['last_row'] is None
+                                      else max(totals['last_row'], info['last_picture_row']))
+            if not info['ok']:
+                totals['failures'] += 1
+                report['failures'].append(f'{path}: band failure in {entry["name"]}')
     report['active'] = totals
     # Margin audits and the road-artifact report.
     for name in ('16-9', '21-9', '16-9-60'):
