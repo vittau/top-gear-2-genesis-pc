@@ -33,8 +33,10 @@ macOS (Apple Silicon and Intel).
   *or* sound effects during races. A new **BOTH** choice in the game's own
   *Sound → Race Sound* menu plays them together.
 
-- **Hide overscan.** Hides the stray marks at the top of the race screen that
-  a CRT television never showed.
+- **Hide overscan.** Removes the empty black bands a CRT television never
+  showed: eight lines at the top of the race screen (they held only the stray
+  boot marks) and sixteen at the bottom, so the race picture fills the
+  window. Menus, results and split-screen keep their full picture.
 
 - **Quality of life.** A launcher, an in-game options menu that works with a
   controller alone, save states, rewind and fast-forward.
@@ -191,7 +193,7 @@ saved to `settings.ini`:
 | Widescreen | Off, Adaptive, 16:9, 21:9, 32:9 | Adaptive |
 | 60 fps races | On, Off | On |
 | HUD | Centered, Edges | Centered |
-| Hide overscan | On, Off | On |
+| Hide overscan | On (crops the empty top/bottom race bands), Off | On |
 | Race sound | Sound effects, Music, Both | Sound effects |
 
 Race sound is also in the game's own *Sound* menu. Both menus change the same
