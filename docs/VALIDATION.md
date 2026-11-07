@@ -914,6 +914,7 @@ Evidence (`tools/tg2_state_notice_probe.py`, dev build, TCP-driven real menu):
 | Check | Before 0022 | After 0022 + 0023 |
 |---|---|---|
 | pad mask on the frame Enter closed the menu (`pad`) | 128 (START) | 0 |
+| pad mask on the frame the pad's A closed the menu (virtual controller) | 16 (B) | 0 |
 | state written by the menu save row in a race | yes (see note) | yes, `native_save_1.bin`, 165 523 B |
 | notice in the presented picture | none (title only) | `docs/images/state-notice-4x3-save.png`, `docs/images/state-notice-4x3-load.png` (full set in `build/evidence/state-notice/final-4x3/`) |
 | same notice, 16:9 | — | `docs/images/state-notice-16x9-save.png`, `docs/images/state-notice-16x9-load.png` (full set in `build/evidence/state-notice/final-16x9/`) |
