@@ -57,3 +57,38 @@ particle shape, density, phase, and the original raster motion.
 `TG2_RACE_60FPS=0 python3 tools/probe_run.py --exe build/TG2Recomp
 --out build/qual/rain/off --frames 360 --port 4620 --widescreen off --shots 300`
 exited 0: frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`.
+
+Non-rain regression with 60 fps disabled: 15 exact-frame 16:9 PNG pairs
+from `build/qual/rain/dry-{before,after}/16-9/` are pixel-identical. Both
+margin audits passed over 2,933 pictures / 1,313,984 samples: zero black,
+ground-colour, band-colour, or short plane-A extension violations; all four
+manifests are empty. The top-level `verify_widescreen.py` invocation exits 1
+in **both** binaries with 60 fps disabled because its SAT-matching assertion
+finds no selected scene; this is pre-existing and separate from the weather
+change. Full verification with the normal 60 fps option follows below.
+
+Full existing widescreen check (60 fps enabled), exit 0:
+
+```
+TG2_RACE_60FPS=1 build/rain-venv/bin/python tools/verify_widescreen.py \
+  --out build/qual/rain/dry60-after --port 4620 \
+  --modes off,16:9,21:9 --margin-audit
+```
+
+Each mode ran 5,600 frames and left all four manifests empty. Both wide
+modes passed their SAT/margin checks, all five canonical centre/state
+comparisons, and 2,933-picture margin audits with zero violations.
+Machine-readable results: `build/qual/rain/dry60-after/summary.json`.
+The ROM and generated code were not changed; no engine patch or CI run was
+needed. Configure and incremental builds exited 0 (logs
+`/tmp/tg2-rain-{config,build,final-build}.log`).
+
+Limits: screenshots qualify macOS arm64 headless presentation. Rain pairs
+use 60 fps disabled; 60 fps enabled was regression-tested on the dry race,
+not separately captured on the rainy race. Snow, split-screen, 32:9 and
+other operating systems were not separately captured in this task. Owner
+live play confirmation remains outstanding.
+
+The original binary also passed the 60 fps-enabled 16:9 check (exit 0,
+`build/qual/rain/dry60-before/summary.json`). All 15 paired exact-frame dry
+captures match byte-for-byte in decoded RGB, with both 60 fps Off and On.
