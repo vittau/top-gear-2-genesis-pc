@@ -47,8 +47,11 @@ major bugs. Release path:
    submits to Quiver.
 
 Release bugs from owner playtests (2026-11-07):
-- **Blocker:** with BOTH persisted in `settings.ini`, the music is silent from
-  boot. Sent to the BOTH worker; it is fixed before the second Z80.
+- **Fixed:** with BOTH persisted in `settings.ini`, the music was silent from
+  boot (patch 0011 released the Z80 from BUSREQ while routing, so the music
+  mailbox could be read mid-write). BUSREQ now halts the Z80 in BOTH too;
+  `tools/verify_both_boot.py` boots BOTH/MUSIC/SFX from a clean settings dir and
+  requires the title/menu music to correlate >= 0.99 (0.9952 both vs music).
 - Tier-3 floor ran `$00E46C` / `$00445A` in real play. Sent to task 22.
 - **Major:** in rain/snow races the weather particles don't continue into the
   widescreen margins; long stretched horizontal lines show there instead.
@@ -204,7 +207,7 @@ to be fitted from the stock ramps rather than invented.
 
 | Task | Worktree | State |
 |---|---|---|
-| 20b BOTH: second Z80 core for the race SFX image | `tg2-both-dualchip` | Dual-chip BOTH merged: music on chip A, 68k FM on chip B; no shared-chip noise; page re-entry fixed. Missing: the engine and nitro PCM, which run on a Z80 SFX image that needs its own Z80 core. Prototype reverted (the upload side effects stopped both drivers). Resumes when a worker slot frees. If it isn't clean by the release candidate, BOTH ships labelled as missing car sounds, or is hidden. |
+| 20b BOTH: second Z80 core for the race SFX image | `tg2-both-dualchip` | **Done.** Patch 0014 runs a second Z80 core (own 8 KB RAM/bank/BUSREQ/reset) only in BOTH; the 68K upload and the PCM command ports are routed to it, so the music driver is untouched. Chip B = 68K engine + SFX PCM, matching SOUND EFFECTS at corr 0.9947; engine, nitro (cmd 4) and impacts (cmd 2/5/7) present; BOTH mix = A+B exactly; 0 pops/dropouts offline and on the null sink; p95 68.9%. |
 
 ## Questions for the owner (queued for 09:00)
 

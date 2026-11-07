@@ -11,10 +11,11 @@ captures, Z80 RAM dumps and the engine's whole-run FM/PSG write dump
 (`GENESIS_AUDIO_WRITEDUMP`, which records the writer PC for every write).
 Nothing here is copied from another game.
 
-**Status:** BOTH is a layered mix on two virtual chips (music driver on chip A,
-68K SFX engine on chip B), verified headless and on a null sink. Stock modes are
-byte-identical. The car's engine/nitro PCM player is still missing from BOTH
-(see *Limitations*); owner listening confirmation is required.
+**Status:** BOTH is a layered mix on two virtual chips (music driver on chip A;
+the 68K SFX engine **and** the race SFX Z80 PCM player — engine loop, nitro,
+impacts — on chip B, the latter on a second Z80 core). Verified headless, on a
+null sink, and with the persisted-BOTH boot regression. Stock modes are
+byte-identical. Owner listening confirmation is required.
 
 ## 1. The setting
 
@@ -187,36 +188,61 @@ virtual chip while BOTH is selected:
 
 | Virtual chip | Receives | Driver | Timer/status reads |
 |---|---|---|---|
-| **A** (canonical) | every **Z80**-origin FM/PSG write | the resident music driver, exactly as in MUSIC mode | Z80 reads: chip A. Its timer B is the music clock (patch 0010's free-running grid). |
-| **B** (second) | every **68K**-origin FM/PSG write | the race SFX engine, exactly as in SOUND EFFECTS mode | 68K reads: chip B (its own status/timer model). |
+| **A** (canonical) | every write from the **first Z80** (music driver) | the resident music driver, exactly as in MUSIC mode | first Z80 reads: chip A. Its timer B is the music clock (patch 0010's free-running grid). |
+| **B** (second) | every **68K**-origin FM/PSG write **and** every write from the **second Z80** (race SFX PCM image) | 68K SFX engine + the SFX image, exactly as in SOUND EFFECTS mode | 68K and second-Z80 reads: chip B (its own status/timer model). |
 
-Engine change: `patches/segagenesisrecomp/0011-writer-routed-second-sound-chip.patch`.
+Engine changes:
+`patches/segagenesisrecomp/0011-writer-routed-second-sound-chip.patch` (two
+virtual chips) and
+`patches/segagenesisrecomp/0014-second-z80-core-race-sfx-pcm.patch` (the second
+Z80 core for the race SFX image).
 
-* `AudioEvent` carries the writer (`AUDIO_ORIGIN_68K` / `AUDIO_ORIGIN_Z80`) next
-  to the port/value it already had; `audio_event_push()` stays the 68K writer and
-  the Z80 bus push sites use `audio_event_push_origin()`.
+* `AudioEvent` carries the writer (`AUDIO_ORIGIN_68K`, `AUDIO_ORIGIN_Z80` for the
+  music driver, `AUDIO_ORIGIN_Z80_SFX` for the second core); `audio_event_push()`
+  stays the 68K writer and the Z80 bus push sites use
+  `audio_event_push_origin()`.
 * `ym2612_*_chip(i)` / `psg_*_chip(i)` make both chip models instantiable twice.
   Chip 0's arithmetic, scratch ring, sample-clock remainder and output LPF are
   unchanged, so its own output is the single-chip output.
 * CPU-visible timer/status state is per chip (`YmTimerState`): the bus copy is
-  chip A's (Z80 music clock); a second instance answers the 68K side.
-* In routing mode each chip is fed **in its own writer's push order**, not in a
-  merged stamp order. The two writer axes (raster cursor for the Z80, the 68K
-  instruction counter for the 68K) are not comparable, and sorting a 68K-only
-  stream by the merged axis splits its FM address/data pairs and re-orders the
-  register burst. The single-chip path keeps the old merge (it is what makes a
-  single shared chip safe), so stock output is untouched.
+  chip A's (Z80 music clock); a second instance answers the 68K side and the
+  second core.
+* **Second Z80 core.** The race engine and nitro are not 68K FM: a resident Z80
+  PCM/DAC player in the race SFX image (ROM `$0701F6`, YM2612 part-2 `$2A`/`$2B`
+  at ~6.6 kHz) plays them. The 68K's upload (`$0700C8`) overwrites all 8 KB of
+  Z80 RAM and pulses the reset line, so it cannot coexist with the music driver
+  in one core. In BOTH the machine therefore runs a second superzazu Z80 next to
+  the first: its own 8 KB RAM, bank register, cycle debt and
+  bus-request/reset state (`GenesisBus.z80_sfx_*`, `GenesisMachine.z80_sfx`).
+  A game-owned predicate (`game/tg2_audio_both.c: z80_route`) sends the 68K's
+  upload access (RAM writes plus `$A11100`/`$A11200`) and its later PCM command
+  ports (`$A0025E..$A00261`) to the second core; every other 68K Z80-space access
+  still reaches the music driver. The upload's writes, reset pulse and image can
+  no longer stop the music driver — the failure mode of the first prototype.
+  The second core is stepped per scanline with the same cycle accounting as the
+  first, halts on its own BUSREQ (faithful SOUND EFFECTS timing) and is reset and
+  frozen when BOTH is left. Its CPU state and RAM live in the machine image, so
+  quickstates and rollback snapshots include them.
+* Chip A is fed from the first Z80's writes in its own push order. Chip B is fed
+  from the 68K engine **and** the second core in the **stock merged stamp order**
+  (stable sort + FM address/data pair guard): that is exactly the register
+  stream SOUND EFFECTS mode feeds to one chip, which is why chip B reproduces
+  that mode. The single-chip path keeps the old merge untouched.
 * Both chips advance across the whole frame, so each emits exactly the number of
   samples the stock single chip would; the outputs are summed at unity gain and
-  clamped to int16. Measured peaks leave the headroom unused (BOTH peak 9832 of
+  clamped to int16. Measured peaks leave the headroom unused (BOTH peak 10702 of
   32767), so no limiter is applied. **Mix gain: 1.0 for both chips.**
-* While routing is on, the 68K no longer stalls the Z80 for its chip writes: the
-  68K is talking to chip B, which the Z80 never touches, so BUSREQ only has to
-  cover Z80 RAM (mailbox bytes, which the emulation writes atomically). This
-  removes the per-frame stall that made the music stutter and shift.
+* BUSREQ keeps halting the Z80 while routing is on. Patch 0011 had released the
+  music driver from BUSREQ in BOTH; that let the Z80 read the music mailbox while
+  the 68K was writing it, so a persisted BOTH silenced the title/menu music.
+  Halting is the hardware behaviour and costs the music nothing measurable (the
+  68K engine's BUSREQ window is a few hundred cycles per frame). Regression
+  capture: boot with `[mods.racesound] mode = both`, title/menu music correlates
+  0.9952 with MUSIC mode (≥ 0.99 required).
 
-Stock modes (MUSIC, SOUND EFFECTS) never enable routing: one chip, the old
-merged-stamp path, byte-identical output (verified below).
+Stock modes (MUSIC, SOUND EFFECTS) never enable routing or the second core: one
+chip, one core, the old merged-stamp path, byte-identical output (verified
+below).
 
 `GENESIS_AUDIO_CHIPDUMP=<prefix>` writes `<prefix>A.wav` / `<prefix>B.wav`, each
 chip's stream through the same mix that feeds the main WAV, for the acceptance
@@ -413,37 +439,55 @@ frames (40 s) of the race.
 
 | Comparison | Correlation | Gain | Residual RMS |
 |---|---:|---:|---:|
-| Chip A vs MUSIC mode | **0.992638** | 0.992906 | 178.98 |
-| Chip B vs SOUND EFFECTS | 0.181287 | 0.219081 | 1520.32 |
-| Chip B vs SOUND EFFECTS with the Z80 stream muted | 0.218666 | 0.218490 | 1247.28 |
+| Chip A vs MUSIC mode | **0.998455** | 0.998242 | 82.16 |
+| Chip B vs SOUND EFFECTS | **0.994714** | 0.994632 | 158.78 |
 | **BOTH mix vs chip A + chip B** | **1.000000** | 1.000000 | **0.00** |
 
-* **Chip A is MUSIC.** Same correlation law as the whole-run captures: the
-  music driver's write stream is identical and the only difference is the
-  sub-sample phase of its writes. Per-second RMS differs from MUSIC by at most
-  17.6 (1.2 %), and the MUSIC race never drops below 970 RMS, so there is no
-  music-silent moment for an SFX write to leak into chip A.
-* **Chip B is the 68K SFX stream.** Its write side is exactly the 68K-origin
-  writes (18,998 in the race window vs 345,934 Z80-origin writes into chip A;
-  one origin never appears on the other chip). Its waveform does **not** match
-  SOUND EFFECTS mode, for two measured reasons: (1) the resident SFX Z80 PCM
-  player (the car engine and nitro) cannot run beside the music driver, so its
-  stream is absent; (2) the single-chip path applies the 68K burst through the
-  merged two-axis stamp sort, while chip B gets it in issue order. See
-  *Limitations*.
-* **The mix is exactly A + B at unity gain**: correlation 1.000000 and residual
-  0.000. Peaks: chip A 7880, chip B 2092, mix 9832 of 32767 — no clipping and no
-  limiter needed.
+* **Chip A is MUSIC.** The music driver's write stream is identical and the only
+  difference is the sub-sample phase of its writes. Per-second RMS is within
+  1.2 % of MUSIC mode and the race never drops below 970 RMS, so no SFX write
+  leaks into chip A.
+* **Chip B is SOUND EFFECTS.** Its writers are exactly the 68K engine plus the
+  second Z80 running the race SFX image, applied in the same merged-stamp order
+  the stock single-chip path uses. The 68K PCM command stream is identical
+  frame-for-frame: 373 commands in both modes, identical IDs and timestamps
+  (`GENESIS_AUDIO_SFXPCM_TRACE`). Per-second RMS over the last 20 s differs by at
+  most 7.1 (0.4 %), including the nitro and impact bursts.
+* **The mix is exactly A + B at unity gain**: sample-by-sample maximum difference
+  0 (no samples clamped) over the 40 s window. Peaks: chip A 7880, chip B 6059,
+  mix 10702 of 32767 — no clipping and no limiter needed.
+
+### The race SFX image's command bank
+
+The image's player indexes three tables that the 68K upload patches in; decoding
+them from the raw ROM (`ROM $070FA8` + entry offsets, lengths at `$070FF0`) gives
+18 commands (0–17, durations 0.20–1.25 s at the player's rate). The race engine
+uses six of them on this route, identified from the command trace plus the 68K
+state:
+
+| Command | Events in 40 s race | What it is |
+|---|---:|---|
+| 6 | 312 | engine loop (continuous while the throttle is down; 562 without nitro) |
+| 3 | 23 | engine start / gear change |
+| 4 | 13 | **nitro** (0 events on the identical route without `C`; appears at the `C` press frame in a single-press control) |
+| 5 | 6 | **impact** (9–13 frames before each sampled speed drop, e.g. 6298 → 6311) |
+| 7 | 12 | impact / skid (5 frames before a speed drop at 6486 → 6491) |
+| 2 | 7 | impact (at the last collisions, 7651/7670) |
+
+Commands 0, 1 and 8–17 are handled by the player but not requested on this
+route (duplicate samples and other events). The acceptance point is that every
+command the 68K engine issues in SOUND EFFECTS is issued at the same frame in
+BOTH: the trace files are byte-identical.
 
 ### Stock modes are sample-identical
 
-Same scripts, same build settings, before (patches 0001–0010, no routing) and
-after (with patch 0011). Whole-run WAV capture, MD5:
+Same scripts, same build settings. Whole-run WAV MD5, this branch (patches
+0001–0016, with 0014) against a `main` 2e42151 build of the same scripts:
 
-| Capture | before | after |
+| Capture | main build | this branch |
 |---|---|---|
-| MUSIC | `7d589610d769f1dd013e8b146043b538` | `7d589610d769f1dd013e8b146043b538` |
-| SOUND EFFECTS | `efc35a8d42e4f088b7616d7e723ad230` | `efc35a8d42e4f088b7616d7e723ad230` |
+| MUSIC | `9faab80d68d1b80caa500420a9b301e6` | `9faab80d68d1b80caa500420a9b301e6` |
+| SOUND EFFECTS | `ec4a9c819a0ec93772abe9741fb0ce16` | `ec4a9c819a0ec93772abe9741fb0ce16` |
 
 The 4:3 cold-boot fingerprints still match the documented stock values: frame
 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` (identical before/after).
@@ -462,24 +506,59 @@ last 3 minutes of the race through `tools/audio_glitch_detect.py`:
 | pops | **0** |
 | digital-silence dropouts | **0** |
 | DC-hold dropouts | **0** |
-| envelope-collapse events | 42 (14/min) |
+| envelope-collapse events | 71 (23.7/min) |
 
-The envelope class also fires on the **offline deterministic** BOTH WAV (21
-events / 10.4 per minute on the same soundtrack), i.e. those dips are in the
-music itself, not in the device path. No underrun, conceal or overflow event
-was logged during the capture.
+The envelope class is the music's own note gaps, not a device path defect: on the
+same 40 s offline race window MUSIC mode alone reports 296 of them, BOTH 24 and
+SOUND EFFECTS 3 (the SFX PCM and the second chip fill the gaps). Offline BOTH
+reports **0 pops, 0 digital-silence dropouts and 0 DC-hold dropouts**. No
+underrun, conceal or overflow event was logged during the device capture.
+
+### Persisted BOTH: title and menu music
+
+Boot with `[mods.racesound] mode = both` in `settings.ini` (no menu visit) and
+compare against MUSIC mode on the same boot:
+
+| Window | BOTH vs MUSIC correlation | RMS BOTH / MUSIC |
+|---|---:|---:|
+| boot (frames 120–300) | 0.992670 | 1387 / 1262 |
+| title/menu (400–900) | **0.995227** | 1448 / 1343 |
+| menu late (600–900) | 0.993112 | 1481 / 1392 |
+
+The +6 % RMS is a constant DAC bias: each idle YM2612 model emits a fixed +380
+offset, stock modes carry one chip's worth (mean 193) and BOTH carries two
+(mean 569). It is inaudible DC, costs no headroom, and is left uncorrected so
+chip B stays bit-comparable with SOUND EFFECTS and the mix stays exactly A + B.
+
+Selecting BOTH mid-session is the acceptance route above (menu → RACE SOUND →
+BOTH → race); the music never stops at the switch and the race starts with both
+layers. The game does not return to the main menu after a race (known cartridge
+behaviour), so a post-race menu check is not reachable.
 
 ### CPU
 
-Release configuration (`GEN_ENABLE_TRACE=OFF`, 16:9, HUD edges, 60 fps on),
-same route, CPU work = frame interval minus pacer wait, race window:
+Release configuration, 16:9, HUD edges, 60 fps on, same route, CPU work =
+frame interval minus pacer wait, race window 3300–4300, measured on a machine
+shared with another qualification run:
 
 | Mode | CPU p50 | CPU p95 | p95 / 16.683 ms budget |
 |---|---:|---:|---:|
-| MUSIC | 7.12 ms | 11.82 ms | 70.8 % |
-| **BOTH (second chip)** | **7.29 ms** | **11.96 ms** | **71.7 %** |
+| MUSIC | 6.80 ms | 11.75 ms | 70.4 % |
+| **BOTH (second chip + second Z80)** | **6.93 ms** | **11.49 ms** | **68.9 %** |
 
-The second YM2612+PSG costs 0.17 ms p50 / 0.14 ms p95 on this route.
+The second Z80 interpreter and the second YM2612+PSG cost +0.13 ms at p50; the
+p95 difference is inside the run-to-run noise of the shared machine. No
+underrun or conceal event in either run.
+
+### Save states
+
+The second core's CPU state, 8 KB RAM, bank register and bus-request/reset
+state are fields of `GenesisMachine`/`GenesisBus`, i.e. inside the raw machine
+image that `machine_save_state()` and `machine_rb_save()` write and
+`machine_load_state()`/`machine_rb_load()` restore (pointers re-wired on load).
+The size guards in `rb_state.c` were updated (GenesisBus 32864, GenesisMachine
+98872 bytes). Stock modes are unaffected; a state saved in BOTH carries both
+cores and both chips.
 
 ### The menu page, re-entered
 
@@ -507,7 +586,22 @@ game's own MUSIC row.
 ## 9. Reproduction
 
 ```sh
-JOBS=8 tools/build-linux.sh ~/roms/genesis/tg2.bin build
+JOBS=3 tools/build-linux.sh ~/roms/genesis/tg2.bin build
+
+# Persisted-BOTH boot regression (blocker: music silent when BOTH was saved):
+# boots BOTH/MUSIC/SFX from clean settings dirs and requires correlation >=0.99.
+python3 tools/verify_both_boot.py --exe build/TG2Recomp
+
+# Second Z80 acceptance: same nitro route, final build, per-chip export and the
+# SFX engine's command trace (identical IDs/frames in SFX and BOTH).
+for m in music sfx both; do
+  SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  GENESIS_AUDIO_CHIPDUMP=build/accept/$m/chip \
+  GENESIS_AUDIO_SFXPCM_TRACE=build/accept/$m/pcm.txt \
+  build/TG2Recomp ~/roms/genesis/tg2.bin --no-launcher --wav build/accept/$m/run.wav \
+      --input-script build/nitro/$m.input
+done
+python3 tools/audio_glitch_detect.py --device build/accept/both/run.wav
 
 # Interactive route capture on a trace-enabled build (TCP, port 4550):
 python3 tools/tg2_both_route.py --mode both --out build/final/route-both
@@ -555,33 +649,36 @@ pactl unload-module <id>
 
 ## 10. Limitations
 
-* **The car's engine and nitro samples are not in BOTH.** They are not 68K FM
-  writes: stock SOUND EFFECTS mode uploads a small resident Z80 program (ROM
-  `$0701F6`, 0x6EA bytes, reset `JP $0410`) that plays table-driven PCM through
-  the YM2612 DAC ($2A/$2B). During a race its write rate swings between 0 and
-  ~12,000 writes/s (the engine loop and every nitro burst); the 68K FM engine
-  is a steady 420 writes/s. That program needs the 8 KB of Z80 RAM the music
-  driver occupies, so BOTH (which keeps the music driver resident and skips the
-  upload at `$0700C8`) cannot run it. Measured on a 40 s nitro window: the SFX
-  capture's 1 s RMS swings 1300-1930, chip B's is flat at 1314 (the 68K FM
-  drone), and the nitro bursts are absent. Fixing this needs a second Z80 core
-  for that image (own 8 KB RAM, own bank register, writes routed to chip B) — a
-  scheduler change, not a chip-routing one; a first prototype uploaded the image
-  correctly but the main Z80 stopped producing music at race init, so it is not
-  shipped. `sfx-only.wav` in `~/Music/tg2-ab/` is the reference for what the
-  missing layer sounds like.
+* **One cartridge sound engine runs on a virtual second Z80.** Real hardware has
+  one Z80 and one pair of sound chips; BOTH is the documented accuracy
+  concession. The second core is a superzazu interpreter (the music core is the
+  same core in these builds), only stepped while BOTH is selected. Its timing is
+  the same per-scanline cycle accounting as the first core; the engine/impact
+  samples land within a frame of SOUND EFFECTS. The command stream is identical;
+  the 0.9947 chip-B correlation is dominated by sub-sample phase, not missing or
+  extra events.
+* **The second Z80 does not exist in stock modes.** MUSIC and SOUND EFFECTS keep
+  one core and one chip; their whole-run WAV MD5s are byte-identical to a
+  `main` build of the same scripts (see §8).
+* **A constant DAC bias adds one extra chip's worth in BOTH.** Each idle
+  YM2612 model carries a fixed +380 sample offset; stock modes have one chip
+  (mean 193 in the title theme), BOTH has two (mean 569). It is inaudible DC and
+  is left uncorrected so chip B stays comparable with SOUND EFFECTS and the mix
+  stays exactly A + B.
 * Chip A is the music driver alone: in the acceptance race its per-second RMS
-  matches MUSIC within 17.6 (1.2 %), the race window contains 345,934
-  Z80-origin chip writes and 18,998 68K-origin writes, and the two never mix
-  (mix = A + B exactly, residual 0.000). The MUSIC mode race never drops below
-  970 RMS, so there is no music-silent moment where an SFX write could leak
-  into chip A.
+  matches MUSIC within 1.2 %, and the two writers never mix (mix = A + B
+  exactly, maximum difference 0). The MUSIC race never drops below 970 RMS, so
+  there is no music-silent moment where an SFX write could leak into chip A.
 * The whole BOTH layer is selected at the next race start (the in-game page
-  applies the choice to the option immediately; routing is re-asserted every
-  frame from the host choice).
-* The second chip's save-state/rollback state is not serialized; a state load
-  mid-BOTH re-syncs chip B from the next frame of 68K writes. Stock modes are
-  unaffected.
+  applies the choice to the option immediately; routing and the second core are
+  re-asserted every frame from the host choice).
+* **Save states include both cores and both chips** (the machine image carries
+  `GenesisMachine.z80_sfx`, its RAM/bank/control fields in `GenesisBus`, and both
+  virtual chip models; `rb_state.c`'s size guards were updated). A state saved in
+  BOTH reloads a running second core; stock modes are unaffected.
+* The game does not return to the main menu after a race, so BOTH cannot be
+  re-checked there; the in-game RACE SOUND page repaints from host state on
+  every frame and still shows BOTH.
 * The `BOTH` glyphs are drawn by the port from the menu font's own geometry,
   not from a ROM string (the font is packed; see section 7). B and H are
   composed from the font's own parts because the game never renders those
