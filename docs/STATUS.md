@@ -50,6 +50,10 @@ Release bugs from owner playtests (2026-11-07):
 - **Blocker:** with BOTH persisted in `settings.ini`, the music is silent from
   boot. Sent to the BOTH worker; it is fixed before the second Z80.
 - Tier-3 floor ran `$00E46C` / `$00445A` in real play. Sent to task 22.
+- **Major:** in rain/snow races the weather particles don't continue into the
+  widescreen margins; long stretched horizontal lines show there instead.
+  Seen in task 22's captures (Switzerland blizzard, a night rain race). Sent
+  to task 22.
 - Minor: "Internal resolution" in the menu does nothing visible for TG2,
   because the game renders through its own `GameVideo` at native resolution.
   Hide the option or make it meaningful.
