@@ -34,4 +34,6 @@ commit; local fixes remain visible as its applied working-tree diff.
 
 - `0012-game-video-presented-window.patch`: let a game video provider crop empty scanline bands from the presented picture (a `present_window` hook called once per completed frame, so captures, hashes and the margin audit keep all native rows) — Top Gear 2's race overscan crop needs it.
 
+- `0014-second-z80-core-race-sfx-pcm.patch`: run a second Z80 core alongside the resident music driver, only while a game enables it (Top Gear 2's BOTH mode). It has its own 8 KB RAM, bank register and bus-request/reset state, so the 68K's upload of a second sound image cannot overwrite or reset the music driver (the first prototype's fatal side effects). A game-owned predicate tells the bus which 68K Z80-space accesses reach the second core; its chip writes carry `AUDIO_ORIGIN_Z80_SFX` and the mixer feeds them to virtual chip B together with the 68K engine, applied in the stock merged-stamp order so chip B reproduces SOUND EFFECTS mode. The core and its RAM are in every save state and rollback snapshot; stock modes never instantiate or step it.
+
 - `0013-runtime-menu-quit-row.patch`: enable the recomp-ui standard "Quit game" row (two presses) in the in-game menu and leave through the normal window-close path, so a controller-only player (Steam Deck) can exit without the system menu.

@@ -29,6 +29,13 @@ kind = "game_hook"
 addr = 0x0700C8
 kind = "game_hook"
 
+# End of the race SFX Z80 image upload routine: the redirect window closes at
+# its RTS so later 68K Z80-RAM writes (music mailbox) go back to the music
+# driver's core.
+[[widescreen_site]]
+addr = 0x070188
+kind = "game_hook"
+
 # SFX-side policy reads: present 0 while BOTH is selected.
 [[widescreen_site]]
 addr = 0x006530
