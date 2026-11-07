@@ -590,7 +590,18 @@ static int tg2_feature_enable(void *ctx, const char *package, const char *featur
     (void)ctx;
     const Tg2Option *o = option_by_identity(package, feature);
     if (o) {
-        *o->value = o->kind == TG2_OPT_CHOICE ? (on ? 1 : 0) : (on != 0);
+        if (o->kind == TG2_OPT_CHOICE) {
+            /* A choice is "enabled" while it sits off its first value (the
+             * shared mod model ties a feature's enabled flag to value != 0).
+             * Turning the feature on must keep the recorded choice: replay
+             * capture writes the option value first and the enable line
+             * second, so collapsing it to 1 here turned a recorded BOTH into
+             * MUSIC and the feedback replay diverged on its first frame.
+             * Turning it off returns the feature's off value. */
+            if (!on) *o->value = 0;
+        } else {
+            *o->value = on != 0;
+        }
         apply_option(o);
         return 1;
     }
