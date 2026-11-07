@@ -348,6 +348,11 @@ python3 tools/tg2_nitro_compare.py --port 4490 --out build/qual/nitro/compare \
     --country 0 --window-at 900 --window 90
 # password round-trip
 python3 tools/tg2_password.py decode "KUC2 2HQG CJL2 Y4%T"
+
+# task 25: quickstate save -> fresh-process load matrix
+python3 tools/tg2_state_matrix.py --out build/qual/qa-state-matrix
+# task 25: the 19 races a password cannot select
+python3 tools/tg2_reach_races.py --out build/qual/qa-reach
 ```
 
 ## Manifests
@@ -736,6 +741,10 @@ process** (was 1-2), identical speed and clock to the same-process load; the
 same check on the clean rebuild from `tools/apply-engine-patches.sh --reset`
 (`build/qual/qa-state-fix2`) gives speed 5144 and clock 26978822 in both
 processes.
+
+The F-key slots are the same mechanism: Shift+F1..F9 saves into
+`native_save_N.bin`, F1..F9 loads it, both through `runner_save_state_file` /
+`runner_load_state_file`, the entry points the matrix drives directly.
 
 Stock identity: with every presentation option off, frame 60
 `2A0B972960C5E325` and frame 300 `1131D937D70234FD` are unchanged
