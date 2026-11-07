@@ -71,6 +71,22 @@ option; with it off, the picture stays byte-identical. A worker should first
 answer how the sky is drawn today: the backdrop colour or background-layer
 tiles, and whether raster palette changes already occur.
 
+**Enhancement idea for after 0.1.0 (owner, 2026-11-07): NTSC filter and scanlines.**
+A Blargg NTSC composite filter and scanlines as presentation options. Blargg
+has a Genesis-specific variant, `md_ntsc`, besides `snes_ntsc`. The owner's
+reference is his modern-tyrian project, which took it from Cannonball. It is
+not on this machine; ask him for the path or the repo.
+- Run it on the final presented frame: after widescreen composition and the
+  overscan crop, and for the 60 fps synthesized frames too. Then scale to the
+  window, with scanlines matched to the output resolution.
+- Presets (composite / S-Video / RGB) and scanline strength. Off stays
+  byte-identical.
+- It conflicts with high-resolution rendering, which aims at the opposite
+  look, so make them mutually exclusive or order them clearly.
+- Check the license before vendoring: Blargg's libraries are LGPL 2.1, and
+  static linking in a PolyForm-NC project needs care. Also measure the CPU cost
+  on the 3500U and on the Deck.
+
 **Enhancement idea for after 0.1.0 (owner, 2026-11-07): high-resolution rendering.**
 Render races above 224p in our renderer. This would also give the
 "Internal resolution" option a real meaning; today it is a no-op for TG2.
