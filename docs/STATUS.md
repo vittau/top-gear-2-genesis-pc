@@ -78,6 +78,15 @@ Release bugs from owner playtests (2026-11-07):
   boundary and resume the game fiber at that boundary; races and the title/main
   menu resume live, screens without a declared loop refuse the save with a
   clear message. Same-process rewind still works.
+- **Fixed (2026-11-07, owner playtest on macOS):** a race loaded from a save
+  state ended and went back to the main menu instead of the results and the
+  next race, even when the player qualified. Cause: the load restarted the race
+  loop with a reset stack, and when it returned the engine fell back to the
+  top-level loop (`$001E18`, title) instead of the race's caller (`$001E82`,
+  results, qualification and race index + 1). Engine patch 0021 keeps the
+  restored stack and continues the guest's return addresses; `$001E82` and
+  `$001E1E` are seeded entries. Evidence in VALIDATION.md, "Quickstate resume
+  continues the guest's callers".
 - Added for the owner (patch 0016): P freezes the frame without the game's
   PAUSE screen and pauses audio output (screenshot mode); P or Esc resumes.
 

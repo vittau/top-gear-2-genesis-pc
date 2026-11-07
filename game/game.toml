@@ -20,7 +20,11 @@ level_modes = []
 # the current screen in place. Each sits inside a larger host routine; the
 # recompiler replaces the host's branch to it with a tail transfer, which keeps
 # the generated code's behaviour identical while making the loop callable.
-extra = [0x000200, 0x0065F2, 0x001E18, 0x001E9D8, 0x001EBF6]
+# When a resumed loop returns, the engine continues the return addresses on
+# the restored guest stack, so each caller continuation is an entry too:
+# $001E82 follows `jsr $64C2` (race -> results and next race) and $001E1E
+# follows `jsr $1E764` (title/menu -> game setup) in the top-level loop.
+extra = [0x000200, 0x0065F2, 0x001E18, 0x001E9D8, 0x001EBF6, 0x001E82, 0x001E1E]
 
 # --- Simultaneous music + SFX (game/tg2_audio_both.c) -----------------------
 # Audited pre-instruction sites. All are stock instruction boundaries checked

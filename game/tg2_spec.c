@@ -146,8 +146,10 @@ const GameSpec g_game_spec = {
     .state_load = tg2_state_load,
     .state_at_boundary_site = tg2_state_at_boundary_site,
     .state_resume_pc = tg2_state_resume_pc,
-    /* If a resumed screen finishes (race over, menu left), continue at the
-     * top-level loop, which picks the next scene. */
+    /* When a resumed screen finishes (race over, menu left) the engine
+     * continues the guest callers saved on the stack ($001E82 after a race,
+     * $001E1E after the title/menu; patch 0021). The top-level loop is only
+     * the fallback once that chain ends. */
     .dispatch_main_loop_pc = 0x001E18u,
     .commands = commands,
     .command_count = sizeof commands / sizeof commands[0],

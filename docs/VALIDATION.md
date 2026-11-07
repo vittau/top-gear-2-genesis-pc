@@ -749,6 +749,40 @@ same check on the clean rebuild from `tools/apply-engine-patches.sh --reset`
 (`build/qual/qa-state-fix2`) gives speed 5144 and clock 26978822 in both
 processes.
 
+### Quickstate resume continues the guest's callers (2026-11-07)
+
+Owner report (macOS, release build): a quickstate saved and loaded during race
+3 of a country, finished in 2nd place, went back to the main menu after the
+race instead of the results and race 4. Reproduced on a dev build with the
+owner's own `native_save_1.bin`: after the finish the log printed
+`resume loop returned at $0065F2; continuing at dispatcher $001E18`, no results
+screen appeared and the race index stayed at 2.
+
+The real guest stack in a normal race (`get_registers` + WRAM, no state
+loaded) holds one return address: `$001E82` at `$FFFFFA`, pushed by
+`jsr $64C2` at `$001E7C` in the top-level loop. `$001E82` runs the post-race
+flow: `jsr $2301E` (results), the qualification test at `$20A62`, then
+`$FF16BE + 1` and `bra $1E52` (next race). The title and main-menu boundaries
+sit one level down as well, below `jsr $1E764` at `$001E18` (return `$001E1E`).
+The loader reset A7 to the initial SSP and, when the resumed loop returned,
+called the dispatcher `$001E18`, which starts over at the title.
+
+Engine patch 0021 resumes a game boundary inside the restored frame (A7 kept)
+and, when the loop returns, pops each guest return address that follows a
+JSR/BSR and continues it. `game/game.toml` seeds `$001E82` and `$001E1E`
+(both checked as the instruction after the call in the raw ROM).
+
+| Case (dev build, dummy video/audio, one runtime at a time) | Before | After |
+|---|---|---|
+| Owner's race-3 state, autopilot finishes 10th | menu, race index 2, no results | `continuing guest caller $001E82`, race 4 starts (index 3) |
+| Owner's race-3 state, autopilot finishes 12th | — | "YOU HAVE FAILED TO QUALIFY", then the title (stock behaviour) |
+| Title state (`$01E9D8`), fresh process, START → menu → START row | — | `continuing guest caller $001E1E`, race reached |
+| Main-menu state (`$01EBF6`), fresh process, START row | — | `continuing guest caller $001E1E`, race reached |
+
+All four manifests are empty in every loaded run. Stock identity is unchanged:
+`tools/probe_run.py --widescreen off --frames 360` gives frame 60
+`2A0B972960C5E325` and frame 300 `1131D937D70234FD`.
+
 The F-key slots are the same mechanism: Shift+F1..F9 saves into
 `native_save_N.bin`, F1..F9 loads it, both through `runner_save_state_file` /
 `runner_load_state_file`, the entry points the matrix drives directly.
