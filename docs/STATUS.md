@@ -28,6 +28,26 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 Engine changes live as patches in `patches/segagenesisrecomp/`. The
 submodule pin is upstream `dd520f1`.
 
+## Priority: first playable release (owner, 2026-11-06)
+
+The owner's priority is a first release (v0.1.0) that is playable and has no
+major bugs. Release path:
+
+1. **Blocker:** BOTH via the second chip (task 20). If it can't be made clean
+   in time, hide BOTH for 0.1.0 instead of shipping noise.
+2. **Release qualification** (after task 20): reach every race of every
+   country via passwords, including each country's still-unvisited second race,
+   and 2-player. Run the release build with the default options. Gate on
+   no crashes, empty manifests and no audio glitches.
+3. Task 21 (crop the black bands + HUD Edges map split) ships only if it
+   merges clean before the release candidate. It doesn't block.
+4. CI `platforms=all` dry run → owner playtest of the candidate → tag
+   `v0.1.0` with the owner's go-ahead → the owner publishes the draft and
+   submits to Quiver.
+
+Deferred until after 0.1.0: the clean FM option and music/SFX volumes, task
+17 (widescreen menus), and the Auckland music re-attack divergence.
+
 ## Still in progress
 
 | Task | Worktree | State |
