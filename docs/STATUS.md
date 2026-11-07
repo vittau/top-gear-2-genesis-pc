@@ -28,6 +28,61 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 Engine changes live as patches in `patches/segagenesisrecomp/`. The
 submodule pin is upstream `dd520f1`.
 
+## Priority: first playable release (owner, 2026-11-06)
+
+The owner's priority is a first release (v0.1.0) that is playable and has no
+major bugs. Release path:
+
+1. **Blocker:** BOTH via the second chip (task 20). If it can't be made clean
+   in time, hide BOTH for 0.1.0 instead of shipping noise.
+2. **Release qualification** (after task 20): reach every race of every
+   country via passwords, including each country's still-unvisited second race,
+   and 2-player. Run the release build with the default options. Gate on
+   no crashes, empty manifests and no audio glitches.
+3. Task 21 (crop the black bands + HUD Edges map split) ships only if it
+   merges clean before the release candidate. It doesn't block.
+4. CI `platforms=all` dry run → owner playtest of the candidate → tag
+   `v0.1.0` with the owner's go-ahead → the owner publishes the draft and
+   submits to Quiver.
+
+Deferred until after 0.1.0: the clean FM option and music/SFX volumes, task
+17 (widescreen menus), and the Auckland music re-attack divergence.
+
+**Enhancement idea for after 0.1.0 (owner, 2026-11-06): gradient skies.** Race skies
+with a vertical gradient similar to the SNES version's look, not limited to the
+Genesis palette. Draw it ourselves in the game-owned renderer; copy no SNES
+assets. Derive it from the game's own sky colour per track, weather and time of
+day: night, fog, rain and snow need their own ramps. Anchor it to the moving
+horizon on hills, and handle tunnels, flashes and split screen. Make it an
+option; with it off, the picture stays byte-identical. A worker should first
+answer how the sky is drawn today: the backdrop colour or background-layer
+tiles, and whether raster palette changes already occur.
+
+**Enhancement idea for after 0.1.0 (owner, 2026-11-06): arbitrary car colours.**
+An HSL picker that **replaces the game's own car-colour page** in the
+pre-race menu. It is in-game and drawn in the game's menu style, not in the Esc
+overlay. It is not limited to the Genesis 512-colour palette. Like the BOTH
+row on the SOUND page, the page is host-owned: hook the colour page, draw
+H/S/L rows and a live preview with the game's font and glyph tiles, and read
+the pad there. With the option off, the stock page and its fixed colours stay
+byte-identical. Recolour at
+render time in our renderer; the simulation and RAM are untouched, and with it
+off the picture stays byte-identical. First find out:
+- which palette line and entries the player car's body uses;
+- whether those entries are shared with opponents, the HUD car icon or the
+  scenery.
+
+Recolour only the player car's sprite pieces, using the sprite capture,
+shifting hue and saturation and scaling lightness to keep the shading. Cover
+P1 and P2 in split screen, the HUD car icon, and the menu, shop and results
+car images. Persist the colours per player in `settings.ini`.
+Acceptance test for the shading logic (owner): each of the game's stock car
+colours must be reproducible with the HSL picker. For each stock colour, find
+the H/S/L setting that best matches all of the car's shade entries, and
+report the per-entry error after Genesis 9-bit quantisation. The target is
+exact, or at most one 9-bit step per channel. This forces the shading model
+to be fitted from the stock ramps rather than invented.
+
 ## Still in progress
 
 | Task | Worktree | State |
@@ -50,6 +105,12 @@ submodule pin is upstream `dd520f1`.
 
 - **Final phase (deferred by the owner):** widescreen for *every* extendable non-race screen (track intro with scrolling scenery, menus, shop, results...). Spec: `docs/tasks/17-widescreen-menu-screens.md`.
 
+- **Approved for after BOTH merges (owner, 2026-11-06):** a small optional audio task. It adds a "clean FM" option
+  (ymfm YM3438 variant, no ladder distortion; default stays the stock YM2612 sound) plus separate
+  **Music volume** and **SFX volume** sliders in the in-game Esc menu, next to the existing master Volume,
+  in every sound mode (owner request). Default 100% stays byte-identical. Classify by source: the Z80
+  music driver is music. The 68k FM/PSG engine and the race Z80 SFX image are SFX. Rejected: replacing the engine sound with samples from other games or versions. The
+  engine sound is a 68k FM effect, not a PCM sample.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
 - Each country's second championship race is still unvisited (it needs
