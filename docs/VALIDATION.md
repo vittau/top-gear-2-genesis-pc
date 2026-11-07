@@ -385,3 +385,46 @@ Hide overscan, BOTH audio code present but not selected, exact guest clock.
 | Stack pointer | 199 samples, min `$FFFFA4`, max `$FFFFFA` (no drift) |
 | Manifests | dispatch 0 / floor 0 / interior 0 / unsafe 0 |
 | Evidence | `build-main/soak-all-on/` (private) |
+
+## Task 22 — v0.1.0 release qualification (default options)
+
+Run with the release defaults: widescreen Adaptive (16:9 canvas), 60 fps races
+On, HUD Centered, Hide overscan On, the stock RACE SOUND default. One runtime at
+a time, TCP port 4610, SDL offscreen video and dummy audio, uncapped (turbo)
+guest where the tool allows it, every heavy step under
+`flock ~/.cache/tg2-heavy.lock`.
+
+### Race structure: 64 races, 16 countries x 4; `stage` is DIFFICULTY
+
+This contradicts the assumption in the task (and in the earlier "gaps" note
+above) that a password `stage` value reaches a country's later races. It does
+not. The facts, all from the ROM and confirmed at runtime:
+
+* The race table at ROM `$01B8E8` has **64 entries**, four per country. Entry
+  *i* = `country = i >> 2`, `slot = i & 3`. Each entry is a 0xAE-byte record;
+  byte 0..1 is the index, byte 7 the lap count and bytes 8..9 the track length
+  as ASCII digits (`"16"` = 1.6 miles), matching the intro panel.
+* `$FF16BE` is the selected race index. The intro panel and the race itself are
+  loaded from `table[$FF16BE]` (stored to `$FF241C` at `$001E5E`); the password
+  loader sets it to `country << 2` (`move.w $28(a0),d0; lsl.w #2` at
+  `$023B54`), i.e. the country's **first** race.
+* The password packer drops the low two bits when it prints a password:
+  `lsr.w #2` then `andi.w #$f` at `$023A12..$023A18` reads `$FF16BE >> 2` as the
+  4-bit country. A password therefore only ever resumes at a country's start,
+  which matches the game handing out a password between countries.
+* The 2-bit `stage` field is the **DIFFICULTY** level. The menu's DIFFICULTY
+  page leaves its value through `move.w $6(a4),-$5fe8(a3)` at `$01ED4E`
+  (`$FF2420`); the packer reads `$FF2420 & 3` into `stage` at `$023A2C`; the
+  loader writes `stage` back to `$FF2420` at `$023B60`. The page shows the
+  three labels **AMATEUR / PROFESSIONAL / CHAMPIONSHIP**, and `stage = 0/1/2`
+  loads with the same country, the same race descriptor and a byte-identical
+  intro panel and race picture (checked for country 0 slots 0..2: descriptor
+  `0x01b9e8`, same Auckland panel, same first race frame).
+* The only way to reach a country's races 2..4 is to finish the previous race
+  in the top ten. `tools/tg2_progress.py` does exactly that with a generated
+  password that carries money plus full upgrades; the race index is read back
+  before every race (`0 -> 1 -> 2 -> 3` for country 0), and the four intro
+  panels are Auckland / Ayers Rock / Canterbury Plains / Sydney.
+
+The coverage table below therefore names races by country and slot, not by
+`stage`. `stage = 0` (AMATEUR) was used for the progression runs.
