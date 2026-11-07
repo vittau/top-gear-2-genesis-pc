@@ -105,10 +105,12 @@ static int both_active(void)
  * upload overwrites all 8 KB and pulses the Z80 reset). The predicate is the
  * game's, so the engine's stock paths are untouched when BOTH is off. */
 static int s_sfx_upload;            /* 68K is inside the SFX image upload   */
-static uint8_t s_sfx_cmd[4];        /* $025E..$0261 command bytes           */
 static FILE *s_pcm_log;
 
-static void pcm_log_command(void)
+/* Env-gated command trace: every SFX-engine sample command, in every sound
+ * mode, straight from the writer's registers. Used to prove the BOTH command
+ * stream is SOUND EFFECTS'. */
+static void sfx_cmd_log(uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3)
 {
     extern unsigned long g_snd_frame;
     if (!s_pcm_log) {
@@ -116,22 +118,21 @@ static void pcm_log_command(void)
         if (!p || !*p) return;
         s_pcm_log = fopen(p, "w");
         if (!s_pcm_log) return;
-        fprintf(s_pcm_log, "# frame cmd d1($025F) d2($0260) d3($0261)\n");
+        fprintf(s_pcm_log, "# frame cmd d1 d2 d3\n");
     }
     fprintf(s_pcm_log, "%lu %u %u %u %u\n", g_snd_frame,
-            s_sfx_cmd[0], s_sfx_cmd[1], s_sfx_cmd[2], s_sfx_cmd[3]);
+            d0 & 0xFFu, d1 & 0xFFu, d2 & 0xFFu, d3 & 0xFFu);
     fflush(s_pcm_log);
 }
 
 static int z80_route(int access, uint16_t off, uint8_t value)
 {
+    (void)value;
     if (!both_active()) return 0;
     if (s_sfx_upload) return 1;             /* image upload: RAM + control  */
     if (access != AUDIO_Z80_ACCESS_RAM) return 0;
-    if (off < 0x25Eu || off > 0x261u) return 0;
-    s_sfx_cmd[off - 0x25Eu] = value;
-    if (off == 0x25Eu) pcm_log_command();   /* command byte written last    */
-    return 1;
+    /* The SFX engine's sample-command ports. */
+    return off >= 0x25Eu && off <= 0x261u;
 }
 
 /* ---- Value presentation hooks -------------------------------------------
@@ -249,6 +250,10 @@ int tg2_audio_hook(uint32_t pc)
 
     case 0x070188u:                    /* upload routine's RTS */
         s_sfx_upload = 0;
+        return 0;
+
+    case 0x0701DAu:                    /* SFX engine writes command $025E */
+        sfx_cmd_log(g_cpu.D[0], g_cpu.D[1], g_cpu.D[2], g_cpu.D[3]);
         return 0;
 
     /* --- SFX-side policy sites: present 0 while BOTH is live --- */
@@ -525,7 +530,6 @@ void tg2_audio_reset(void)
     s_page_seen = 0;
     s_saved_n = 0;
     s_sfx_upload = 0;
-    memset(s_sfx_cmd, 0, sizeof s_sfx_cmd);
     audio_set_chip_routing(both_active());
     audio_second_z80_set_enabled(both_active());
     audio_set_z80_route_fn(z80_route);
