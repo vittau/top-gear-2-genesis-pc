@@ -442,8 +442,8 @@ after (with patch 0011). Whole-run WAV capture, MD5:
 
 | Capture | before | after |
 |---|---|---|
-| MUSIC | `9faab80d68d1b80caa500420a9b301e6` | `9faab80d68d1b80caa500420a9b301e6` |
-| SOUND EFFECTS | `ec4a9c819a0ec93772abe9741fb0ce16` | `ec4a9c819a0ec93772abe9741fb0ce16` |
+| MUSIC | `7d589610d769f1dd013e8b146043b538` | `7d589610d769f1dd013e8b146043b538` |
+| SOUND EFFECTS | `efc35a8d42e4f088b7616d7e723ad230` | `efc35a8d42e4f088b7616d7e723ad230` |
 
 The 4:3 cold-boot fingerprints still match the documented stock values: frame
 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` (identical before/after).
