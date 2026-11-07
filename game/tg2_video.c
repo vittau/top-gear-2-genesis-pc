@@ -34,6 +34,18 @@ int tg2_video_get_hud_mode(void) {
     }
     return hud_edges;
 }
+/* The race picture only uses native lines 8..207. Rows 0..7 are the window
+ * band a CRT hid in overscan and rows 208..223 are the bare backdrop, so with
+ * Hide overscan on those bands are cropped from the presented picture instead
+ * of being left as black bars. A frame is cropped only when its own presented
+ * rows justify it (see note_crop_row): a picture that draws into either band
+ * keeps its full height, so visible content is never removed. */
+enum { CROP_TOP = 8, CROP_BOTTOM = 16, CROP_BANDS = CROP_TOP + CROP_BOTTOM };
+static int crop_race_ok;      /* presented picture is a single-player race */
+static int crop_top_rows;     /* rows 0..CROP_TOP-1 covered by window blanking */
+static int crop_bottom_ok;    /* rows h-CROP_BOTTOM..h-1 all empty            */
+static int presented_cropped; /* the last completed picture was cropped      */
+static unsigned crop_frames, crop_withheld;
 static double ratio = 16.0 / 9.0;
 static unsigned word(const unsigned char *p, unsigned a) {
     return (p[a & 65535] << 8) | p[(a + 1) & 65535];
@@ -70,8 +82,14 @@ static int enabled(void) { return mode != 0; }
 static int renderer_enabled(void) {
     return mode != 0 || race60 || tg2_video_get_hide_overscan();
 }
+static int cropped_height(int nh) {
+    return presented_cropped && nh > CROP_BANDS ? nh - CROP_BANDS : nh;
+}
 static int width(int dw, int dh, int nw, int nh) {
-    double w = nh * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
+    /* The canvas follows the presented height: with the empty race bands
+     * cropped, 16:9 at 200 lines is 356 pixels wide instead of 398 at 224. */
+    int h = cropped_height(nh);
+    double w = h * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
     return result < nw ? nw : result;
 }
@@ -105,6 +123,8 @@ void tg2_video_reset(void) {
     memset(history, 0, sizeof history);
     shown = NULL;
     serial = overflow = matched_pieces = margin_pieces = 0;
+    crop_race_ok = crop_top_rows = crop_bottom_ok = presented_cropped = 0;
+    crop_frames = crop_withheld = 0;
 }
 int tg2_video_hook(uint32_t pc) {
     if (!renderer_enabled())
@@ -476,10 +496,33 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
     if (line == 223) fflush(margin_audit);
 }
 static int synthesizing, audit_race_frame;
+/* Only remove a band that is visibly empty in this exact presented picture:
+ * the top rows when the stock window band was blanked, the bottom rows when
+ * every one of their rendered pixels is the empty backdrop. */
+static void note_crop_row(int line, const uint32_t *out, int w);
+static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
+                            uint32_t *out, int w);
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
+    render_scanline(v, line, native, nw, out, w);
+    note_crop_row(line, out, w);
+}
+static void note_crop_row(int line, const uint32_t *out, int w) {
+    if (line < CROP_TOP) return;              /* counted when the band is blanked */
+    if (line < 224 - CROP_BOTTOM) return;
+    if (!crop_race_ok || !crop_bottom_ok) return;
+    for (int x = 0; x < w; ++x)
+        if (out[x] & 0xFFFFFF) { crop_bottom_ok = 0; return; }
+}
+static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
+                     int w) {
     int origin = (w - nw) / 2;
-    if (!line) audit_race_frame = nw == 256 && race(v);
+    if (!line) {
+        audit_race_frame = nw == 256 && race(v);
+        crop_race_ok = audit_race_frame;
+        crop_top_rows = 0;
+        crop_bottom_ok = 1;
+    }
     if (line < 8) {
         memcpy(top_rows[line].reg, v->reg, sizeof top_rows[line].reg);
         memcpy(top_rows[line].vsram, v->vsram, sizeof top_rows[line].vsram);
@@ -496,6 +539,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
      * every output mode, while an inactive window keeps menu rows intact. */
     if (tg2_video_get_hide_overscan() && line < 8 &&
         window_at(v, line, 0) && window_at(v, line, nw - 1)) {
+        ++crop_top_rows;
         if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
         return;
     }
@@ -886,6 +930,24 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     /* Endpoint snapshots must read as real pictures in the audit export. */
     audit_row(line, a, b, row_vdp, (int)hs);
 }
+/* Called by the runner once per completed picture, after every native row was
+ * produced. Cropping is presentation-only: the bands are dropped from what is
+ * shown, so screenshots, hashes and the logical canvas all use the cropped
+ * height, while guest output and the margin audit keep all 224 lines. */
+static int present_window(int native_w, int native_h, int *first, int *last) {
+    int crop = tg2_video_get_hide_overscan() && crop_race_ok && crop_bottom_ok &&
+               crop_top_rows == CROP_TOP && native_h == 224 && native_w >= 256;
+    presented_cropped = crop;
+    if (crop) {
+        *first = CROP_TOP;
+        *last = native_h - CROP_BOTTOM;
+        ++crop_frames;
+    } else if (crop_race_ok) {
+        /* A race picture kept its full height because a band was not empty. */
+        ++crop_withheld;
+    }
+    return crop;
+}
 void tg2_video_command(int id, const char *json) {
     char out[22000];
     int n = snprintf(out, sizeof out,
@@ -893,11 +955,13 @@ void tg2_video_command(int id, const char *json) {
                      "\"published\":%u,\"displayed\":%u,\"pieces\":%u,\"overflow\":%u,"
                      "\"sat_matches\":%u,\"margin_pieces\":%u,\"sprite_margin_pixels\":%u,"
                      "\"hud_edges\":%d,\"hud_plane_pixels\":%u,\"hud_marker_pixels\":%u,"
-                     "\"hide_overscan\":%d",
+                     "\"hide_overscan\":%d,\"crop\":%d,\"crop_frames\":%u,"
+                     "\"crop_withheld\":%u",
                      id, enabled(), wide_lines, native_lines, serial, shown ? shown->serial : 0,
                      shown ? shown->count : 0, overflow, matched_pieces, margin_pieces,
                      frame_margin_pixels, tg2_video_get_hud_mode(), hud_plane_pixels, hud_marker_pixels,
-                     tg2_video_get_hide_overscan());
+                     tg2_video_get_hide_overscan(), presented_cropped, crop_frames,
+                     crop_withheld);
     n += snprintf(out + n, sizeof out - n,
                   ",\"race60\":%d,\"presentation_delay_frames\":%d,\"presentation_frame\":%llu,"
                   "\"from_frame\":%llu,\"to_frame\":%llu,\"phase_num\":%u,\"phase_den\":%u",
@@ -930,4 +994,4 @@ void tg2_video_command(int id, const char *json) {
 }
 const GameVideo tg2_video = {
     .configure = configure, .enabled = enabled, .width = width, .scanline = scanline,
-    .renderer_enabled = renderer_enabled};
+    .renderer_enabled = renderer_enabled, .present_window = present_window};
