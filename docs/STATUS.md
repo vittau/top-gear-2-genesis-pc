@@ -86,7 +86,15 @@ high-resolution rendering) put arbitrary colours in the presented frame, the
 filter must accept any colour. Choose between RGB555-keyed tables, as in
 modern-tyrian (slight gradient quantisation, mostly hidden by the composite
 blur), and direct per-pixel filtering on the CPU or in a GPU shader (exact
-colour, higher cost). Don't key the tables on the Genesis 512-colour palette.
+colour, higher cost). Don't key the tables on the Genesis 512-colour palette. Precomputing at startup is
+cheap for RGB555 (about 16 MiB, a fraction of a second). Finer keys grow fast:
+565 is about 32 MiB, 666 about 128 MiB, and full 888 about 8 GiB, which is not
+feasible. For exact full colour, use the filter's linearity: a pixel's kernel is
+r·K_R + g·K_G + b·K_B, so three base kernels plus a few multiply-adds per tap
+(SIMD) replace the per-colour table. Blargg's gamma and hue adjustments are
+not linear and must be applied separately. Plan: start with RGB555 like
+modern-tyrian, measure banding on the gradient skies, and switch to the
+three-kernel path if needed.
 - Run it on the final presented frame: after widescreen composition and the
   overscan crop, and for the 60 fps synthesized frames too. Then scale to the
   window, with scanlines matched to the output resolution.
