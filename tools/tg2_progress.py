@@ -26,7 +26,7 @@ import sys
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from tg2_runner import Runner  # noqa: E402
+from tg2_runner import Runner, KEYS  # noqa: E402
 from tg2_race_driver import Driver  # noqa: E402
 import tg2_password as pw  # noqa: E402
 from tg2_password_ui import PasswordUI  # noqa: E402
@@ -61,13 +61,47 @@ def manifests(out: Path) -> dict:
     return counts
 
 
+class NitroDriver(Driver):
+    """Race driver that spends the six nitro charges on the straights.
+
+    The stock car's nitro is the C button (`$FF18FA` bit 4). It is used only
+    when the car is already fast and the road is nearly straight, so a boost
+    does not carry the controller's lateral loop into the grass.
+    """
+
+    CHARGES = 6
+
+    def __init__(self, runner, args):
+        super().__init__(runner, args)
+        self.charges = self.CHARGES if getattr(args, 'nitro', False) else 0
+        self.boost_until = 0
+        self.next_boost = 0
+        self.boosts = []
+
+    def control_pad(self, st, prev_lat, args):
+        pad = super().control_pad(st, prev_lat, args)
+        if not self.charges or st.clock == 0 or st.two_p:
+            return pad
+        if st.frame < self.boost_until:
+            return pad | KEYS['C']
+        if (st.frame >= self.next_boost and abs(st.curv) < 250
+                and st.speed > 3600):
+            self.boost_until = st.frame + 90
+            self.next_boost = st.frame + 720
+            self.charges -= 1
+            self.boosts.append(dict(frame=st.frame, speed=st.speed,
+                                    curv=st.curv, charges_left=self.charges))
+            pad |= KEYS['C']
+        return pad
+
+
 def driver_args(a) -> SimpleNamespace:
     """The subset of the race driver's arguments the controller needs."""
     return SimpleNamespace(
         stage_dumps=False, sp_every=0, kp=a.kp, kd=a.kd, kc=a.kc,
         deadband=a.deadband, target_lat=a.target_lat, launch_delay=a.launch_delay,
         periodic_shots=True, post_frames=a.post_frames, post_interval=a.post_interval,
-        drive_frames=30000,
+        drive_frames=30000, nitro=bool(getattr(a, 'nitro', False)),
     )
 
 
@@ -85,6 +119,8 @@ def main():
     p.add_argument('--money', type=int, default=150,
                    help='password money in thousands; with full upgrades the sum stays valid')
     p.add_argument('--no-upgrades', dest='upgrades', action='store_false')
+    p.add_argument('--nitro', action='store_true',
+                   help='spend the six nitro charges on straight, fast stretches')
     p.add_argument('--kp', type=float, default=1.0)
     p.add_argument('--kd', type=float, default=4.0)
     p.add_argument('--kc', type=float, default=0.0)
@@ -121,7 +157,7 @@ def main():
                     fields={k: password[k] for k, _, _ in pw.FIELDS})
     try:
         r.start()
-        d = Driver(r, da)
+        d = NitroDriver(r, da)
         ui = PasswordUI(r, a)
         ui.to_password_screen()
         ui.type_symbols(password['symbols'])
@@ -161,6 +197,13 @@ def main():
             evidence['result'] = 'finished'
         evidence['races'] = races
         evidence['shots'] = d.shots
+        evidence['nitro_boosts'] = d.boosts
+        (a.out / 'trace.csv').write_text(
+            'frame,clock,phase,lap,pos,lat,speed,curv,slope,pad,two_p\n' +
+            '\n'.join(f"{t['frame']},{t['clock']},{t['phase']},{t['lap']},"
+                      f"{t['pos']},{t['lat']},{t['speed']},{t['curv']},"
+                      f"{t['slope']},{t['pad']},{t['two_p']}" for t in d.trace) + '\n')
+        (a.out / 'route.json').write_text(json.dumps(d.route, indent=1) + '\n')
     finally:
         code = r.stop()
         evidence['exit_code'] = code
