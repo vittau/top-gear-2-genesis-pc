@@ -1,0 +1,56 @@
+diff --git a/runner/game_spec.h b/runner/game_spec.h
+--- a/runner/game_spec.h
++++ b/runner/game_spec.h
+@@ -45,6 +45,12 @@
+      * "21:9" or "32:9" enables it. A saved choice, including off, still wins. */
+     const char *video_default;
+     unsigned logical_players;       /* 0 = native two ports; host input/UI capacity */
++    /* Host players live out of the box, before settings.ini: 0/1 keeps the
++     * shared default (player 1 only), 2 also enables player 2's default
++     * bindings (right-hand keyboard set + second gamepad). A saved
++     * [input.pN] device still wins, so an existing settings.ini is untouched
++     * and a single-controller setup keeps one player alive. */
++    unsigned default_players;
+     void (*load_settings)(const char *settings_path);
+     /* Game-owned settings written into the same settings.ini after the
+      * engine's shared sections have been rewritten. Return 1 on success. */
+diff --git a/runner/main.c b/runner/main.c
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -2480,6 +2480,16 @@
+         snprintf(s_data_dir,sizeof s_data_dir,"%s/",user_dir);
+     }
+     input_map_init_defaults();   /* today's mapping; app_config_load may override */
++    /* Games that ship a two-player mode enable player 2's default bindings
++     * here, before settings.ini is read: a saved [input.pN] device (including
++     * "none") still wins, and a single connected controller stays player 1,
++     * because player 2's gamepad source is the second pad only. */
++    if (g_game_spec.default_players > 1) {
++        unsigned n = g_game_spec.default_players;
++        if (n > INPUT_MAX_PLAYERS) n = INPUT_MAX_PLAYERS;
++        for (unsigned p = 1; p < n; ++p)
++            g_input_map.p[p].device = INPUT_DEV_KEYBOARD | INPUT_DEV_GAMEPAD;
++    }
+ #if GENESIS_HAS_RECOMP_NET
+     GenesisNetplayConfig netplay_config;
+     genesis_netplay_config_defaults(&netplay_config);
+@@ -2719,6 +2729,19 @@
+     app_config_load(settings_ini);   /* also seeds g_input_map controller bindings */
+     if (volume_cli >= 0) g_app_config.volume = volume_cli;
+     if (g_game_spec.load_settings) g_game_spec.load_settings(settings_ini);
++    /* Effective player map: one line, so a capture/log proves which devices
++     * are live (a game default or a saved [input.pN] device). */
++    {
++        fprintf(stderr, "[input]");
++        for (int p = 0; p < INPUT_MAX_PLAYERS; ++p) {
++            int d = g_input_map.p[p].device;
++            if (!d) continue;
++            fprintf(stderr, " p%d=%s%s", p + 1,
++                    (d & INPUT_DEV_KEYBOARD) ? "keyboard" : "",
++                    (d & INPUT_DEV_GAMEPAD) ? ((d & INPUT_DEV_KEYBOARD) ? "+gamepad" : "gamepad") : "");
++        }
++        fprintf(stderr, "\n");
++    }
+ #if GENESIS_HAS_RECOMP_NET && RECOMP_LAUNCHER
+     {
+         /* Content identity for the lobby: the ROM's SHA-256, when a ROM is

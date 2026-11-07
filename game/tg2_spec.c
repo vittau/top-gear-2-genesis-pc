@@ -132,6 +132,10 @@ static void tg2_hblank(void) { recomp_call_addr(0xFFF9FEu); }
 const GameSpec g_game_spec = {
     .video = &tg2_video,
     .video_default = "fit",
+    /* Top Gear 2 has a two-player mode; player 2's default bindings (IJKL,
+     * M/N/comma, right Shift = Start, second gamepad) are live from a fresh
+     * install. A saved settings.ini keeps whatever device it recorded. */
+    .default_players = 2,
     .load_settings = tg2_options_load,
     .save_settings = tg2_options_save,
     .runtime_ui_items = tg2_options_runtime_items,
