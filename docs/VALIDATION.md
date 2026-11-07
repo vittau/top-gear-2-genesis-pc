@@ -885,3 +885,47 @@ instruction's stack delta from the ROM with capstone and fails on a missing or
 wrong `_sp_popped` line. Removing the `$740C` accounting line from a copy of the
 generated tree makes it report exactly
 `$00740C add.w (a7)+, d0: expected delta +2, generated +0` (exit 1).
+
+## Quickstate feedback and the menu-dismiss input leak (2026-11-07)
+
+Owner report on macOS: choosing "Save state" in the in-game (Esc) menu with
+Enter wrote no file, and there was no visible confirmation of a save or load.
+
+Cause 1 — the key that accepts the menu row also reached the game. The owner's
+feedback replay (`TG2-feedback.replay`) writes `W` at frame 14690 and the very
+next input line is `I 14690 80`: Genesis START (0x80), which the owner never
+pressed for the game. `input_set_gameplay_blocked(0)` ran on the frame Enter
+closed the menu, and `SDL_GetKeyboardState` still reported Enter (= START).
+
+Fix: engine patch 0022 latches every button and pad button held at the moment
+gameplay capture ends and suppresses it until released.
+
+Cause 2 — the only feedback was the window title, invisible in fullscreen and
+on a Deck. Engine patch 0023 draws a 2.5 s notice at the top-left of the
+presented picture (`STATE SAVED TO SLOT N`, `STATE LOADED FROM SLOT N`,
+`SAVING STATE...`, `SAVE UNAVAILABLE HERE`, `LOAD REJECTED...`), using the
+in-game menu's own 5x7 glyph cell and its light text colour over a dim panel.
+It is presentation only: the guest framebuffer, `--hash-frames`, replays and
+the normal `screenshot` capture are unchanged; `screenshot` with
+`"presented":1` captures the composited window.
+
+Evidence (`tools/tg2_state_notice_probe.py`, dev build, TCP-driven real menu):
+
+| Check | Before 0022 | After 0022 + 0023 |
+|---|---|---|
+| pad mask on the frame Enter closed the menu (`pad`) | 128 (START) | 0 |
+| state written by the menu save row in a race | yes (see note) | yes, `native_save_1.bin`, 165 523 B |
+| notice in the presented picture | none (title only) | `docs/images/state-notice-4x3-save.png`, `docs/images/state-notice-4x3-load.png` (full set in `build/evidence/state-notice/final-4x3/`) |
+| same notice, 16:9 | — | `docs/images/state-notice-16x9-save.png`, `docs/images/state-notice-16x9-load.png` (full set in `build/evidence/state-notice/final-16x9/`) |
+| notice absent from the guest frame | — | `final-4x3/save-guest.png` (256x200, no overlay) |
+| save refused on a screen with no boundary (password entry) | title only | `SAVE UNAVAILABLE HERE` (`final-4x3/refusal.png`) |
+| load of an empty slot | title only | `LOAD REJECTED: SLOT 1` (`final-4x3/load-rejected.png`) |
+| Off-mode frame 60 / 300 | — | `2A0B972960C5E325` / `1131D937D70234FD` (unchanged) |
+| manifests (`tools/tg2_runner.manifest_counts`) | — | 0 / 0 / 0 / 0 |
+
+Note: the leaked START does reach the race, but on this build the game's PAUSE
+screen still runs the race loop's boundary (`$65F2`), so a save requested while
+paused does complete. The refusal *is* reproducible on a screen without a
+resume site (password entry), and the owner's no-file session is consistent
+with that refusal path; the notice now makes any such outcome visible instead
+of silent.
