@@ -16,10 +16,12 @@ import argparse
 import json
 from pathlib import Path
 
-# Window-plane artefacts that the stock top band shows (palette 0 entries 8, 3
-# and 7, see docs/WIDESCREEN.md "Native red/orange top band"), confined to
-# native columns 16..31.
-WINDOW_MARKS = {(206, 0, 0), (206, 87, 49), (87, 87, 87)}
+# The stock top band is the VDP window plane: black apart from the pattern-0
+# marks at name-table columns 2..3, i.e. native columns 16..31 (see
+# docs/WIDESCREEN.md "Native red/orange top band"). The mark *colours* come
+# from palette 0 entries 8/3/7 and therefore change with each track's palette
+# (red/orange on Auckland, grey/pink on Loch Ness, dark red at night), so the
+# classifier keys on the fixed columns, not on a colour list.
 WINDOW_COLUMNS = (16, 31)
 BLACK = (0, 0, 0)
 
@@ -39,7 +41,7 @@ def check(path: Path, top: int = 8, bottom: int = 16):
             if colour == BLACK:
                 continue
             empty = False
-            if colour in WINDOW_MARKS and WINDOW_COLUMNS[0] <= x <= WINDOW_COLUMNS[1]:
+            if WINDOW_COLUMNS[0] <= x <= WINDOW_COLUMNS[1]:
                 marks.append((x, y))
                 continue
             window = False

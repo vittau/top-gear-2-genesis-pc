@@ -72,6 +72,11 @@ def main():
     p.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
     p.add_argument('--seconds', type=float, default=15.0)
     p.add_argument('--extras', default='', help='nitro,pause')
+    p.add_argument('--widescreen', default='off',
+                   help='presentation to capture; the crop evidence uses off on '
+                        'purpose, 16:9/21:9 prove the cropped canvas')
+    p.add_argument('--hide-overscan', default='0',
+                   help='TG2_HIDE_OVERSCAN for the capture (1 = cropped picture)')
     p.add_argument('--nitro-at', type=int, default=600)
     a = p.parse_args()
     extras = {x.strip() for x in a.extras.split(',') if x.strip()}
@@ -80,9 +85,10 @@ def main():
     args = SimpleNamespace(nitro=False, nitro_at=a.nitro_at, nitro_for=120,
                            shot_every=600, kp=1.0, kd=4.0, kc=0.0, deadband=9.0,
                            target_lat=0.0)
-    r = Runner(port=a.port, out=out, exe=a.exe, rom=a.rom, widescreen='off',
-               max_frames=200000,
-               env_extra={'TG2_HIDE_OVERSCAN': '0', 'TG2_RACE_60FPS': '0'},
+    r = Runner(port=a.port, out=out, exe=a.exe, rom=a.rom,
+               widescreen=a.widescreen, max_frames=200000,
+               env_extra={'TG2_HIDE_OVERSCAN': a.hide_overscan,
+                          'TG2_RACE_60FPS': '0'},
                extra_args=['--turbo'])
     shots, result, meta = [], 'error', {}
     try:
