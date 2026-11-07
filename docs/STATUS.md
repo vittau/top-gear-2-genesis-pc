@@ -58,6 +58,21 @@ option; with it off, the picture stays byte-identical. A worker should first
 answer how the sky is drawn today: the backdrop colour or background-layer
 tiles, and whether raster palette changes already occur.
 
+**Enhancement idea for after 0.1.0 (owner, 2026-11-06): arbitrary car colours.**
+An HSL picker in the options menu (Esc), instead of the game's fixed colour
+choice, and not limited to the Genesis 512-colour palette. Recolour at
+render time in our renderer; the simulation and RAM are untouched, and with it
+off the picture stays byte-identical. First find out:
+- which palette line and entries the player car's body uses;
+- whether those entries are shared with opponents, the HUD car icon or the
+  scenery.
+
+Recolour only the player car's sprite pieces, using the sprite capture,
+shifting hue and saturation and scaling lightness to keep the shading. Cover
+P1 and P2 in split screen, the HUD car icon, and the menu, shop and results
+car images. Persist the colours per player in `settings.ini`. The game's own
+colour menu choice stays the default.
+
 ## Still in progress
 
 | Task | Worktree | State |
