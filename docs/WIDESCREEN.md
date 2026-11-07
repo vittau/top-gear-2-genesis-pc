@@ -111,9 +111,11 @@ Object activation, collision and the object pool are untouched — this widens
   runner's 320-pixel minimum logical width and the 4096-pixel resource bound.
 
 A 224-line 16:9 frame requests 398 pixels (71 extra per side) and 21:9
-requests 523 (133/134 per side). Adaptive at a 1600×900 window gives 398, at
-1234×567 gives 488, at 1000×1000 gives 320 (the runner minimum), at 3840×720
-gives 1195.
+requests 523 (133/134 per side). With the overscan crop the same ratios at the
+presented 200 lines ask for 356 and 467 (50/50 and 105/106). Adaptive at a
+1600×900 window gives 356, at 1234×567 gives 435, at 1000×1000 gives 320 (the
+runner minimum), at 3840×720 gives 1067; with the crop off the same windows
+give 398 / 488 / 320 / 1195.
 
 Title, menus and shop screens are H40 (320×224) and are left at their native
 size, centred with pillarbox bars. Split-screen is detected with the 2P flag
@@ -177,23 +179,54 @@ cluster, sampling the displayed SAT and current patterns on every scanline.
 There are no guest RAM/VRAM writes, new function seeds or engine changes.
 `tg2_video` reports `hud_edges`, `hud_plane_pixels` and `hud_marker_pixels`.
 
-## Hide overscan
+## Hide overscan (crop)
 
-The stock top eight rows are the VDP window plane: solid black except for the
-red/orange pattern-0 marks at native x=16..31 (see
-[Native red/orange top band](#native-redorange-top-band)). A CRT hid that band
-in overscan; on a modern display it is visible above the HUD.
+Every TG2 race picture uses only native lines **8..207**. Rows 0..7 are the VDP
+window plane: solid black except for the stock red/orange pattern-0 marks at
+native x=16..31 (see [Native red/orange top band](#native-redorange-top-band)).
+Rows 208..223 are the bare backdrop. A CRT hid both bands in overscan; on a
+modern display they showed as bars above and below the picture.
 
-**Hide overscan** (default **On**) blanks the active top window band rows in
-every mode, including widescreen Off. It is a presentation option only: guest
-RAM, VRAM, CRAM and simulation are untouched, and an inactive window (menus)
-keeps its rows. With it Off the image is byte-identical to before the option
-existed.
+**Hide overscan** (default **On**) therefore *crops* them: the presented race
+picture is 200 lines tall instead of 224, and the canvas height follows.
+
+| Mode | Hide overscan Off (stock) | Hide overscan On |
+|---|---|---|
+| widescreen Off | 256 × 224 | **256 × 200** |
+| 16:9 | 398 × 224 | **356 × 200** |
+| 21:9 | 523 × 224 | **467 × 200** |
+| Adaptive | window aspect × 224 | window aspect × 200 (1600×900 → 356, 1234×567 → 435, 1000×1000 → 320, 3840×720 → 1067) |
+
+The canvas width is computed from the *cropped* height, so a 16:9 window shows
+a true 16:9 356 × 200 picture with no letterbox bars. The OS window never
+resizes when a race starts or ends; only the logical canvas changes, and menus
+keep today's 398 × 224 canvas (a race frame is 356 × 200, so a boundary frame
+may differ for one frame — no picture content is ever clipped).
+
+**Nothing is assumed about the bands.** A frame is cropped only when that exact
+frame earns it:
+
+- the picture is a single-player race (the widescreen qualifier: H32, no
+  interlace, race plane bases, a race H-int program, 2P flag clear);
+- all eight top rows were blanked by the stock window band;
+- all sixteen bottom rows, as actually rendered (margins included), are empty,
+  i.e. nothing but the backdrop.
+
+A picture that draws into either band keeps its full 224 lines, so no visible
+content can be removed. Menus, the shop, results, split-screen and every other
+non-race screen are unchanged: pillarboxed and letterboxed exactly as before,
+and split-screen keeps 256 × 224 by the qualifier. `tg2_video` reports `crop`,
+`crop_frames` and `crop_withheld` (race pictures that kept their height).
+
+The engine seam is patch **0011**: `GameVideo.present_window()` is called once
+per completed frame, after every row was produced, so the provider decides from
+that frame's actual pixels. The runner then shifts rows `[first,last)` to the
+top of the framebuffer *before* any screenshot, hash, overlay composite or
+upload. Guest output, the 60 fps picture history, per-row captures and the
+margin CSV still see all 224 native lines; only presentation geometry changes.
 
 The option is a normal `[mods.*]` boolean, offered by the launcher's Mods page
-and the in-game recomp-ui overlay and persisted next to the executable
-(`build/task13/options/`: launcher detail, overlay row, and the overlay after
-toggling it Off, which writes `hidden = 0`):
+and the in-game recomp-ui overlay and persisted next to the executable:
 
 ```ini
 [mods.overscan]
@@ -201,27 +234,46 @@ hidden = 1
 ```
 
 `TG2_HIDE_OVERSCAN=0|1` is a probe-only override and is never persisted.
-`tg2_video` reports `hide_overscan` in its status JSON.
+`tg2_video` reports `hide_overscan` in its status JSON. Its option text (both
+UIs) describes the crop, not only the blanking.
 
-Measured at race frame 3300: with Hide overscan Off the 4:3 image shows the
-stock red marks at x=16..31, rows 0..7; with it On those 56 pixels are black.
-The 16:9 image is identical at x=87..102 (the 71-pixel origin) and shows the
-same result. **No other pixel changes**; the difference bounding box is exactly
-the mark area. Crops: `build/task13/overscan/crop-{4-3,16-9}.png`, full frames
-alongside them. With all options off (widescreen Off, 60 fps Off, Hide overscan
-Off) the stock hashes still pass: frame 60 `2A0B972960C5E325`, frame 300
-`1131D937D70234FD` (`build/task13/hashes.txt`).
+### Why the crop is safe: the active-line evidence
+
+`tools/check_active_lines.py` classifies every presented row as *picture*
+(any colour that is not black or one of the three stock window-mark colours:
+red `$E0`-ladder 206/0/0, orange 206/87/49 and grey 87/87/87, all confined to
+native columns 16..31), *window* (black plus those exact marks) or *empty*
+(all black). A capture whose top band holds nothing but those marks is a race
+picture — exactly the picture the crop removes. Every capture below is a stock
+picture: widescreen Off, 60 fps Off and Hide overscan Off, so all 224 lines are
+visible.
+
+`tools/tg2_active_lines.py` reaches a track through the game's own password
+screen, then captures the countdown, the first seconds, cruising, a nitro
+burst and both pause screens. Results per country are in
+`build/crop/active/` and summarised below (evidence table under
+[Measured crop evidence](#measured-crop-evidence)).
+
+### HUD placement with the crop
+
+The crop changes only which rows are presented; every renderer coordinate stays
+native. Margins, sprite capture and the HUD relocation therefore keep working
+row by row: the HUD rows (native 14..94) are simply the top of the presented
+picture.
+Centered and Edges both keep their documented anchoring (Edges moves the two
+clusters by the margin, which is now computed from the 200-line height:
+50/50 at 16:9, 105/106 at 21:9).
 
 ## Off-mode guarantees
 
 With `--widescreen off` and Hide overscan Off, the provider's width and row
 callbacks are never entered: `game_video_prepare_frame` leaves the frame
-unowned and the runner presents the native image. With Hide overscan On the
-provider owns the rows only to blank the active top window band; every other
-row is the native one, and the width stays native. The measured stock hashes
-are unchanged (frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`) both
-with Hide overscan Off and On, because those boot/menu frames have no active
-top window.
+unowned and the runner presents the native 256 × 224 image. With Hide overscan
+On the provider owns the rows to blank the active top window band and to crop
+the two bands; the width stays native and the presented picture is 256 × 200.
+The measured stock hashes are unchanged (frame 60 `2A0B972960C5E325`, frame 300
+`1131D937D70234FD`) both with Hide overscan Off and On, because those
+boot/menu frames have no active top window and are never cropped.
 
 For the widened modes with HUD: Centered the native centre is copied from
 the original row after the margins are filled, so the canonical RAM, VRAM and native-centre pixels are
@@ -237,9 +289,9 @@ Produced by `tools/verify_widescreen.py --port 4400 --modes off,16:9,21:9`
 | Check | Result |
 |---|---|
 | Off frame hashes | frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` |
-| Race screenshots | `frame-2800.png`, `frame-3300.png`, `frame-4501.png` in each mode (16:9 = 398×224, 21:9 = 523×224, Off = 256×224) |
+| Race screenshots | `frame-2800.png`, `frame-3300.png`, `frame-4501.png` in each mode (16:9 = 398×224, 21:9 = 523×224, Off = 256×224; with the overscan crop on, 356×200 / 467×200 / 256×200) |
 | Menus | `frame-600.png`, `frame-1350.png`: 320-pixel native image centred with bars |
-| Adaptive widths | 398 / 488 / 320 / 1195 from 1600×900 / 1234×567 / 1000×1000 / 3840×720, 256 after a live switch to Off (`adaptive-*.png`) |
+| Adaptive widths | 398 / 488 / 320 / 1195 at 224 lines, 356 / 435 / 320 / 1067 at the cropped 200 lines, 256 after a live switch to Off (`adaptive-*.png`) |
 | Sprite capture | up to 29 captured pieces per scene, up to 6 pieces reaching a margin, up to 1982 margin sprite pixels in a frame, 0 overflow; every captured scene matched live SAT bytes |
 | Canonical state | RAM and VRAM dumps identical to Off at 600, 1350, 2800, 3300, 4501 |
 | Native centre | pixel-identical to Off at the same frames |
@@ -250,6 +302,72 @@ Produced by `tools/verify_widescreen.py --port 4400 --modes off,16:9,21:9`
 right boundary and a tree in the left margin, and `21-9/margin-3221.png` shows
 the same car wholly inside the right margin with the tree further out in the
 left margin.
+
+### Measured crop evidence
+
+All captures below are private artifacts under `build/crop/` (not in git). The
+pre-change runs are in `before/`, the shipping behaviour in `after/`.
+
+| Check | Result |
+|---|---|
+| 16:9 race pictures | `after/16-9-on/16-9/frame-{2800,3300,4501}.png` are **356 × 200**; their native 256-pixel centre is byte-identical to rows 8..207 of the 398 × 224 pre-change captures (0 pixel differences) |
+| 21:9 race pictures | `after/21-9-on/21-9/frame-{2800,3300,4501}.png` are **467 × 200** |
+| Off race pictures | `after/off-on/off/frame-{2800,3300,4501}.png` are **256 × 200** |
+| Menus | 398 × 224 (16:9), 523 × 224 (21:9), 320 × 224 (Off) at frames 600 and 1350, byte-identical to the pre-change captures |
+| Stock picture with the option Off | `after/*-off/` are still 224 lines and byte-identical to `before/*-off/` at every comparison frame |
+| Off hashes | frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` in `after/off-on/off/stderr.log` |
+| Active lines | 16 tracks, 279 captures, 181 race pictures: every one uses rows 8..207 with an empty bottom band |
+| Margin audit | `margins/{16-9,21-9,16-9-60}/summary.json`: 2933 frames, 1,313,984 samples, rows 0..223 complete, 0 black-gap, 0 ground-colour, 0 band-colour and 0 brief-backdrop violations in each |
+| 60 fps synthesized pictures | `after/16-9-60/16-9/frame-4510.png` .. `frame-4515.png`: every one **356 × 200** with content on rows 0..199 (no band, no flash); road audit 2503 frames / 1511 synthesized pictures / 83,732 road lines / 0 violations |
+| Split-screen | `split/on/summary.json`: all 32 pictures 224 lines (never cropped) during 3115 two-player frames; 6 of them draw into rows 208..223 (the second viewport's HUD), which is why 2P is excluded from the crop |
+| Road artifacts | `road/road-artifacts.json`: `passed`, 0 violations |
+| Manifests | 0 entries after every run |
+
+Active-line evidence, produced by `tools/tg2_active_lines.py` (password route
+into each of the 16 tracks, `--extras nitro,pause` on the baseline track) and
+classified by `tools/check_active_lines.py`; the table is regenerated by
+`tools/summarize_active_lines.py 'build/crop/active/*/summary.json'`:
+
+| Track | pictures | race pictures | situations captured | race picture rows | band failures |
+|---|---:|---:|---|---|---:|
+| 0 Australasia/Auckland — sun | 24 | 18 | cruise, nitro, pause, pre-race panels/countdown, race start, resume | 8..207 | 0 |
+| 1 Britain/Loch Ness — overcast | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 2 Canada/Banff — sun+cloud | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 3 Egypt/Abu Simbel — sun | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 4 France/Bordeaux — sun | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 5 Germany/Bavaria — rain | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 6 Greece/Athens — night | 17 | 10 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 7 India/Amber Port — sun | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 8 Ireland/Dublin — overcast | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 9 Italy/Florence — sun | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 10 Japan/Hiroshima — sun | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 11 Scandinavia/Copenhagen — dusk | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 12 South America/Chile — dusk | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 13 Spain/Andalucia — overcast | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 14 Switzerland/Geneva — snow | 17 | 11 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+| 15 USA/Las Vegas — night | 17 | 10 | cruise, pre-race panels/countdown, race start | 8..207 | 0 |
+
+The capture list per track: `start/countdown` covers the pre-race panels and
+the countdown itself (the race picture is already on screen with the clock at
+zero), `cruise` is sampled every 240 frames. Auckland additionally ran the
+nitro burst (C held for two seconds) and both pause screens (`START`, the pause
+text, `START` again). Every race picture on every track — rain, overcast,
+night, dusk, snow — has the same active range **8..207** and an empty bottom
+band; the top band held only the stock window marks at native columns 16..31. The mark *colours* differ per track's palette (red/orange on Auckland,
+grey/pink on Loch Ness, dark red at night), which is why the classifier keys on
+the fixed mark columns rather than a colour list.
+
+The finish, podium/results and next-race screens are covered by
+`build/crop/flow/full/` (`tools/tg2_race_driver.py --races 1
+--periodic-shots`, full 224-line captures): every race picture there keeps the
+8..207 active range, and the results/shop screens are non-race pictures that
+are never cropped.
+
+Everything above is re-read from disk by
+`tools/verify_crop_evidence.py --root build/crop --out build/crop/evidence.json`,
+which fails if a cropped picture is not 200 lines, if a removed band carries
+content, if an Off capture changed, if a menu changed, or if a margin/road
+audit or a manifest is not clean.
 
 ## HUD validation
 
@@ -281,6 +399,45 @@ The first comparison exposed a one-row change in the top black band because
 our sampler found HUD pattern IDs in plane A behind the active window.
 Requiring the HUD's signed-negative V-scroll phase fixes that classification without a fixed
 screen rectangle; the corrected captures preserve those top rows exactly.
+
+### Map and markers stay together (sprite-phase HUD)
+
+The baseline route showed the track map separated from its `1ST`/`1P` markers
+for about three seconds (frames **3409..3585**): the map stayed at its native
+position while the markers moved out to the right margin.
+
+`tools/tg2_hud_diag.py` records the per-scanline raster state that the Edges
+relocation depends on. At those frames `hud_plane_pixels` dropped to **0**
+while `hud_marker_pixels` stayed at 234, and plane A's V-scroll for the HUD
+rows was a **road ramp** (`Va = 112 - line`) instead of `-14`. A read-only
+VRAM/SAT dump at frame 3480 explains both: on those frames the game takes the
+whole instrument cluster **off plane A and draws it as sprites** — eight
+32-pixel sprites with pattern IDs `$04..$7D` (the same IDs the plane-A cells
+use) plus the two marker sprites. The Edges relocation only knew about plane-A
+cells and the two markers, so the instruments stayed native.
+
+Two changes fix it:
+
+- the sprite walk classifies any high-priority instrument-pattern sprite with
+  the same left/right cluster rule as plane-A cells, relocating it with the
+  cluster and recomposing the vacated native pixels exactly as the markers
+  already did. Ordinary scenery sprites (`$095`, `$0CE`, cars with other IDs)
+  keep their native position; `tg2_video` reports `hud_sprite_pixels`.
+- plane-A relocation is gated on the **window** (what actually hides plane A)
+  instead of the V-scroll sign, so the other HUD raster phase is relocated too.
+
+`tools/verify_hud_map.py` is the automated proof: it replays the same route
+frames twice — stock `Off` for the native reference, and the widescreen mode
+with HUD Edges — and measures the yellow map outline and the orange `1P` label
+in both. Both boxes must be exactly `native + (origin + right)`, and the
+markers must keep their displacement from the map. With this fix the sweep
+(46 frames, every 60 from 2600 to 5300) passes with **0 failures in 16:9 and
+21:9** (`build/crop/hudmap/{16-9,21-9}/summary.json`); the pre-fix renderer
+fails frame 3480 ("no map at offset 142") and nothing else
+(`build/crop/diag/hudmap-before/summary.json`), and the fixed build passes that
+exact frame (`build/crop/diag/hudmap-3480-fixed/summary.json`). The per-scanline
+evidence is in `build/crop/diag/hud-dump/diag.json` (V-scroll ramp, SAR dump at
+frame 3480).
 
 The options-page row is intentionally left for integration with task 06:
 that plumbing was not yet in `origin/main` when this branch was completed.
@@ -554,18 +711,31 @@ host-only; no guest write or new hook was added.
   image instead of shrinking to it.
 - **The skyline panorama wraps.** It is an authored repeating background; its
   wrap is retained rather than synthesised.
-- The game's own black bottom rows remain native pixels. HUD: Edges samples
-  each row's live raster state; the existing non-HUD plane-A limitations remain.
+- **The race's black bands are cropped, not filled.** With Hide overscan On the
+  eight top and sixteen bottom lines are removed from the presented picture
+  (200 lines). Off keeps the stock 224-line picture including the top band.
+  Nothing is synthesised into them.
+- HUD: Edges samples each row's live raster state; the existing non-HUD
+  plane-A limitations remain.
 
 ## Still untested
 
-The route covers the first track, dry daylight, single player, one car and
-partial throttle. Not covered: other tracks (their plane-B atlas layouts may
-differ), rain and night, the finish/podium sequence, attract mode, full-race
-completion, split-screen 2P (intentionally left 4:3), LM/head-to-head,
+The widescreen margin work covers the first track, dry daylight, single player,
+one car and partial throttle. Not covered here: the plane-B atlas layouts of
+the other 15 tracks in the margins, attract mode, LM/head-to-head,
 controller-only launcher operation, Windows/macOS/Steam Deck builds, and
 physical display/audio. Network session configuration was not part of this
 work.
+
+The **crop** is qualified on all 16 tracks (password route: rain, night, fog,
+snow, dusk), race start countdown, cruise, nitro, both pause screens, the
+finish/results flow and 2P split-screen; see
+[Measured crop evidence](#measured-crop-evidence). A situation not in that
+list is still safe by construction: a picture that draws into either band is
+never cropped (`crop_withheld`).
+
+Split-screen remains intentionally 4:3 and uncropped: the two views use the
+whole 224-line frame.
 
 ## Reproduction
 

@@ -27,6 +27,12 @@ writes, no save states, no generated-code edits.
 | `tools/tg2_coverage_batch.py` | the 16-track × 2-mode matrix, one process per cell |
 | `tools/tg2_margin_audit.py` | widescreen seam statistics + per-run contact sheets |
 | `tools/tg2_nitro_compare.py` | same-route nitro A/B speed measurement |
+| `tools/tg2_active_lines.py` | password route into a track, captures countdown/nitro/pause/cruise, reports which scanlines carry content |
+| `tools/check_active_lines.py` | classifies every row of a capture as picture / stock window band / empty |
+| `tools/summarize_active_lines.py` | active-line evidence table across runs, re-measuring every capture |
+| `tools/verify_hud_map.py` | HUD Edges map-vs-marker alignment: native and Edges captures of the same route frames, bounding boxes compared |
+| `tools/tg2_hud_diag.py` | per-scanline raster state + exact-frame VRAM dumps for HUD investigations |
+| `tools/verify_crop_evidence.py` | re-reads a crop evidence tree (sizes, bands, stock parity, menus, audits) without launching the game |
 
 Driver mechanics (why the comparison is trustworthy):
 

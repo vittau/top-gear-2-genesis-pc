@@ -92,10 +92,12 @@ static const Tg2Option s_options[] = {
       tg2_video_set_hud_mode },
     { "overscan", "mods.overscan", "hidden",
       "Hide overscan", "Hide overscan", "Presentation",
-      "Blanks the eight-row window band at the top of the race screen, the "
-      "area a CRT hid in overscan. Presentation only; the simulation and "
-      "every other scanline are unchanged. Off shows the stock band.",
-      "Hidden", "Shown",
+      "Crops the empty bands a CRT hid in overscan: the eight-row window band at "
+      "the top of the race screen and the sixteen blank bottom lines, so the "
+      "picture fills the window. Menus, split-screen and any picture that draws "
+      "into those lines keep their full height. Presentation only; the "
+      "simulation is unchanged. Off shows the stock bands.",
+      "Cropped", "Shown",
       1, &s_hide_overscan, TG2_OPT_BOOL, NULL, NULL, 0,
       tg2_video_set_hide_overscan },
     { "racesound", "mods.racesound", "mode",
@@ -323,9 +325,11 @@ static const RecompRuntimeUiItem s_runtime_items[] = {
       "Only meaningful while widescreen is on.",
       RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, s_hud_labels, 2, NULL },
     { "mods.overscan.hidden", "Mods", "Hide overscan",
-      "Blanks the eight-row window band at the top of the race screen, the "
-      "area a CRT hid in overscan. Presentation only; the simulation and "
-      "every other scanline are unchanged. Off shows the stock band.",
+      "Crops the empty bands a CRT hid in overscan: the eight-row window band at "
+      "the top of the race screen and the sixteen blank bottom lines, so the "
+      "picture fills the window. Menus, split-screen and any picture that draws "
+      "into those lines keep their full height. Presentation only; the "
+      "simulation is unchanged. Off shows the stock bands.",
       RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
     { "mods.racesound.mode", "Sound", "RACE SOUND",
       "Stock Top Gear 2 races play either music or sound effects. Both runs "
