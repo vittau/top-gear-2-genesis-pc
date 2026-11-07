@@ -71,6 +71,24 @@ option; with it off, the picture stays byte-identical. A worker should first
 answer how the sky is drawn today: the backdrop colour or background-layer
 tiles, and whether raster palette changes already occur.
 
+**Enhancement idea for after 0.1.0 (owner, 2026-11-07): high-resolution rendering.**
+Render races above 224p in our renderer. This would also give the
+"Internal resolution" option a real meaning; today it is a no-op for TG2.
+- **Road:** redraw the road from the game's own per-line parameters (curve,
+  hill, scale and stripe phase) at N× resolution, instead of upscaling the
+  224-line raster. Sub-line interpolation also helps the 60 fps frames.
+- **Sprite LOD:** the game picks smaller, lower-detail sprite variants with
+  distance (trees, signs, cars). Map each object's LOD set, then always draw the
+  most detailed variant, scaled to the on-screen size with good filtering, at
+  the higher render resolution, with sub-pixel positions.
+- **Background and HUD:** scale the background layers cleanly; keep the HUD
+  sharp.
+
+It uses the same assets, only better, which fits the owner's rule on foreign
+assets. Make it an option; at 1× with it off, the output stays byte-identical.
+First steps: map the LOD tables (pattern sets per object and distance
+thresholds), and find which per-line road state is enough to re-rasterise.
+
 **Enhancement idea for after 0.1.0 (owner, 2026-11-07): cheats in the menu.**
 An easy "Cheats" page in the in-game menu (Esc): pick the circuit (any of the
 64 races) and set the money (and the car upgrades, if cheap). Preferred
