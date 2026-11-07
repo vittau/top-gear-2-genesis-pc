@@ -296,11 +296,27 @@ for what that costs (the car's PCM sample player).
 
 `tg2_frame_post()` no longer depends on a button press: it reads the menu
 controller's page index (`$FF2554 == 4`, the RACE SOUND page) every frame and,
-while BOTH is the choice, forces the page value to 1 and repaints the row. The
-page's entry path reloads its value from `$FF240E`, which can only be 0/1, so a
-re-entered page used to redraw "MUSIC" and stay there. Now the page always shows
-the current host choice, whichever route entered it — including after backing
-out to the main menu and re-entering SOUND → RACE SOUND (PNG below).
+while BOTH is the choice, repaints the value row as "BOTH". The page's entry
+path (`$01ED2C`, reached from `$01EACA`) loads its whole profile — the state
+counter `A4+$18`, a second field and the value `A4+$0C` — and the value comes
+from `$FF240E`, which only holds the cartridge's 0/1 and is written by the menu
+teardown alone. So the entry read is hooked (`$01ED3A`, restored at the page's
+RTS `$01ED40`): the instruction sees the session's choice, the page builds its
+own row and palette in stock state (MUSIC for BOTH), and the frame hook only
+replaces the row pixels. This also fixes MUSIC and SOUND EFFECTS: both used to
+show SOUND EFFECTS on the first visit, because the boot word is 0 while the
+player's choice lives in the host.
+
+The old approach wrote the page value, `+$02` (redraw counter) and `A4+$18`
+from `tg2_frame_post()` once the page index was already 4. Writing `+$18` — the
+page profile's *initialisation step counter* — after the page had started
+initialising skipped its CRAM upload: the first open of the page was entirely
+black (palette 3 all zero, sprites and header invisible), and the next open
+found the tiles of a half-built "SOUND EFFECTS" row and drew mismatched glyphs.
+That is the owner's report on `e586c00`. The hook above avoids the write
+entirely. `tools/verify_sound_page.py` opens, cycles and re-opens the page in
+every mode from a fresh directory and from the owner's `settings.ini`, and
+requires every page picture to match the stock reference (PNG below).
 
 ### Persistence
 
@@ -566,6 +582,15 @@ The page after backing out to the main menu and re-entering SOUND → RACE SOUND
 with BOTH selected — the reported bug ("going back shows MUSIC") is gone:
 
 ![RACE SOUND page re-entered with BOTH selected](images/audio-sound-menu-both-reenter.png)
+
+The first open after boot is the case the owner reported (an empty page, then a
+garbled one). The entry hook builds every mode's page in stock state; the strip
+below is the cold first open of four fresh processes (stock SOUND EFFECTS,
+stock MUSIC, the owner's `settings.ini` with BOTH persisted, and an empty
+runtime directory):
+
+![Cold first open of the RACE SOUND page in each mode](images/audio-sound-menu-first-open.png)
+
 
 ### The menu page
 

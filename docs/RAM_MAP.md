@@ -59,6 +59,9 @@ Controller evidence from ROM `$00D7A6..00D872`:
 | `$FF240E` | word | Race sound mode; `0`=SOUND EFFECTS, `1`=MUSIC; A3-relative `-$5FFA` | Readers `$0048E2`, `$006530`, `$023062`, `$02503A`, `$02504A`, `$025088`, `$0250E2`, `$02511C`, `$025200`, `$02523A`, `$02529A`, `$0252CC`, `$01ED3A`, `$001FBE`; writers `$01ED60`, `$002104`, `$001FC2`, `$001FF4` |
 | `$FF2554` | struct | Menu controller object; RACE SOUND page uses `A4+$0C` | Handler `$01F0D4`, enter/leave `$01ED3A/$01ED60` |
 | `$FF2560` | word | RACE SOUND page value word (`A4+$0C`): 0=SFX, 1=MUSIC | `$01F0D4`; runtime diff at the page |
+| `$FF2567` | byte | Front-end player-count flag: 0 = "1P GAME", 1 = "2P GAME" | RAM diff at the options row while START toggles it; the cartridge has no SRAM, so it is a per-session value |
+| `$FF256C` | word | Page profile initialisation step counter (`A4+$18`), loaded at `$01ED2C` and consumed by the page init | Writing it from a host hook after entry skips the page's CRAM upload (task 26) |
+| `$01ED2C` | routine | Page profile loader: `A4+$18` from a table, `A4+$06`, and the RACE SOUND value `A4+$0C` from `$FF240E` at `$01ED3A` | Reached from `$01EACA`; the port presents the session sound choice for that one instruction |
 | `$FF8622` | struct | 68k PSG SFX engine state base | `$0253EE` loads A4 here; `$070008/$070014` |
 | `$FF862E` | struct | 68k FM SFX engine state base | `$0253EE` loads A4 here; `$070018/$07001C` |
 | `$FF16BE` | word | Race/attract index used to pick music track `{1,2,3,6}` | `$0251F4` masks `&3`, table `$02522A` |

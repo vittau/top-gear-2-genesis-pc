@@ -851,3 +851,102 @@ instruction's stack delta from the ROM with capstone and fails on a missing or
 wrong `_sp_popped` line. Removing the `$740C` accounting line from a copy of the
 generated tree makes it report exactly
 `$00740C add.w (a7)+, d0: expected delta +2, generated +0` (exit 1).
+
+## Task 26: owner playtest `e586c00`
+
+Branch `vittau/tg2-playtest-fix`, based on main `33f4c5e` (core-0004 merged),
+engine patches applied with `--reset` and rebuilt (`JOBS=3`, heavy lock). Every
+run used `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy`.
+
+### RACE SOUND page: empty on first open, garbled on the second
+
+Reproduced headless with the owner's `settings.ini` (BOTH persisted): first
+open black, i.e. the page's sprite list existed but **palette 3 in CRAM was all
+zero**; the second open drew from the tiles of a half-built "SOUND EFFECTS" row.
+Cause: the page profile loader (`$01ED2C`, value read at `$01ED3A`) loads the
+page's initialisation step counter (`A4+$18`) and its value; the port wrote
+value, redraw counter and that step counter from the frame hook once the page
+index was already 4. Writing the step counter after the page had begun
+initialising skipped its CRAM upload. The fix presents the session's choice for
+the entry instruction only (restored at the page RTS `$01ED40`), so the page
+always initialises in stock state (MUSIC for BOTH) and the existing repaint only
+replaces the row pixels.
+
+`tools/verify_sound_page.py` (4 sessions: stock SOUND EFFECTS, stock MUSIC, the
+owner's `settings.ini`, an empty runtime directory; 3 visits each with UP/UP and
+DOWN/DOWN on every visit) → **PASS**, 72 captures. Every page picture is
+pixel-identical to the stock reference for its mode, every BOTH page to the
+first BOTH page of the run, `palette3_sum = 25944` on all of them, and no page
+has fewer than 1300 text pixels. Cold first opens:
+`build/verify-sound-page/{stock-sfx,stock-music,owner-both,fresh-default}/caps/visit0-open-*.png`
+(curated strip: `docs/images/audio-sound-menu-first-open.png`). MUSIC also used
+to show SOUND EFFECTS on that first visit (the boot word is 0), which the same
+hook fixes.
+
+### Player 2 could not press Start
+
+`[input.p2] device = 0` (none) was the shared default, and the cartridge's
+2-player setup screen waits for both players. GameSpec gained
+`default_players` (patch 0020) and Top Gear 2 sets 2, so the existing P2
+bindings (IJKL, M/N/comma, right Shift = Start, second gamepad) are live before
+`settings.ini`; a saved `[input.pN] device` still wins. The runner logs the
+effective map once:
+
+| Runtime dir | `[input]` line |
+|---|---|
+| empty (fresh install) | `p1=keyboard+gamepad p2=keyboard+gamepad p3..p6=gamepad` |
+| owner `settings.ini` (`p2 device = 0`) | `p1=keyboard+gamepad p3..p6=gamepad` |
+
+An input script driving `PLAYER 2` through the 2-player setup confirms port 2
+reaches the game: P2's Start dims the player-2 column and P1's Start continues
+to the country screen (`/tmp/opencode/p2-3.png`, `p2-4.png` in that run).
+Single-controller play is unchanged: player 2's gamepad source is the second
+SDL controller, so one pad never feeds two ports.
+
+Why a 1-player user landed at a 2P start: the front-end options screen opens
+with the cursor on the **1P GAME / 2P GAME** row, and START on that row toggles
+it (LEFT/RIGHT/A/B/C do nothing there; START opens a value page on DIFFICULTY
+and starts the game on START). The flag is the work-RAM byte `$FF2567`
+(0 = 1 PLAYER, observed 0 → 1 on the toggle). The cartridge has no SRAM, so it
+is **not** remembered and is **not** a default: a fresh boot is always
+1P GAME — the owner's session had toggled it with earlier presses, then START on
+the START row started a 2-player game. No port code reads or writes that flag;
+with P2 usable, the same path now completes.
+
+### Feedback replay diverged at execution 0
+
+`replay_diagnostic.py --headless` printed
+`FIRST DIVERGENCE execution=0 machine/audio/input`; the per-partition dump
+showed that only the `z80` partition differed, and `z80_sfx_enabled` was 1 in
+the recording but 0 in playback. Cause: replay capture writes an option's value
+and then its enable line, and the shared mod model ties a feature's enabled flag
+to `value != 0`; `tg2_feature_enable()` collapsed every choice to 1 when
+enabling, so the recorded BOTH came back as MUSIC. The provider now keeps a
+choice's value on enable (disable returns 0), the only game-owned piece of the
+path.
+
+Fresh recordings on the fixed build, replayed with `--benchmark`:
+
+| Settings | Result |
+|---|---|
+| owner `settings.ini` (BOTH, unfiltered audio, 16:9, 60 fps) | `all 900 recorded executions matched`, exit 0 |
+| default (empty runtime dir) | `all 900 recorded executions matched`, exit 0 |
+
+The recording's sidecars keep `bypass_filter = 1` and
+`O tg2-racesound racesound mode both`, i.e. the owner's audio policy.
+
+### Release log noise
+
+The `[DUAL-DBG]` block (both lines, every 600 frames) is gone from patch 0011
+and 0014; a 1300-frame BOTH run on the owner's settings has **0** `[DUAL-DBG]`
+lines and 19 log lines total.
+
+### Acceptance on this build
+
+| Check | Result |
+|---|---|
+| Off-mode frame 60 / 300 (`TG2_RACE_60FPS=0 TG2_HIDE_OVERSCAN=0`, widescreen off) | `2A0B972960C5E325` / `1131D937D70234FD` |
+| `tools/verify_both_boot.py` | PASS (BOTH vs MUSIC 0.995227, vs SFX 0.995227, MUSIC vs SFX 1.000000) |
+| Manifests (`tools/tg2_runner.manifest_counts`) | dispatch 0, floor_coverage 0, interior_label 0, floor_unsafe 0 |
+| `tools/verify_sound_page.py` | PASS (72 captures) |
+| Feedback replay, owner settings and default | 900/900 executions matched |
