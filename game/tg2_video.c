@@ -493,6 +493,17 @@ static void plane_a_margins(const GVDP *v, int line, const uint32_t *native,
             for (int x = 0; x < origin; ++x) out[x] = native[edge];
     }
 }
+/* $2B20..$2BEC installs the weather map at C800/C840 (atlas rows
+ * 128..383, both 256-pixel halves). $87EA..$887A animates it through
+ * plane A's per-line H/V scroll. Continue those coordinates, not an edge
+ * colour; the rest of A contains HUD/car/tunnel art and must not repeat. */
+static unsigned weather_pixel(const GVDP *v, int line, int nx,
+                              int ha, int va, unsigned ba) {
+    int y = (line + va) & 511;
+    if (y < 128 || y >= 384) return 0;
+    unsigned attr, ap = pixel(v, ba, nx - ha, y, &attr);
+    return (attr & 0x8000) ? ap : 0;
+}
 /* Private per-line margin evidence, before sprites and HUD relocation.
  * Optional frame window keeps focused investigations small; a full route run
  * leaves both unset and audits every presented picture, synthesized included. */
@@ -631,6 +642,8 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
         unsigned b;
         unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
         out[x] = pal[bp ? bp : v->reg[7] & 63];
+        unsigned ap = weather_pixel(v, line, nx, ha, va, ba);
+        if (ap) out[x] = pal[ap];
     }
     unsigned window_mask = window_margins(v, line, native, nw, out, w);
     plane_a_margins(v, line, native, nw, pal, out, w, ha, va, ba);
@@ -659,7 +672,9 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
             covered[ox] = 1;
             unsigned b;
             unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
-            if (!(s->attr & 0x8000) && (window_mask & (nx < 0 ? 1 : 2)))
+            if (!(s->attr & 0x8000) &&
+                ((window_mask & (nx < 0 ? 1 : 2)) ||
+                 weather_pixel(v, line, nx, ha, va, ba)))
                 continue; /* solid high-priority window, as in the native compositor */
             if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
