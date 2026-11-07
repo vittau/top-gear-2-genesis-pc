@@ -20,6 +20,7 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 | Real-device audio (owner bug) | Root cause: every host hitch was concealed and then became permanent latency, until the ring cap cut audio in bursts (delays, then pops). Fix: a cushioned, latency-bounded DRC (100 ms target, 250 ms ring, ±0.5%, latency bound 160 ms, quick resume). Measured on a PipeWire null-sink recording: 4×3-min races at 0 pops, dropouts and underruns. Needs the owner's listening confirmation. | `PERFORMANCE.md` §10 |
 | BOTH fix + music tempo | BOTH is now session-owned host state (it engages on every route, persisted as `[mods.racesound]`), and its text uses the game's own menu font. Exact audio sample clock (patch 0008; it was -402 ppm). Tempo-stable slow-integral DRC (patch 0009): speed swings 1233 → 37 ppm/s. Reference pipeline: headless Genesis Plus GX renderer (`tools/gpgx_render.c`). A/B files in `~/Music/tg2-ab/`. | `AUDIO.md` §6-7, §11-12 |
 | Music tempo (owner bug) | Root cause: the port re-armed the YM2612 timer B on every `$27` reload instead of letting it run free (patch 0010). Title theme went from -6.99% ±2% to +0.194% flat. **Owner confirmed 2026-11-06: music speed is great.** All 4 owner VGM rips align at +0.194%, and Genesis Plus GX agrees with the port to 0.02%, so the residual is the rips' own time base. Logic match vs the VGMs: 89.7–99.5% (open item: Auckland ch1-2 re-attacks). | `AUDIO.md` §11 |
+| Race band crop + HUD Edges fix (owner request) | Hide overscan (default On) now crops the race's empty 8 top / 16 bottom lines: 256×200 Off, 356×200 16:9, 467×200 21:9. A per-frame guard crops only single-player race pictures whose bands are empty. Menus and split screen are unchanged. Engine patch 0012 (`present_window`). HUD Edges map/marker split fixed (the HUD moves to sprites on frames 3409–3585). 16 tracks, 181 race pictures checked; margin audits 0; Off hashes unchanged. Before release: refresh the README screenshots. | `WIDESCREEN.md` |
 | Options | Widescreen / 60 fps / HUD / Hide overscan in the launcher and the in-game overlay (gamepad: Back+RB), persisted in `settings.ini [mods.*]`. | `RELEASING.md` |
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
 | Release packaging | macOS `TG2Recomp.app` (universal2; finds the ROM beside the `.app`), single-file Linux `TG2Recomp-x86_64.AppImage` plus tarball, Windows zip. `v*` tags build a **draft** release with SHA256SUMS. Validated on CI run 42222837085: every platform smoke-ran 600 frames with the ROM auto-detected. | `RELEASING.md` |
@@ -39,8 +40,7 @@ major bugs. Release path:
    country via passwords, including each country's still-unvisited second race,
    and 2-player. Run the release build with the default options. Gate on
    no crashes, empty manifests and no audio glitches.
-3. Task 21 (crop the black bands + HUD Edges map split) ships only if it
-   merges clean before the release candidate. It doesn't block.
+3. Task 21 (crop + HUD Edges fix) merged 2026-11-06. Before the release candidate, refresh the README screenshots, which still show the bands.
 4. CI `platforms=all` dry run → owner playtest of the candidate → tag
    `v0.1.0` with the owner's go-ahead → the owner publishes the draft and
    submits to Quiver.
@@ -87,7 +87,6 @@ to be fitted from the stock ramps rather than invented.
 
 | Task | Worktree | State |
 |---|---|---|
-| 21 Crop race black bands + HUD Edges map split (owner request) | `tg2-race-crop` | The owner chose to crop the 8 top / 16 bottom black lines of races when Hide overscan is On. Also fixes the HUD Edges map/marker split. |
 | 20b BOTH: second Z80 core for the race SFX image | `tg2-both-dualchip` | Dual-chip BOTH merged: music on chip A, 68k FM on chip B; no shared-chip noise; page re-entry fixed. Missing: the engine and nitro PCM, which run on a Z80 SFX image that needs its own Z80 core. Prototype reverted (the upload side effects stopped both drivers). Resumes when a worker slot frees. If it isn't clean by the release candidate, BOTH ships labelled as missing car sounds, or is hidden. |
 
 ## Questions for the owner (queued for 09:00)
