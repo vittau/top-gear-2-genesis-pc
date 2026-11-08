@@ -930,3 +930,58 @@ paused does complete. The refusal *is* reproducible on a screen without a
 resume site (password entry), and the owner's no-file session is consistent
 with that refusal path; the notice now makes any such outcome visible instead
 of silent.
+
+## Quickstate lost between races (owner report, 2026-11-07)
+
+The owner finished race 3, saved to slot 1 at the start of race 4 through the
+in-game menu, and later loaded slot 1 to find the old race-3 state: the save was
+never written (`native_save_1.bin` kept its 17:10 mtime). The feedback replay
+(`save-lost-r4/TG2-feedback.replay`) shows `W` at frame 20130 with a zero pad
+(the menu-dismiss input leak of patch 0022 is fixed), nine START taps between
+frames 19558 and 19905 after the finish, and two more START taps after the save
+before race 4 starts. That places the save on one of the **inter-race flow
+screens** (race results, championship table, car/gear setup, next-track intro,
+shop). Those screens have no repeatable instruction the host can resume in
+place, so `glue_state_boundary` never parked and the queued save was dropped
+after the engine's 120-frame timeout; the only feedback was the window title.
+
+Measured with `tools/tg2_postrace_save_probe.py` (finishes a race, then saves on
+every screen of the flow):
+
+| Screen | Before | After patch 0024 |
+|---|---|---|
+| race (running) | written | written |
+| finish banner | written | written |
+| race results | **refused** | queued, written at the next race start |
+| championship table | **refused** | queued, written at the next race start |
+| car/gear setup | **refused** | queued, written at the next race start |
+| next-track intro | **refused** | queued, written at the next race start |
+| shop (gears) | **refused** | queued, written at the next race start |
+| next race countdown | — | written |
+| race 2 (running) | written | written |
+
+Adding the screens' own one-frame waits as boundaries was tried first and
+rejected: the saves land, but a load of such a state bails out of the race flow
+to the main menu. The screens' loops are reached by dispatch rather than a
+JSR/BSR chain, so after the resumed loop returns the engine cannot follow the
+guest callers (`floor_unsafe`: `$001E6A ... capsule exit_pc != native loose-A7
+return`); the resumed intro panel returns to the title menu
+(`build/evidence/resume-5/loadcheck2/step1.png`). A quickstate that misbehaves
+on load is worse than a visible refusal, so the sites were not kept.
+
+Patch 0024 instead keeps the request queued for up to 15 s of gameplay and
+takes it at the next boundary the game actually reaches. Pressing START to
+begin the next race parks it at the race loop, so the file holds the start of
+that race — the moment the menu row already promises ("the next completed
+gameplay tick") and what a player saving between races wants. The queue is
+visible as `SAVING AT NEXT BOUNDARY...` (`docs/images/state-notice-interrace-save.png`);
+if no boundary appears the request is refused with `SAVE UNAVAILABLE HERE`. A
+later save request replaces the queued one, and a save whose temporary file
+cannot be opened now reports `SAVE FAILED: CANNOT WRITE STATE` instead of being
+dropped in silence.
+
+Loading such a file resumes the race and it runs to its end
+(`tools/tg2_postrace_resume_probe.py --until-countdown`): the saved state is
+parked at `$0065F2` (race loop), and in a fresh process it completes five laps
+and the finish (`build/evidence/resume-countdown/summary.json`,
+`docs/images/state-notice-interrace-resume.png`).
