@@ -93,6 +93,11 @@ finish claim.
 
 ## 2. All 16 tracks (password route)
 
+For the corrected screen alphabet, original country gate, full 15-bit checksum,
+part-field map, and complete rain/snow table, see [PASSWORDS.md](PASSWORDS.md).
+Geneva has no visible precipitation; its `$44` descriptor does not have the
+weather-enable bit. Munich snow has a new native capture.
+
 Every track is reached through the game's own **ENTER PASSWORD** screen. The
 encoding was reversed from the ROM (`docs/PASSWORDS.md`); the generator is
 `tools/tg2_password.py` and the UI driver `tools/tg2_password_ui.py`. Nothing
@@ -129,7 +134,7 @@ manifests stayed empty.
 | 11 | Scandinavia / Copenhagen | dusk, 5:40 PM | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 | 12 | South America / Chile | dusk, 9:30 PM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 | 13 | Spain / Andalucia | overcast, 3:30 PM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
-| 14 | Switzerland / Geneva | bright, snow | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 14 | Switzerland / Geneva | bright, no precipitation (flags $44) | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 | 15 | America (picker: U.S.A.) / Las Vegas | **night** (dark palette, city lights) | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 
 Evidence per cell, `build/qual/cov/cNN-<mode>/`:
@@ -347,7 +352,7 @@ python3 tools/tg2_margin_audit.py --cov build/qual/cov --out build/qual/margin-a
 python3 tools/tg2_nitro_compare.py --port 4490 --out build/qual/nitro/compare \
     --country 0 --window-at 900 --window 90
 # password round-trip
-python3 tools/tg2_password.py decode "KUC2 2HQG CJL2 Y4%T"
+python3 tools/tg2_password.py decode "KVC2 2HQG CJL2 Y4%T"
 
 # task 25: quickstate save -> fresh-process load matrix
 python3 tools/tg2_state_matrix.py --out build/qual/qa-state-matrix
@@ -444,7 +449,7 @@ Every run below is `tools/tg2_progress.py` on the release defaults (16:9
 canvas, 60 fps races, HUD Centered, Hide overscan On, stock RACE SOUND),
 uncapped guest, TCP 4610, one runtime at a time, under the heavy lock. Each
 country starts from a generated password that carries money and full upgrades
-(the checksum allows 150k with every part at max), then races in order; the
+(the fixture uses 150k with every part at max; the checksum is 15-bit, not capped at 255), then races in order; the
 race index is read back before every race. A race is "passed" when it reached
 the finish (the clock froze with speed 0).
 

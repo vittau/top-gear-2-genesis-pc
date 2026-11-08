@@ -135,13 +135,16 @@ bytes), plane A `$C000`, plane B `$E000`.
 ## Password screen and nitro (all-track coverage task)
 
 Verified against the ROM and against a live run (see `docs/PASSWORDS.md` for
-the full encoding).
+the full encoding). The offsets below use the normal PASSWORD base `$FF2570`.
+COUNTRY SELECT nests the same struct at `$FF25EA`: `$024028` adds `$7A` to
+its controller pointer, and the original validator returns with A0=`$FF25EA`.
+Its required-country word is therefore `$FF260E`, not `$FF2594`.
 
 | Address | Size | Meaning | Evidence |
 |---|---|---|---|
 | `$FF2570` | 0x60 | Password work struct: symbols at `+0`, packed 80-bit block at `+$10`, plaintext record at `+$1A`, demanded picker index at `+$24`, decoded fields at `+$26..$54` | breakpoint on `$023594` shows `A0 = $FF2570`; RDB writes from `$02396A`/`$0238D2`/`$02371A` |
-| `$FF2570+$24` | word | Country index the screen demands; `-1` from the CONTINUE → PASSWORDS row, the picker index from CONTINUE → COUNTRY SELECT | `cmp.w $28(a0),$24(a0)` at `$0235B6` |
-| `$FF2570+$26` | word | Password checksum (8 bits used), compared as a word against the field sum | `cmp.w $26(a0),d7` at `$0235A4` |
+| `$FF2570+$24` | word | Country index the screen demands; `-1` from the CONTINUE → PASSWORDS row, the picker index at the nested base for CONTINUE → COUNTRY SELECT | `move.w $24(a0),d0; cmp.w $28(a0),d0` at `$0235B2..$0235B6` |
+| `$FF2570+$26` / `$FF25EA+$26` | word | Password checksum (15 bits), compared as a word against the field sum; normal PASSWORD / nested COUNTRY SELECT work base | `cmp.w $26(a0),d7` at `$0235A4` |
 | `$FF2570+$28` | word | Password country/track index (4 bits) | loaded intro panel changes with it |
 | `$FF2570+$2C` | word | Password stage (2 bits), validator rejects `> 2` | `cmpi.w #2,$2c(a0)` at `$0235AA` |
 | `$FF2570+$2E` | word | Money in thousands (10 bits) | `Money $255000` for field 255 |
