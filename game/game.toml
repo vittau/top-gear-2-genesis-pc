@@ -147,3 +147,12 @@ kind = "game_hook"
 [[widescreen_site]]
 addr = 0x001EBF6
 kind = "game_hook"
+
+# Password validator returns: raw ROM $0235C0/$0235C4 are both RTS (4E75).
+# Read-only capture of D0 and the completed work record, before its caller runs.
+[[widescreen_site]]
+addr = 0x0235C0
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x0235C4
+kind = "game_hook"
