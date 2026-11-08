@@ -969,6 +969,12 @@ return`); the resumed intro panel returns to the title menu
 (`build/evidence/resume-5/loadcheck2/step1.png`). A quickstate that misbehaves
 on load is worse than a visible refusal, so the sites were not kept.
 
+On the owner's build (patches 0022+0023, before 0024) the refusal *was* drawn
+in the picture: `SAVING STATE...` immediately, then `SAVE UNAVAILABLE HERE` two
+seconds later (`docs/images/state-notice-refusal-owner-build.png`, reproduced on
+the pre-0024 binary by asking for a save on the password screen). The save was
+still lost, which is what this report fixes.
+
 Patch 0024 instead keeps the request queued for up to 15 s of gameplay and
 takes it at the next boundary the game actually reaches. Pressing START to
 begin the next race parks it at the race loop, so the file holds the start of
