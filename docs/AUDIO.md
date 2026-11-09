@@ -1454,7 +1454,10 @@ in a MUSIC-mode run - exactly 0 seconds differ there, which is the per-source
 independence check), *N s differ* is how much of the 120 s capture differs
 while the option is on (its own documented effect), and every run is
 byte-identical again from the settle frame after the last switch back. Pops: 0
-in all 15 runs (and in the references). The same sweep on the pre-fix build
+in all 15 runs (and in the references). The same switch through the *real*
+in-game overlay (open the Audio section over TCP, move to Clean FM, Right then
+Left, close) keeps the menu music continuous: no gap, level 1010-1555 throughout
+while it is on and off, 0 pops. The same sweep on the pre-fix build
 fails: Clean FM is not restored (14 s differ, silence after the switch-off) and
 the faders' split path leaves the stream changed after the last switch back.
 
