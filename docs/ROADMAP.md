@@ -14,17 +14,41 @@ Rules that apply to every item:
   other versions of Top Gear 2.
 - When an owner request is added or settled, update this file, not `STATUS.md`.
 
-## Overview
+## Current plan (owner, 2026-11-09)
 
-The owner's stated order for the visual work is high-resolution rendering
-first, then NTSC + scanlines. The other groups have no set order.
+The owner picked the first items to work on, in this order:
+
+1. **NTSC filter and scanlines** — [task 28](tasks/28-ntsc-scanlines.md).
+2. **High-resolution rendering** — research and design first
+   ([task 29](tasks/29-highres-design.md)), then implementation from that
+   design (a later task).
+3. **Clean FM, separate volumes and better engine/nitro PCM** —
+   [task 30](tasks/30-clean-fm-and-pcm.md).
+
+How they run, to avoid rework (at most two workers at once):
+
+- **Wave 1:** task 28 (implementation) and task 29 (read-only research and
+  design) in parallel. Task 29 must not touch the presentation code task 28
+  is changing; its design builds on task 28's stage layout.
+- **Wave 2:** the high-resolution implementation once task 28 is merged and
+  the task 29 design is accepted, alongside task 30 (audio, which shares no
+  code with the video work).
+- Shared rules fixed up front: NTSC runs at native source resolution and is
+  mutually exclusive with a render scale above 1×; scanlines run at output
+  resolution and also apply to a high-resolution frame; both stages accept
+  any RGB colour. Engine patch numbers are reserved per task (28: 0028–0032,
+  high-res: 0033–0039, 30: 0040–0044).
+
+The other groups have no set order.
+
+## Overview
 
 | Group | Item | Summary | Spec |
 |---|---|---|---|
 | Pending from v0.1.0 | [Real-device checks](#real-device-checks) | Play Windows, Intel macOS and the Steam Deck (controller only) on real hardware; finish the Apple Silicon check. | |
 | Pending from v0.1.0 | [Quiver Launcher listing](#quiver-launcher-listing) | Submitted by the owner on 2026-11-08; waiting for a Quiver maintainer to verify it. | |
-| Visual | [High-resolution rendering](#high-resolution-rendering) | Races above 224 lines: road re-rasterised from the game's per-line state, most detailed sprite LOD, clean background, sharp HUD. **First in the visual queue.** | |
-| Visual | [NTSC filter and scanlines](#ntsc-filter-and-scanlines) | Blargg composite filter (`md_ntsc`) and *Animal Well*-style scanlines, with presets. **Second in the visual queue.** | |
+| Visual | [High-resolution rendering](#high-resolution-rendering) | Races above 224 lines: road re-rasterised from the game's per-line state, most detailed sprite LOD, clean background, sharp HUD. **Priority 2.** | [29](tasks/29-highres-design.md) |
+| Visual | [NTSC filter and scanlines](#ntsc-filter-and-scanlines) | Blargg composite filter (`md_ntsc`) and *Animal Well*-style scanlines, with presets. **Priority 1.** | [28](tasks/28-ntsc-scanlines.md) |
 | Visual | [HD menus, fonts and HUD pack](#hd-menus-fonts-and-hud-pack) | Optional replacement pack of faithful HD redraws, keyed by the original tiles. | |
 | Visual | [Gradient skies](#gradient-skies) | SNES-like vertical sky gradients derived from each track's own sky colour, weather and time of day. | |
 | Visual | [Widescreen on the other screens](#widescreen-on-the-other-screens) | Track intro, menus, shop and results extended to widescreen. Deferred by the owner to the final phase. | [17](tasks/17-widescreen-menu-screens.md) |
@@ -33,8 +57,8 @@ first, then NTSC + scanlines. The other groups have no set order.
 | Gameplay | [Cheats page](#cheats-page) | Pick any of the 64 races and set money/upgrades from the Esc menu, through the game's own password path. | |
 | Save states | [Car setup screen](#save-states-on-the-car-setup-screen) | Save and load on the setup screen, on a new game and between races. | [27](tasks/27-setup-screen-quickstate.md) |
 | Save states | [Live 2P race after a load](#live-2p-race-after-a-load) | Show a loaded split-screen race resuming live, not under the game's PAUSE. | |
-| Audio | [Clean FM and separate volumes](#clean-fm-and-separate-volumes) | Optional YM3438-style FM without the ladder distortion, plus Music and SFX volume sliders. | |
-| Audio | [Better engine and nitro PCM](#better-engine-and-nitro-pcm) | Band-limited resampling of the original PCM instead of the DAC's sample-and-hold. | |
+| Audio | [Clean FM and separate volumes](#clean-fm-and-separate-volumes) | Optional YM3438-style FM without the ladder distortion, plus Music and SFX volume sliders. **Priority 3.** | [30](tasks/30-clean-fm-and-pcm.md) |
+| Audio | [Better engine and nitro PCM](#better-engine-and-nitro-pcm) | Band-limited resampling of the original PCM instead of the DAC's sample-and-hold. **Priority 3.** | [30](tasks/30-clean-fm-and-pcm.md) |
 | Audio | [Auckland music re-attacks](#auckland-music-re-attacks) | Channels 1–2 re-attack some notes differently from the owner's VGM reference. | |
 | Platforms | [Android](#android) | A future release target. Not started. | |
 
@@ -109,8 +133,9 @@ r·K_R + g·K_G + b·K_B, so three base kernels plus a few multiply-adds per tap
 not linear and must be applied separately. Plan: start with RGB555 like
 modern-tyrian, measure banding on the gradient skies, and switch to the
 three-kernel path if needed.
-- **Owner's queue and taste (2026-11-07):** the queue after 0.1.0 is
-  high-resolution rendering first, then NTSC + scanlines. Use Blargg's filter
+- **Owner's queue and taste (2026-11-07; order superseded on 2026-11-09, see
+  "Current plan"):** the queue after 0.1.0 was high-resolution rendering
+  first, then NTSC + scanlines. Use Blargg's filter
   for NTSC. For scanlines, the owner likes the look of *Animal Well*. A
   community shader reproduces it:
   https://godotshaders.com/shader/animal-well-inspired-crt-effect/ . Study its
