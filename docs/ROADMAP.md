@@ -22,7 +22,7 @@ first, then NTSC + scanlines. The other groups have no set order.
 | Group | Item | Summary | Spec |
 |---|---|---|---|
 | Pending from v0.1.0 | [Real-device checks](#real-device-checks) | Play Windows, Intel macOS and the Steam Deck (controller only) on real hardware; finish the Apple Silicon check. | |
-| Pending from v0.1.0 | [Quiver Launcher listing](#quiver-launcher-listing) | The owner submits the project now that v0.1.0 exists. | |
+| Pending from v0.1.0 | [Quiver Launcher listing](#quiver-launcher-listing) | Submitted by the owner on 2026-11-08; waiting for a Quiver maintainer to verify it. | |
 | Visual | [High-resolution rendering](#high-resolution-rendering) | Races above 224 lines: road re-rasterised from the game's per-line state, most detailed sprite LOD, clean background, sharp HUD. **First in the visual queue.** | |
 | Visual | [NTSC filter and scanlines](#ntsc-filter-and-scanlines) | Blargg composite filter (`md_ntsc`) and *Animal Well*-style scanlines, with presets. **Second in the visual queue.** | |
 | Visual | [HD menus, fonts and HUD pack](#hd-menus-fonts-and-hud-pack) | Optional replacement pack of faithful HD redraws, keyed by the original tiles. | |
@@ -53,8 +53,9 @@ the README calls those builds release candidates.
 
 ### Quiver Launcher listing
 
-The owner submits the project to Quiver now that v0.1.0 exists, so Quiver
-can review it. Window screenshot for the form:
+Submitted by the owner on 2026-11-08, after v0.1.0 was published. It is
+waiting for a Quiver maintainer to verify it; nothing to do on our side until
+they reply. The window screenshot used in the form is
 `~/Pictures/tg2-quiver-screenshot.png` (outside git).
 
 ## Visual
