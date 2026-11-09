@@ -1047,3 +1047,42 @@ audio, one runtime instance at a time; the only windowed run is the last row.
 Evidence: `build/highres-check/` (summaries, per-row samples, PNGs) and
 `build/ws/`. Not verified: any real N× geometry (S3), a 2P race at N×, an
 interlaced picture (unreachable in this game), Deck-class cost.
+
+## Task 32 — device aspect and quiet logs (2026-11-09)
+
+Two pieces of Steam Deck feedback: the picture was 16:9 on the Deck's 16:10
+panel, and a normal session left ~1.4 MB in `logs/`. Engine patches 0045–0049.
+All runs on this Mac (macOS arm64, development build from
+`tools/build-linux.sh`, SDL dummy video/audio unless a row says "cocoa"), one
+runtime instance at a time, under the shared build lock. Evidence under
+`build/evidence/task32/` (gitignored).
+
+| Check | Command | Result |
+|---|---|---|
+| Off-mode hashes unchanged | `python3 tools/probe_run.py --widescreen off --frames 360 --port 4440` | frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`; `w=320 h=224` |
+| All four manifests empty (dev build) | every run here | 0 / 0 / 0 / 0 |
+| Adaptive, 16:10 output 1280×800 | `python3 tools/tg2_aspect_probe.py --race --port 4454` (`video_configure`) | output 1280×800 (1.600) → picture 320×200 (1.600): fills the panel; presented capture 1280×800 |
+| Adaptive, 16:9 output 1280×720 | same | output 1280×720 (1.778) → picture 356×200 (1.780) |
+| Adaptive, 4:3 output 1024×768 | same | output 1024×768 (1.333) → picture 320×200 (1.600): SDL letterboxes; the 320-pixel minimum is unchanged |
+| Fixed 16:9 on the same three outputs | same | picture 356×200 in every case, letterboxed inside 16:10 and 4:3 as chosen |
+| Adaptive, title screen vs race picture (dummy) | `build/evidence/task32/aspect-dummy-title.json`, `aspect-dummy-race.json` | title 358×224 / 398×224 / 320×224 (fit, 16:10 / 16:9 / 4:3); race 320×200 / 356×200 / 320×200 |
+| Windowed start on a real 16:10 panel (cocoa) | `SDL_AUDIODRIVER=dummy build/TG2Recomp … --widescreen fit --max-frames 90 --turbo` | display 1408×881 (1.598) → window 716×448 (1.598, adaptive, windowed) → output 716×448, picture 358×224 (1.598) |
+| Borderless fullscreen, Adaptive (cocoa) | same with `fullscreen = 1` in settings.ini, 150 frames | output 1408×881 (1.598) → picture 358×224 (1.598) (3 of 4 runs; one run caught macOS's menu-bar-strip transition at 1408×818, and the picture followed it at 386×224, 1.723) |
+| Borderless fullscreen, fixed 16:9 (cocoa) | same with `--widescreen 16:9` | output 1408×881 (1.598) → picture 398×224 (1.777): letterbox bars top/bottom |
+| Gamescope session detection (dummy) | `SteamDeck=1 SDL_VIDEODRIVER=dummy … --widescreen fit` | `[VIDEO] gamescope/Steam Deck session: starting borderless fullscreen`; window 597×448 (dummy's 1024×768 desktop, adaptive) and output = the whole desktop; on the Deck's 1280×800 output the same code gives a 320×200 picture |
+| Release-profile session writes nothing | `build-rel/TG2Recomp --no-launcher --max-frames 300` (release profile: `GEN_ENABLE_TRACE=OFF`, `SONIC_REVERSE_DEBUG=OFF`), ROM beside the exe under a decoy name | exit 0; directory diff before/after: **no files created or changed** — no `logs/`, no `.toml`, no `settings.ini` |
+| Release-profile with `--debug` | same with `--debug` | `logs/TG2-feedback.replay` + `.config.ini` + `.mods.txt` + `.sav` and the four manifests, nothing else |
+| Old settings.ini migrates to off | release profile, `[mods.diagnostics] enabled = 1`, no `[meta]` | `[config] migrating settings.ini: diagnostics are now opt-in`; file rewritten with `[meta] settings_version = 2` and `[mods.diagnostics] enabled = 0`; no `logs/` |
+| Esc-menu toggle (real runtime menu, dev build) | `key`/`ui_open`/`ui_rows` probes on `Mods` | row `Diagnostics (bug report)` Off → On; closing the menu saved `settings_version = 2`, `enabled = 1`; the next launch without `--debug` wrote `logs/TG2-feedback.replay` |
+| Release smoke | `python3 tools/tg2_release_smoke.py --exe build-rel/TG2Recomp --work build/qual/release-smoke` | `passed: true`, exit 0, route loaded, five race pictures (356×200 / 398×224, 15–96 % non-black); no `logs/` in the run directory |
+
+File audit, release profile, normal session: **nothing** beyond the executable
+and the ROM. Created only on demand or failure: `settings.ini` (first save from
+the launcher/menu, or the one-time migration), `native_save_N.bin` (quickstate
+the player saves), `crash-report`/`last_error.log` (only when the game actually
+crashes), and — with diagnostics on — `logs/TG2-feedback.replay*` plus the four
+evidence `.toml` files.
+
+Not verified here: a real Steam Deck / gamescope session (window size, panel
+mode, scaled output), the Deck's 1280×800 panel through an actual compositor,
+and controller-only operation of the new Diagnostics row on the device.

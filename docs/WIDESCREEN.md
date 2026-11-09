@@ -131,6 +131,35 @@ centred 4:3. The race qualifier also requires H32 without interlace, plane A
 `$E000`, plane B `$C000`, a 0x11 plane-size register, and one of the race H-int
 first opcodes (`$2C9D`, `$601E`, `$6042` at `$FFF9FE`).
 
+### Device aspect, window and fullscreen
+
+Adaptive follows `SDL_GetRendererOutputSize`, so the *window* decides the
+picture on any panel that is not 16:9. Two runner rules keep that honest
+(engine patch 0045):
+
+- A windowed start sizes the first window from the desktop's aspect
+  (`height = 224 × window_scale`, width from the display ratio), so Adaptive
+  has the panel's shape from the first frame instead of a fixed 16:9 window.
+  A fixed aspect (16:9, 21:9, 32:9) keeps its 16:9 window and letterboxes
+  inside it, as chosen.
+- A **gamescope** session — Steam Deck Game Mode and Steam's gaming session —
+  presents the game's window as a fullscreen surface scaled to the panel, so a
+  windowed 16:9 picture would be letterboxed on the Deck's 16:10 screen. When
+  one is detected with `Fullscreen` off, the runner starts borderless fullscreen
+  at the panel size instead. Detection uses the environment Steam/gamescope
+  export: `SteamDeck=1`, `SteamGamepadUI=1`, `SteamTenfoot=1`,
+  `GAMESCOPE_WAYLAND_DISPLAY`, `GAMESCOPE_XWAYLAND_DISPLAY`, or
+  `XDG_CURRENT_DESKTOP` containing `gamescope`. An explicit exclusive-fullscreen
+  choice is kept.
+
+`[VIDEO]` stderr lines print the geometry, so any capture or support log shows
+it: `display WxH (aspect A)`, `window WxH (aspect A, mode, fullscreen state)`,
+and, whenever it changes, `output WxH (aspect A) picture WxH (aspect A)`. The
+presented picture fills the output exactly when the two aspects agree —
+1280×800 Adaptive gives a 320×200 race picture (16:10), 1280×720 gives
+356×200 (16:9), and a fixed 16:9 mode on the 16:10 panel keeps 356×200 and
+letterboxes.
+
 ## HUD
 
 **Centered** is the default and preserves the existing widescreen pixels.
@@ -733,6 +762,12 @@ the other 15 tracks in the margins, attract mode, LM/head-to-head,
 controller-only launcher operation, Windows/macOS/Steam Deck builds, and
 physical display/audio. Network session configuration was not part of this
 work.
+
+The device-aspect work is verified for the geometry the runner computes and
+requests (16:10, 16:9 and 4:3 outputs, windowed and borderless fullscreen on a
+16:10 panel) with the SDL dummy driver and a short real macOS run; the
+gamescope path itself still needs the owner's Steam Deck (see
+`docs/VALIDATION.md`, task 32).
 
 The **crop** is qualified on all 16 tracks (password route: rain, night, fog,
 snow, dusk), race start countdown, cruise, nitro, both pause screens, the
