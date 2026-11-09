@@ -775,6 +775,7 @@ Every step ends with the same mandatory gates, recorded as evidence:
 
 ### S3 — Road + background at N× (the core)
 
+**Done (task 33):** road strip rasteriser, §13.
 - Implement `tg2_highres_build()`: road strip rasteriser, sky, skyline, ground
   at N×; keep sprites/HUD native-sized in the frame for now (drawn by the
   existing row renderer at 1× in the N× frame is *not* acceptable — instead the
@@ -1078,3 +1079,135 @@ the single `--windowed` check; one runtime instance at a time.
   figure above is this Mac; §6.3's ≈3× scaling would put it near 0.13 ms.
 - **The 4096 px canvas clamp at N×** is reasoned (§5.2) but not exercised: the
   test provider only presents 2×.
+
+---
+
+## 13. S3 — the road rasteriser and the experimental option (task 33)
+
+**Status: S3 is implemented and qualified on 2×/3×/4× pictures of three tracks;
+the render scale is now a player option on the shared "Internal resolution"
+row.** Sprites, the HUD, the sky and plane-A effects still keep the native
+picture's content (nearest-scaled), as §8 S3 specifies; nothing here depends on
+the remaining §9 decisions (S4/S5 own sprites and HUD).
+
+![Auckland at 2×](images/highres-2x-auckland.png)
+
+Same frame, left: the 1× picture nearest-upscaled to 2× for size; right: S3
+rendered at 2×. The road edge is the only visible difference at this zoom.
+
+![1× vs S3 at 2×](images/highres-1x-vs-2x.png)
+
+Zoom on the road edge (frame 4501): the nearest upscale shows the authored
+2-pixel staircase; the S3 rasteriser puts the edge at the continuous position
+with analytic coverage.
+
+![Road edge zoom](images/highres-edge-zoom.png)
+
+### 13.1 What was built
+
+- **Vertical duplication of the picture.** At a render scale above 1 the row
+  renderer still draws the 1× canvas row, exactly as before, into a scratch row;
+  `render_scanline()` expands it horizontally by N and the end-of-frame builder
+  writes each native row into N presented rows. Every 1× placement rule
+  (origin, margins, HUD relocation, crop note, margin audit) is untouched.
+- **Road strip rasteriser** (`game/tg2_highres.c`). For every presented row of a
+  captured road row:
+  - the strip edges are the captured silhouettes of the row and its next
+    neighbour (same authored pair family only; a family or segment change snaps
+    to the nearest row) interpolated by the sub-line position;
+  - interior art is the captured atlas row sampled nearest at the interpolated
+    centre, clamped to the row's own silhouette so a widening sub-line shows the
+    road's edge texel instead of wrapping into the verge; a narrowing sub-line
+    shows the row's verge texel;
+  - the silhouette column is blended with analytic coverage, which is the
+    "smooth edges" decision (§9.1);
+  - pixels that are not scenery are preserved: the terrain test compares the
+    native pixel with the colour the row's own captured plane-B state produces,
+    so sprites, the HUD, the player car and plane-A effects (tunnel, weather)
+    keep their native pixels. A sprite texel whose colour happens to equal the
+    scenery under it is the one false positive; the 2× previews show no such
+    artefact on the tested frames.
+- **Canvas.** The presented canvas is exactly N× the 1× canvas in every mode.
+  Engine patch `0035` lets the provider publish `width()` while the widescreen
+  mode is off, so `off` presents 512×400 at 2× without making the Widescreen row
+  report on.
+- **Option.** Engine patch `0050` gives the shared "Internal resolution" row a
+  game-owned vocabulary: `1x (off)`, `2x`, `3x`, `4x`, an experimental
+  description in the in-game menu and a note in the launcher, still stored as
+  `settings.ini` `internal_scale`. Default 1×. `TG2_HIGHRES_SCALE` remains the
+  capture-only override. The value is read once, so a change applies on the next
+  launch (the row says so). NTSC will be refused at scale > 1 when task 28
+  lands; the slot is noted, nothing is built.
+- **Widescreen 2P** stays native (decision 7): `race()` fails while
+  `$FF189E != 0`, so the builder declines every 2P picture; the pixel-identical
+  S2 evidence still holds.
+- **Qualification stream.** With `TG2_ROAD_AUDIT_DIR` each presented picture
+  writes `frame-NNNNNN.nxroad`: per native road row, the interpolated strip,
+  the committed strip, the lane-mark runs and a "fully scenery" flag.
+  `tools/check_road_artifacts.py --nx` checks the envelope, the committed
+  geometry, stripe phase, gaps and row-to-row continuity.
+
+### 13.2 Measured
+
+| Measurement | Result |
+|---|---|
+| Cost per presented frame, 2× (712×400) | ? |
+| Cost per presented frame, 3× (1068×600) | ? |
+| Cost per presented frame, 4× (1424×800) | ? |
+| Downscale check 2× (4 exact frames of the baseline route) | mean abs diff 0.023–0.037, 0 pixels differ by > 64, 37–58 edge pixels (0.05–0.08 %) |
+| Downscale check 3× | mean 0.027–0.045, 0 big-diff pixels |
+| Downscale check 4× | mean 0.030–0.049, 2–5 big-diff pixels (≤ 0.007 %) |
+| N× road audit, 2×, baseline route to frame 9000 | 6,332 presented pictures, 163,201 road rows: **0** envelope, geometry, gap, stripe or continuity violations (42,307 stripe rows, 42,388 continuity rows compared) |
+| Margin audit at 2× | 0 violations |
+| G1/G3 | see §12.3 and VALIDATION.md |
+
+The downscale numbers are the §8 S3 acceptance rule: box-downsample the N×
+picture by N and compare with the 1× reference. Only road-edge columns differ,
+by antialiasing; stripe counts and centres match (the audit checks those
+directly).
+
+### 13.3 Evidence
+
+| Path | What |
+|---|---|
+| `build/s3/check/s3/s3-summary.json` | downscale metrics per scale and frame, screenshots |
+| `build/s3/check/s3/16-9-scale{1,2,3,4}/frame-*.png` | the exact-frame pictures |
+| `build/s3/check/nx/16-9-scale2/audit/*.nxroad`, `road-artifacts-nx.json` | the N× audit records and their verdict |
+| `build/s3/check/nx/16-9-scale2/margins.csv` | the margin audit at 2× |
+| `build/s3/check/captures/captures-summary.json` | Auckland / Bavaria rain / New York snow captures and costs |
+| `build/s3/check/option/option-summary.json` | settings.ini and in-game menu round-trip |
+
+### 13.4 Reproduction
+
+```sh
+JOBS=3 tools/build-linux.sh
+build/venv/bin/python tools/check_highres.py s3        # downscale, 1x..4x
+build/venv/bin/python tools/check_highres.py nx        # N x road + margin audit
+python3 tools/check_highres.py captures                # three tracks, 2x/3x/4x
+python3 tools/check_highres.py option                  # settings.ini + Esc menu
+```
+
+(`build/venv/bin/python` only because the road-audit checker uses NumPy; the
+game tools themselves need the standard library.)
+
+### 13.5 Not verified
+
+- **No GPU path.** 4× is CPU-only; the §6.3 Deck estimate (17–27 ms) means 3×+
+  is desktop-only until a GPU path exists. Only this Mac is measured.
+- **Sprites, HUD and plane-A effects are still native content nearest-scaled**
+  (S4/S5). The player car, opponents, trees and the HUD therefore scale by
+  nearest exactly like a plain nearest upscale; the HUD is already the intended
+  integer-N× look (decision 2), the sprites become detailed variants only in S4.
+- **The terrain test is colour-based.** A sprite pixel whose colour equals the
+  scenery underneath would be repainted; none was observed on the captured
+  frames, and the downscale check would flag a large one.
+- **Weather** is drawn from plane A and preserved; the 2× rain capture shows the
+  same particles as the native picture, but the weather *margins* rule at N× is
+  inherited from the 1× composition (no N×-specific weather work).
+- **Tunnel** frames: the wall is plane A, preserved by the terrain test; the
+  opening silhouette is native-resolution.
+- **60 fps at N×** (S6) is not composed: a race at 60 fps presents the
+  synthesized 1× row expanded and repainted, so it works, but the temporal and
+  sub-line axes are not qualified together yet.
+- **Live switching** of the scale is not implemented (applies next launch).
+\n

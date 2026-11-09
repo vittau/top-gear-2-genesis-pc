@@ -1086,3 +1086,32 @@ evidence `.toml` files.
 Not verified here: a real Steam Deck / gamescope session (window size, panel
 mode, scaled output), the Deck's 1280×800 panel through an actual compositor,
 and controller-only operation of the new Diagnostics row on the device.
+
+## Task 33 — high-resolution rendering S3 (branch `vittau/tg2-highres-s3`)
+
+The road is redrawn at 2×/3×/4× from the game's own per-line width, centre,
+atlas row and palette, with analytic edges and interpolated sub-lines; every
+other pixel is the native picture nearest-scaled by N (sprites/HUD/plane-A stay
+native content until S4/S5). The render scale is the engine's "Internal
+resolution" row with the port's 1x/2x/3x/4x vocabulary (engine patch 0050), and
+engine patch 0035 publishes the N× canvas with widescreen off. All runs on this
+Mac (macOS arm64, development build, dummy video/audio except one launcher
+check), one runtime at a time.
+
+| Check | Command | Result |
+|---|---|---|
+| G1, all options off, scale 1 | `python3 tools/check_highres.py g1` | frames 60/300 `2A0B972960C5E325` / `1131D937D70234FD`; manifests 0 |
+| G1, 60 fps on, scale 1 | same | both canonical hashes retained |
+| G3, stock widescreen | `tools/verify_widescreen.py` | off / 16:9 / 21:9 pass, native centre identical at the 5 capture frames |
+| Downscale, 1x vs N x (16:9, frames 3400/3500/3600/4501) | `build/venv/bin/python tools/check_highres.py s3` | 2× mean diff 0.023–0.037, 0 pixels > 64; 3× 0 big-diff pixels; 4× 2–5 of 71,200 |
+| N× road audit, 2×, route to frame 9000 | `build/venv/bin/python tools/check_highres.py nx` | 6,332 pictures / 163,201 road rows: 0 envelope, geometry, gap, stripe, continuity violations |
+| Margin audit at 2× | same | 0 violations |
+| Captures: Auckland 2×/3×/4×, Bavaria rain 2×, New York snow 2× | `python3 tools/check_highres.py captures` | pictures present at the expected sizes, manifests 0 |
+| Option round-trip | `python3 tools/check_highres.py option` | settings.ini 1/2/3/4 → the reported scale; 8 → 1×; the Esc row offers 1x (off)…4x and writes settings.ini |
+| 2P split-screen | `python3 tools/check_highres.py split` | native geometry, 7,901/7,901 framebuffer hashes identical with the N× path enabled |
+| Menus | `python3 tools/check_highres.py g1` | stock canvas/hashes (the builder declines non-race pictures) |
+
+Evidence: `build/s3/check/` (summaries, screenshots, audit records) and
+`docs/images/highres-*.png` (curated 2×/4× captures). Not verified: GPU/Deck
+cost, S4/S5 sprite and HUD work, 60 fps composition at N×, live scale switching,
+NTSC exclusion (nothing to build yet).

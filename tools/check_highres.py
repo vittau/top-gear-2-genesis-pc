@@ -642,10 +642,13 @@ def check_s3(args):
     return 0 if not failures else 1
 
 
+# The password's country field is the 4-bit country; a password always starts
+# at that country's first race, so only Bavaria (Germany slot 1) is rainy from
+# the entry point (docs/PASSWORDS.md).
 TRACKS = {
     'auckland': dict(country=0, stage=0, note='straight, curve and hill frames; the tunnel is here'),
-    'bavaria-rain': dict(country=20, stage=0, note='rain from the start (docs/PASSWORDS.md)'),
-    'new-york-snow': dict(country=62, stage=0, note='snow at slot 3; the entry race is dry but the atlas/weather path is exercised'),
+    'bavaria-rain': dict(country=5, stage=0, note='Germany slot 1, rainy from the start (docs/PASSWORDS.md)'),
+    'canada': dict(country=2, stage=0, note='a dry second track with its own atlas'),
 }
 
 
@@ -924,7 +927,7 @@ def main():
     s = sub.choices['captures']
     s.add_argument('--mode', default='16:9')
     s.add_argument('--offsets', type=int, nargs='+', default=[500, 650, 800])
-    s.add_argument('--plan', default='auckland:2,3,4;bavaria-rain:2;new-york-snow:2')
+    s.add_argument('--plan', default='auckland:2,3,4;bavaria-rain:2;canada:2')
     s = sub.choices['nx']
     s.add_argument('--route', type=Path, default=ROOT / 'game/baseline-route.json')
     s.add_argument('--mode', default='16:9')
