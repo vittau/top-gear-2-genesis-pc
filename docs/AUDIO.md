@@ -17,6 +17,11 @@ impacts — on chip B, the latter on a second Z80 core). Verified headless, on a
 null sink, and with the persisted-BOTH boot regression. Stock modes are
 byte-identical. Owner listening confirmation is required.
 
+Task 30 (§13) adds four player options on top of that: **Music volume**,
+**SFX volume**, **Clean FM** (YM3438 core, no ladder distortion) and **Clean
+engine samples** (band-limited reconstruction of the DAC stream). All four
+default to the stock sound, which stays byte-identical.
+
 ## 1. The setting
 
 | Address | Size | Meaning |
@@ -1156,4 +1161,267 @@ python3 tools/audio_device_capture.py --exe build/TG2Recomp \
 python3 tools/audio_drc_stats.py build/device/after/frame-stats.csv \
     build/device/before/frame-stats.csv
 pactl unload-module <id>
+```
+
+## 13. Clean FM, separate volumes and the engine/nitro DAC (task 30)
+
+Four player options, all in the **real-time** pipeline (the mixer and the chip
+model that synthesise sound while the game runs), all switchable from the
+in-game Esc menu and the launcher, and all defaulting to the stock sound:
+
+| Option | settings.ini | Env override for captures | Default |
+|---|---|---|---|
+| Music volume | `[mods.musicvol] level` (0..100, step 5) | `TG2_MUSIC_VOL` | 100 |
+| SFX volume | `[mods.sfxvol] level` (0..100, step 5) | `TG2_SFX_VOL` | 100 |
+| Clean FM | `[mods.cleanfm] enabled` | `TG2_CLEAN_FM` | off |
+| Clean engine samples | `[mods.dacresample] enabled` | `TG2_DAC_RESAMPLE` | off |
+
+With every option at its default the three stock captures are **byte-identical**
+to a `main` build of the same scripts (whole-run WAV MD5):
+
+| Capture | before (this branch, no options) | after (options implemented, all default) |
+|---|---|---|
+| MUSIC | `fbfc0da19dac55b01046a39e75256f06` | `fbfc0da19dac55b01046a39e75256f06` |
+| SOUND EFFECTS | `592cb1a1d695d9e799c2b7aa441e585c` | `592cb1a1d695d9e799c2b7aa441e585c` |
+| BOTH | `e58ce500809454a64e645881553be714` | `e58ce500809454a64e645881553be714` |
+
+The 4:3 Off-mode frame hashes are unchanged: frame 60 `2A0B972960C5E325`,
+frame 300 `1131D937D70234FD`.
+
+Engine patches: `0040-separate-music-sfx-volumes.patch` (writer classification
+and the two faders) and `0041-fm3438-and-dac-reconstruction.patch` (the two
+chip-model options).
+
+### 13.1 Classifying a write by source
+
+Both sliders need to know what a chip write *plays*, and that is a property of
+the writer:
+
+| Writer (`AudioEvent.origin`) | Source |
+|---|---|
+| first Z80 core, while the resident music driver is in Z80 RAM | music |
+| first Z80 core, after the 68K has uploaded the race SFX PCM image over it | sound effects |
+| 68K FM/PSG engine (and boot-time 68K writes) | sound effects |
+| second Z80 core (BOTH mode, race SFX PCM image) | sound effects |
+
+The first-core case is the only ambiguous one, because the cartridge puts two
+different programs in the same 8 KB. Both images have a distinct entry stub at
+`$A00000` — the music driver starts `DI; LD SP,$1FF0` (`F3 31 F0 1F C3 42`) and
+the race image starts `JP $0410` (`C3 10 04`) — so `game/tg2_audio_both.c`
+reads the first core's RAM header every frame (`tg2_audio_frame_pre`, plus the
+upload routine's RTS at `$070188`) and calls `audio_set_first_z80_is_sfx()`.
+That is a host-side *read* of the machine image: nothing in guest RAM is
+written, and the stock modes never see a difference. In SFX mode this flips
+exactly when the race image is uploaded (verified live: the role changes to SFX
+on the frame the header becomes `C3 10 04`), and it flips back on a guest reset
+(the boot re-uploads the driver).
+
+### 13.2 How the faders are applied
+
+The fader is a fixed-point gain (`256 = 100 %`) on the *generated* stream, i.e.
+before the WAV tap and before the speaker master Volume, so a capture measures
+exactly what a player hears at the same master setting.
+
+* **A frame that carries one source** (all of a stock MUSIC-mode race, all of a
+  stock SOUND EFFECTS race, either menu, the boot) is the one chip's stock
+  stream, so the fader is a plain scale of it: `out = stock * g / 256`. The
+  source's own idle DAC offset scales with it, like a real fader. No second
+  chip exists and nothing else changes.
+* **A frame that really carries both sources** in one chip is rendered on two
+  chips exactly as BOTH mode is (chip A music, chip B sound effects, the stock
+  merged-stamp order for chip B), and the two streams are summed at their own
+  gains. Once both sources have coexisted, the mixer stays on two chips so a
+  note's tail is never dropped when a later frame happens to carry no writes.
+* **A frame with no writes at all** keeps sounding with the previous frame's
+  source(s): the chip's voices keep playing, so the fader must follow the
+  sounding source, not the empty frame.
+
+At 100 %/100 % `s_vol_split` is off and none of this runs.
+
+### 13.3 Slider measurements
+
+Same deterministic route for every capture (menu → SOUND → RACE SOUND → leave →
+1P race, then accelerate), 9000 wall frames, offline WAV at the mixer's
+223 721 Hz. "Ratio" is per-second RMS against the same run with the option at
+100 % (median over the capture).
+
+| Run | Ratio median | What it shows |
+|---|---:|---|
+| MUSIC mode, Music 50 % | **0.4999** | music-only mode: exactly half |
+| SOUND EFFECTS mode, SFX 50 % | **0.4999** | race window (first 2 s are menu music, still 1.000) |
+| MUSIC mode, Music 50 %, menu window 10–22 s | **0.4999** | the title theme follows the music slider |
+| BOTH mode, Music 50 % | menu 0.4999, race 0.72–0.82 | only chip A is scaled; the SFX layer keeps its level |
+| MUSIC mode, SFX 50 % | 1.0000 from 1.0 s on | the SFX slider has nothing to act on in music-only playback |
+| SOUND EFFECTS mode, SFX 0 % | race RMS **0.0** | a muted source is silent, and the stream is exactly zero |
+| MUSIC mode, Music 0 % | menu/race RMS **0.0** | same for music |
+
+The single exception in the MUSIC-mode/SFX-50 % row is the first second: the
+cartridge's own boot code writes the 68K FM/PSG chip before the music driver is
+uploaded, and those writes are (correctly) sound effects, so they follow the SFX
+slider. Peak difference over the whole capture: 190 of 32767 in that second,
+zero afterwards.
+
+All nine captures report **0 pops** and **0 digital-silence dropouts** from
+`tools/audio_glitch_detect.py`; a 15 s realtime run (not turbo) with all four
+options engaged logged `underruns=0 overflows=0 conceals=0` from the DRC bridge
+(`GENESIS_AUDIO_BUFFER_TRACE=1`).
+
+### 13.4 Clean FM
+
+`Clean FM` renders both virtual chips with ymfm's **YM3438** (`ymfm::ym3438`)
+instead of the stock YM2612 model. The YM3438 is the same FM engine without the
+YM2612's 9-bit ladder: no per-channel `dac_discontinuity` (the +4/-3 crossover
+step) and the CMOS DAC path for channel 6. Notes, patches, timing, register
+behaviour and the hardware output LPF are unchanged.
+
+Measured on the model itself (`build/t/model_harness`, a standalone program that
+links the game's own `ym2612_ymfm.cpp` and plays one full-level FM note):
+
+| Core | DC offset (LSB) | THD (harmonics 2–10 vs fundamental) |
+|---|---:|---:|
+| YM2612 (stock) | **+322.1** | **+6.34 dBc** |
+| YM3438 (clean) | **−6.0** | **−10.67 dBc** |
+
+In the game's own capture (MUSIC mode, same route):
+
+| Quantity | Stock YM2612 | Clean FM |
+|---|---:|---:|
+| whole-run mean (DC) | **+200.5** | **−50.7** |
+| RMS level vs stock | 1.000 | 0.973 (−0.24 dB) |
+| pops / digital-silence dropouts | 0 / 0 | 0 / 13 |
+
+The 13 "dropouts" the detector reports are 2 ms runs of *exact digital zero* at
+the music's own note gaps: the stock chip's constant +380 idle offset keeps the
+same gaps from ever reading as zero, so they are a measurement artefact of the
+DC bias the clean core removes, not a new gap.
+
+### 13.5 Clean engine samples (band-limited DAC reconstruction)
+
+The engine and nitro are the race Z80 image's DAC player: it writes YM2612
+register `$2A` (low bank, data port 1) at ~6.6 kHz and the chip's DAC holds each
+value until the next write. `Clean engine samples` replaces that sample-and-hold
+with a band-limited reconstruction inside the chip model:
+
+* the wrapper shadows the two register-address latches, so a `$2A` data write is
+  recognised and buffered as a *level* instead of reaching the DAC;
+* once per **chip output sample** (53 267 Hz) the held level is pushed into a
+  95-tap **Kaiser-windowed sinc** (3.3 kHz corner, β = 7: flat to 2 kHz,
+  −2.7 dB at 3 kHz, −73 dB at 5 kHz), and the filtered value is written back to
+  `$2A` before that sample is generated; the guest's address latch is restored
+  after each write, so no other register write is disturbed;
+* only the DAC register is touched — every FM channel, the ladder behaviour and
+  the chip's own bit depth are rendered exactly as before;
+* group delay is 47 output samples = **0.88 ms**, inside the existing audio
+  budget; the save state carries the filter's phase.
+
+Measured on the model (440 Hz tone fed to the DAC at exactly 6.6 kHz, the same
+register path the game uses):
+
+| | Stock (sample & hold) | Reconstructed | Δ |
+|---|---:|---:|---:|
+| images at 6.6k ± 440, 13.2k ± 440, 19.8k ± 440 | **−26.1 dBc** | **−59.6 dBc** | **−33.5 dB** |
+| energy above 3.3 kHz | **−25.6 dBc** | **−42.6 dBc** | −17.0 dB |
+| passband 1–3.3 kHz | −32.3 dBc | −33.5 dBc | −1.2 dB (tone level unchanged: fundamental identical) |
+
+With Clean FM also on the images reach **−60.9 dBc**, because the ladder's own
+±4 step is no longer re-added after the filter. The residual floor is the 8-bit
+`$2A` data port re-quantisation (about −60 dBc), not an image.
+
+In the game's own race capture (engine + nitro, 6 s window at 85 s):
+
+| Band | Stock | Reconstructed | Δ |
+|---|---:|---:|---:|
+| 200 Hz–1 kHz | 47.42 dB | 47.60 dB | +0.18 dB |
+| 1–3.3 kHz | 34.10 dB | 34.06 dB | −0.04 dB |
+| 3.3–6.6 kHz | 17.95 dB | 9.34 dB | **−8.6 dB** |
+| 6.6–12 kHz | 12.42 dB | 1.15 dB | **−11.3 dB** |
+| 12–20 kHz | 4.10 dB | −7.21 dB | **−11.3 dB** |
+| total above 3.3 kHz | — | — | **−5.5 dB** (the DAC is one of several sources) |
+| peak sample | 9708 | 9219 | −5 % (the removed edges were the peaks) |
+
+With the nitro script (`C` pressed 15 times in the race) the two captures report
+**0 pops, 0 digital-silence dropouts, 0 DC-hold dropouts** and the same 68K PCM
+command stream.
+
+**Why it is a separate option and not part of Clean FM.** They act on different
+layers: Clean FM changes how the chip synthesises (the ladder), Clean engine
+samples changes how the sample player's stream is reconstructed. Either is
+audible without the other — a MUSIC-mode race has the stock ladder but no
+engine samples, and a SOUND EFFECTS race has the engine samples with the stock
+ladder — so they are two switches, each defaulting to stock.
+
+### 13.6 Cost and save states
+
+Realtime frame CPU (sum of the runner's per-frame CPU phases, p50/p95 over 1080
+frames of the nitro race, `GENESIS_FRAME_STATS`):
+
+| Configuration | CPU p50 | CPU p95 |
+|---|---:|---:|
+| stock | 483 µs | 624 µs |
+| Clean FM | 483 µs | 751 µs |
+| Clean engine samples | 568 µs | 728 µs |
+| both | 566–570 µs | 706–739 µs |
+
+So the reconstruction costs **+85 µs per frame** (95 taps × 53 267 samples/s ≈
+5 M multiply-adds/s, 0.5 % of one core) and the YM3438 core costs nothing
+measurable; the faders cost nothing measurable. p95 is dominated by
+run-to-run host noise on this shared machine.
+
+The two chip options extend the chip state: the variant, the DAC latch shadows,
+the last DAC byte and the reconstruction delay line are written after the
+existing wrapper fields in both `ym2612_save_state` and `ym2612_rb_save`
+(tagged with `0x54473203`). Loads accept the pre-task-30 image (the fields then
+keep their defaults), so an older quickstate still loads; a state saved with an
+option on resumes with the same filter phase and the same core.
+
+### 13.7 What is not verified
+
+* The launcher rows: the game offers the four options as launcher mod features
+  (integer sliders / checkboxes in the `Sound` group). The launcher itself needs
+  OpenGL, which the dummy video driver on this macOS host cannot provide, so the
+  launcher UI was not exercised here - the in-game Esc menu was (rows read back
+  over TCP and a value changed through the real key path, which persisted
+  `level = 85` into `settings.ini`). The options live in the in-game **Audio**
+  section directly under the master Volume; the shared launcher settings page
+  belongs to recomp-ui and shows them on its Mods page instead.
+* The 100 %/50 % numbers are levels, not a listening judgement: whether the
+  clean core and the reconstruction sound better is the owner's call (A/B files
+  below).
+* There is no PipeWire null sink on this host, so the "real device" numbers are
+  the offline streams plus one realtime session through SDL's dummy device
+  (0 underruns, 0 overflows, 0 conceals, callback peak 166 µs).
+* Nitro in the captures comes from scripted `C` presses; the routes are the
+  same in every pair, so the comparison is like for like.
+
+### 13.8 Reproduce
+
+```sh
+JOBS=3 tools/build-linux.sh ~/roms/genesis/tg2.bin build
+
+# deterministic routes (input only), plus a nitro variant of the race tail
+python3 tools/tg2_both_route.py --mode sfx   --script-out build/base/sfx.input   --script-race
+python3 tools/tg2_both_route.py --mode music --script-out build/base/music.input --script-race
+python3 tools/tg2_both_route.py --mode both  --script-out build/base/both.input  --script-race
+
+# stock, and each option
+for v in "" "TG2_MUSIC_VOL=50" "TG2_SFX_VOL=50" "TG2_CLEAN_FM=1" "TG2_DAC_RESAMPLE=1"; do
+  SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy env $v build/TG2Recomp \
+      ~/roms/genesis/tg2.bin --no-launcher --widescreen off --max-frames 9000 \
+      --turbo --wav build/t/run.wav --input-script build/base/sfx.input
+  md5sum build/t/run.wav
+done
+
+# measurements
+python3 tools/audio_glitch_detect.py --device build/t/run.wav
+# model harness (links the game's own ym2612_ymfm.cpp)
+clang++ -O2 -std=c++17 -o build/t/model_harness build/t/model_harness.cpp \
+    segagenesisrecomp/runner/audio/ym2612_ymfm.cpp \
+    segagenesisrecomp/runner/external/ymfm/src/*.cpp \
+    -I segagenesisrecomp/runner/audio -I segagenesisrecomp/runner \
+    -I segagenesisrecomp/runner/external/ymfm/src
+build/t/model_harness dac && build/t/model_harness fm
+
+# A/B for listening (~/Music/tg2-ab, outside git)
+python3 tools/audio_wav_convert.py build/t/final-music.wav \
+    ~/Music/tg2-ab/t30-cleanfm-menu-stock.wav --rate 44100 --start 10 --end 22
 ```
