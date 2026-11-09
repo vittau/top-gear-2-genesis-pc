@@ -38,5 +38,5 @@ the machine-resource rules, and never trigger CI.
 | [26](26-owner-playtest-e586c00.md) | Bugs from the owner's e586c00 playtest (release) | Done; merged 2026-11-09, after v0.1.0 |
 | [27](27-setup-screen-quickstate.md) | Save states on the car setup screen | Mapped, not started ([roadmap](../ROADMAP.md#save-states-on-the-car-setup-screen)) |
 | [28](28-ntsc-scanlines.md) | Blargg NTSC filter and scanlines | Paused by the owner (2026-11-09), not started |
-| [29](29-highres-design.md) | High-resolution rendering — ground truth and design | In progress |
+| [29](29-highres-design.md) | High-resolution rendering — ground truth and design | Done: `docs/HIGHRES.md`; owner decisions pending (§9) |
 | [30](30-clean-fm-and-pcm.md) | Clean FM, separate volumes, better engine/nitro PCM | In progress |
