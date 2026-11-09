@@ -55,7 +55,7 @@ MODES = {
 }
 
 UPGRADES = ('u32', 'u34', 'u36', 'u38', 'u3a', 'u3c', 'u3e', 'u40', 'u42',
-            'u44', 'u46', 'u48', 'u4a', 'u4c', 'u4e', 'u50', 'u52', 'u54')
+            'u44', 'u46', 'u48', 'u4a', 'u4c', 'u4e', 'u50')
 
 
 def manifests(out: Path) -> dict:
@@ -142,19 +142,18 @@ def main():
     a = p.parse_args()
 
     mode = MODES[a.mode]
-    fields = dict(country=a.country, stage=a.stage, money=a.money)
+    fields = dict(country=a.country, stage=a.stage, money=a.money, u52=0, u54=1)
     if a.upgrades:
-        fields.update({name: (7 if name in ('u52', 'u54') else 3)
-                       for name in UPGRADES})
+        fields.update({name: 3 for name in UPGRADES})
     password = pw.encode(**fields)
     if password['sum'] != sum(password[k] for k, _, _ in pw.FIELDS):
-        raise SystemExit('password checksum invalid (money + upgrades > 255)')
+        raise SystemExit('internal password checksum mismatch')
     a.out.mkdir(parents=True, exist_ok=True)
 
     r = Runner(port=a.port, out=a.out, widescreen=mode['widescreen'],
                max_frames=400000, env_extra=dict(mode['env']),
                extra_args=['--turbo'] if a.turbo else [],
-               video_driver='dummy' if not a.turbo else 'offscreen')
+               video_driver='dummy' if sys.platform == 'darwin' or not a.turbo else 'offscreen')
     da = driver_args(a)
     races = []
     evidence = dict(result='error', country=a.country, stage=a.stage,

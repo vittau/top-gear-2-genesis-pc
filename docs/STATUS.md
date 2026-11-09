@@ -190,10 +190,10 @@ An easy "Cheats" page in the in-game menu (Esc): pick the circuit (any of the
 mechanism: build the state through the game's own password path. The codec is
 reversed (`docs/PASSWORDS.md`, `tools/tg2_password.py`), so the game loads a
 consistent championship state as if a password had been typed. Apply it at a
-safe point (menu or between races), never mid-race. The password checksum caps
-money + upgrades (a sum of 255 or less); if a cheat needs more, write the RAM
-fields after a valid load. Open question from task 22: how a password selects
-races 2–4 of a country. `stage` turned out to be the difficulty. Using a cheat
+safe point (menu or between races), never mid-race. The corrected password
+codec supports all level-3 parts and up to $1,023,000 per player (the checksum
+is 15-bit, not capped at 255). Passwords start at country slot 1; they have no
+field for races 2–4. `stage` is difficulty. Using a cheat
 changes nothing in stock behaviour; with no cheat applied, output stays
 byte-identical.
 
