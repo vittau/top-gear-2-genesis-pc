@@ -47,7 +47,7 @@ The other groups have no set order.
 
 | Group | Item | Summary | Spec |
 |---|---|---|---|
-| Pending from v0.1.0 | [Steam Deck feedback](#steam-deck-feedback-owner-playtest-2026-11-09) | Picture 16:9 instead of 16:10; logs written in normal use. In progress. | [32](tasks/32-deck-aspect-and-quiet-logs.md) |
+| Pending from v0.1.0 | [Steam Deck feedback](#steam-deck-feedback-owner-playtest-2026-11-09) | Picture 16:9 instead of 16:10; logs written in normal use. Fixed on `main` (task 32); needs a real Deck run. | [32](tasks/32-deck-aspect-and-quiet-logs.md) |
 | Pending from v0.1.0 | [Real-device checks](#real-device-checks) | Play Windows, Intel macOS and the Steam Deck (controller only) on real hardware; finish the Apple Silicon check. | |
 | Pending from v0.1.0 | [Quiver Launcher listing](#quiver-launcher-listing) | Submitted by the owner on 2026-11-08; waiting for a Quiver maintainer to verify it. | |
 | Visual | [High-resolution rendering](#high-resolution-rendering) | Races above 224 lines: road re-rasterised from the game's per-line state, most detailed sprite LOD, clean background, sharp HUD. **Priority 2.** | [29](tasks/29-highres-design.md) |
@@ -73,10 +73,11 @@ Out of scope (owner): save states on the password screen.
 
 The owner played on a Steam Deck: it worked well, but the picture was 16:9
 instead of the panel's 16:10, and a ~1.4 MB file was written to `logs/` (the
-feedback replay, on by default). Fix in progress:
-[task 32](tasks/32-deck-aspect-and-quiet-logs.md) — Adaptive follows the
+feedback replay, on by default). Fixed on `main` by
+[task 32](tasks/32-deck-aspect-and-quiet-logs.md): Adaptive follows the
 device's output, the game starts fullscreen under Gamescope, and diagnostics
-become opt-in (`--debug` or the toggle).
+are opt-in (`--debug` or the Diagnostics row). Still needs a run on the
+owner's Deck.
 
 ### Real-device checks
 

@@ -148,6 +148,11 @@ and run it.
    controller-only play in Game Mode, but the Steam Deck build still needs play
    on real hardware; no terminal is needed after setup.
 
+In Game Mode (gamescope) the game starts fullscreen at the panel's own size, so
+**Widescreen → Adaptive** fills the Deck's 16:10 screen instead of showing a
+16:9 picture with bars. Set **Fullscreen** in the options menu if you want to
+change that.
+
 ### Windows
 
 1. Extract the whole ZIP to a writable folder, such as one under your user
@@ -180,8 +185,9 @@ outside *Applications* and put the ROM in the same folder, next to the app.
 If no matching ROM is found next to the program, the launcher lets you pick
 one.
 
-`settings.ini`, save states and logs are written next to the executable. On
-macOS an app in *Applications* keeps them in
+`settings.ini`, save states and (only when you turn diagnostics on for a bug
+report) logs are written next to the executable. On macOS an app in
+*Applications* keeps them in
 `~/Library/Application Support/TG2Recomp/`, together with the copy of the ROM
 you picked, and also looks for the ROM there. A portable copy elsewhere writes
 them next to `TG2Recomp.app`, or to that Application Support folder when its
@@ -240,6 +246,7 @@ saved to `settings.ini`:
 | HUD | Centered, Edges | Centered |
 | Hide overscan | On (crops the empty top/bottom race bands), Off | On |
 | Race sound | Sound effects, Music, Both | Sound effects |
+| Diagnostics (bug report) | On, Off | Off |
 
 Race sound is also in the game's own *Sound* menu. Both menus change the same
 setting. Linear filter (Graphics) is off by default and avoids edge artifacts
@@ -345,6 +352,23 @@ Packaging, CI and the release process are described in
 Report bugs with your platform, the build version (in `BUILD-INFO.txt`; on
 macOS inside the app, under `Contents/Resources`), your settings, and the
 steps to reproduce them. Don't attach ROMs, save states or generated code.
+
+**Diagnostics are off in normal play**, so a normal session writes no logs. For
+a bug report, turn them on for one session:
+
+- **On a Steam Deck or with a controller:** open the options menu (Esc /
+  Back + RB), choose **Mods → Diagnostics (bug report) → On**, then quit and
+  start the game again and reproduce the problem. The choice is saved, so turn
+  it back **Off** afterwards.
+- **On desktop:** the same switch is in the launcher's Mods page, or start the
+  game once with `--debug` (for example
+  `./TG2Recomp-x86_64.AppImage --debug`); `--debug` is not saved.
+
+Diagnostics write a feedback replay to `logs/` next to the program
+(`TG2-feedback.replay` plus its `.config.ini`, `.mods.txt` and `.sav`
+sidecars), together with the runtime evidence files (`dispatch_misses.toml` and
+friends). Attach the whole `logs/` folder and those `.toml` files; they are not
+needed for ordinary play and can be deleted afterwards.
 
 ## Support the project
 
