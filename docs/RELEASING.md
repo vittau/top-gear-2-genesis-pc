@@ -135,26 +135,38 @@ Release payloads contain `BUILD-INFO.txt` with the game and engine revisions
 and `README.txt` with end-user instructions. The `build` run URL identifies the
 exact commit each payload came from.
 
-The artifacts are release candidates until the owner validates on real
-hardware (Steam Deck/SteamOS with a controller, Windows, and both macOS
-architectures). CI proves the Linux glibc floor and a headless boot on all
-three platforms; it does not prove audio, input or rendering on a device.
+The artifacts are release candidates for platforms not yet validated by play
+on real hardware. The game has been played on Linux (x86_64) and macOS
+(Apple Silicon). Windows, macOS on Intel and the Steam Deck (SteamOS with a
+controller) are built in CI and pass headless smoke tests but still need
+validation on real devices. CI proves the Linux glibc floor and a headless
+boot on all three platforms; it does not prove audio, input or rendering on a
+device.
 
 ## End-user instructions (English)
 
 You need a Top Gear 2 (USA) ROM. The game identifies it by content (CRC32
 `BD3074D2`, 1,048,576 bytes), so any filename and extension work.
 
-**Windows, Linux tarball and macOS**
+**Windows and Linux tarball**
 
-1. Unpack the release: the Windows folder as-is, `TG2Recomp-linux-x86_64.tar.gz`
-   on Linux, or `TG2Recomp-macos.zip` on macOS.
-2. Put your ROM in the same folder as `TG2Recomp` / `TG2Recomp.exe`. On macOS
-   put it next to `TG2Recomp.app` (the folder containing the app bundle), not
-   inside the bundle.
-3. Run `TG2Recomp`, `TG2Recomp.exe`, or double-click `TG2Recomp.app`.
+1. Unpack the release: the Windows folder as-is, or
+   `TG2Recomp-linux-x86_64.tar.gz` on Linux.
+2. Put your ROM in the same folder as `TG2Recomp` / `TG2Recomp.exe`.
+3. Run `TG2Recomp` or `TG2Recomp.exe`.
 4. Done: no installation, setup, or emulator. If no matching ROM is found the
    launcher/picker opens instead.
+
+**macOS**
+
+1. Unpack `TG2Recomp-macos.zip` and move `TG2Recomp.app` to *Applications*.
+2. The app is not signed by Apple. Clear the download quarantine once, in
+   Terminal: `xattr -dr com.apple.quarantine /Applications/TG2Recomp.app`
+3. Open `TG2Recomp.app` and pick your ROM in the launcher. The app keeps a copy
+   and starts the game directly from then on.
+
+To keep it portable instead, leave `TG2Recomp.app` outside *Applications* and
+put the ROM next to it (in the folder containing the bundle, not inside it).
 
 **Linux AppImage (single file)**
 
@@ -167,9 +179,9 @@ You need a Top Gear 2 (USA) ROM. The game identifies it by content (CRC32
    has FUSE and the plain launch works.
 
 `settings.ini`, logs and saves are written next to the executable (Linux,
-Windows) or next to `TG2Recomp.app` on macOS. If that folder is read-only
-(for example `/Applications`), macOS uses
-`~/Library/Application Support/TG2Recomp/` instead.
+Windows). On macOS an app in *Applications* keeps them, with the ROM copy, in
+`~/Library/Application Support/TG2Recomp/`; a portable copy writes them next
+to `TG2Recomp.app`, or to that folder when its own folder is read-only.
 
 ## Instruções para o usuário (Português)
 
@@ -177,18 +189,26 @@ Você precisa da ROM de Top Gear 2 (USA). O jogo identifica o cartucho pelo
 conteúdo (CRC32 `BD3074D2`, 1.048.576 bytes), então qualquer nome e extensão
 funcionam.
 
-**Windows, tarball do Linux e macOS**
+**Windows e tarball do Linux**
 
-1. Descompacte a versão: a pasta do Windows, o
-   `TG2Recomp-linux-x86_64.tar.gz` no Linux, ou o `TG2Recomp-macos.zip` no
-   macOS.
-2. Coloque a ROM na mesma pasta de `TG2Recomp` / `TG2Recomp.exe`. No macOS,
-   coloque ao lado de `TG2Recomp.app` (na pasta que contém o aplicativo), não
-   dentro do pacote.
-3. Execute `TG2Recomp`, `TG2Recomp.exe`, ou dê um duplo clique em
-   `TG2Recomp.app`.
+1. Descompacte a versão: a pasta do Windows, ou o
+   `TG2Recomp-linux-x86_64.tar.gz` no Linux.
+2. Coloque a ROM na mesma pasta de `TG2Recomp` / `TG2Recomp.exe`.
+3. Execute `TG2Recomp` ou `TG2Recomp.exe`.
 4. Pronto: não precisa instalar, configurar nem usar emulador. Se nenhuma ROM
    compatível for encontrada, o seletor de arquivos abre.
+
+**macOS**
+
+1. Descompacte o `TG2Recomp-macos.zip` e mova o `TG2Recomp.app` para
+   *Aplicativos*.
+2. O app não é assinado pela Apple. Remova a quarentena do download uma vez,
+   no Terminal: `xattr -dr com.apple.quarantine /Applications/TG2Recomp.app`
+3. Abra o `TG2Recomp.app` e escolha a ROM no launcher. O app guarda uma cópia
+   e, daí em diante, abre o jogo direto.
+
+Para usar no modo portátil, deixe o `TG2Recomp.app` fora de *Aplicativos* e
+coloque a ROM ao lado dele (na pasta que contém o pacote, não dentro dele).
 
 **AppImage do Linux (arquivo único)**
 
@@ -201,33 +221,41 @@ funcionam.
    normalmente tem FUSE e a execução normal funciona.
 
 `settings.ini`, logs e saves são gravados ao lado do executável (Linux,
-Windows) ou ao lado de `TG2Recomp.app` no macOS. Se essa pasta for somente
-leitura (por exemplo `/Applications`), o macOS usa
-`~/Library/Application Support/TG2Recomp/`.
+Windows). No macOS, um app em *Aplicativos* os guarda, junto com a cópia da
+ROM, em `~/Library/Application Support/TG2Recomp/`; uma cópia portátil grava
+ao lado do `TG2Recomp.app`, ou nessa pasta quando a sua própria pasta é
+somente leitura.
 
 ## Options (English)
 
 Every port option can be changed with only a controller, either before
 starting or from the in-game menu, and is saved immediately in `settings.ini`
-next to the executable (`TG2Recomp` / `TG2Recomp.exe`).
+next to the executable (`TG2Recomp` / `TG2Recomp.exe`). On macOS it goes
+where the end-user instructions above describe.
 
 | Option | Values | Default | Persisted as |
 |---|---|---|---|
 | Widescreen | Off / Adaptive (fit) / 16:9 / 21:9 (32:9 also available) | Adaptive | `[mods.widescreen] enabled`, `aspect` |
 | 60 fps races | Off / On | On | `[mods.race60] enabled` |
 | HUD | Centered / Edges | Centered | `[mods.hud] placement` |
+| Hide overscan | On (crops the empty top/bottom race bands) / Off | On | `[mods.overscan] hidden` |
+| Race sound | Sound effects / Music / Both | Sound effects | `[mods.racesound] mode` |
 
 - **Launcher:** run `TG2Recomp --launcher` to open it even when the ROM is
   already beside the executable (a plain double-click still boots straight
   into the game). Open **Mods**, then **Features**. D-pad moves, A/click
   selects or toggles, B goes back.
-- **In-game menu:** press F1 or Esc on a keyboard. On a controller, hold
+- **In-game menu:** press Esc on a keyboard. On a controller, hold
   **Back + RB** to open or close it. D-pad moves, A accepts or toggles, B goes
   back, X closes.
 - **60 fps races** applies from the next race start. Changing it during a race
   never changes that race's physics.
 - **HUD: Edges** only affects widescreen races; **Centered** is the stock
   centered HUD and has no effect when widescreen is Off.
+- **Race sound** is also available in the game's own *Sound* menu; both change
+  the same setting.
+- **Linear filter** (Graphics) is off by default and avoids edge artifacts at
+  the picture boundary (see [docs/LINEAR_FILTER.md](LINEAR_FILTER.md) in the source repository).
 - `settings.ini` is hand-editable. Delete it to return every option to its
   default. `TG2_RACE_60FPS=0|1` and `TG2_HUD_MODE=centered|edges` are
   probe-only overrides and are never saved.
@@ -236,25 +264,32 @@ next to the executable (`TG2Recomp` / `TG2Recomp.exe`).
 
 Todas as opções do port podem ser alteradas só com o controle, antes de
 começar ou pelo menu dentro do jogo, e são salvas na hora em `settings.ini`,
-ao lado do executável (`TG2Recomp` / `TG2Recomp.exe`).
+ao lado do executável (`TG2Recomp` / `TG2Recomp.exe`). No macOS, ele fica
+onde as instruções para o usuário acima indicam.
 
 | Opção | Valores | Padrão | Salva como |
 |---|---|---|---|
 | Widescreen | Desligado / Adaptativo (fit) / 16:9 / 21:9 (32:9 também disponível) | Adaptativo | `[mods.widescreen] enabled`, `aspect` |
 | 60 fps nas corridas | Desligado / Ligado | Ligado | `[mods.race60] enabled` |
 | HUD | Centralizado / Nas bordas | Centralizado | `[mods.hud] placement` |
+| Ocultar overscan | Ligado (corta as faixas vazias em cima/embaixo nas corridas) / Desligado | Ligado | `[mods.overscan] hidden` |
+| Som da corrida | Efeitos sonoros / Música / Ambos | Efeitos sonoros | `[mods.racesound] mode` |
 
 - **Launcher:** execute `TG2Recomp --launcher` para abri-lo mesmo com a ROM já
   ao lado do executável (um duplo clique normal continua indo direto ao jogo).
   Abra **Mods** e depois **Features**. O direcional move, A/clique seleciona
   ou alterna, B volta.
-- **Menu dentro do jogo:** F1 ou Esc no teclado. No controle, segure
+- **Menu dentro do jogo:** Esc no teclado. No controle, segure
   **Back + RB** para abrir ou fechar. O direcional move, A aceita ou alterna,
   B volta, X fecha.
 - **60 fps nas corridas** vale a partir da próxima corrida. Mudar durante uma
   corrida não altera a física daquela corrida.
 - **HUD: Nas bordas** só vale em corridas widescreen; **Centralizado** é o HUD
   original, centralizado, e não tem efeito com widescreen desligado.
+- **Som da corrida** também está no menu *Sound* do próprio jogo; os dois
+  alteram a mesma configuração.
+- **Filtro linear** (Gráficos) vem desligado por padrão e evita artefatos nas
+  bordas da imagem (veja [docs/LINEAR_FILTER.md](LINEAR_FILTER.md) no repositório-fonte).
 - `settings.ini` pode ser editado à mão. Apague o arquivo para voltar todas as
   opções ao padrão. `TG2_RACE_60FPS=0|1` e `TG2_HUD_MODE=centered|edges` são
   apenas para testes automatizados e nunca são salvos.
@@ -308,7 +343,11 @@ TG2Recomp.app/Contents/Resources/TG2Recomp.icns
 ```
 
 The `.app` is unsigned and not notarized, so macOS quarantines downloaded
-copies. Either right-click the app > Open > Open the first time, or run once:
+copies. Right-click > Open no longer bypasses Gatekeeper on current macOS, and
+*Privacy & Security → Open Anyway* can lose its confirmation dialog: the
+`syspolicyd` evaluation then waits forever ("waiting on another evaluation")
+and the icon bounces until a restart (seen on macOS 27.2, 2026-11-07). The
+reliable step is to run once:
 
 ```sh
 xattr -dr com.apple.quarantine TG2Recomp.app
@@ -317,11 +356,15 @@ xattr -dr com.apple.quarantine TG2Recomp.app
 Gatekeeper does not affect a build produced locally by CI's checkout, only
 downloaded archives.
 
-**Where files go.** The player drops the ROM beside `TG2Recomp.app`; engine
-patch 0007 also searches the folder containing the bundle, not just
-`Contents/MacOS`. Settings, logs and saves are written beside the `.app` when
-that folder is writable; when it is read-only (for example in `/Applications`)
-they go to `~/Library/Application Support/TG2Recomp/`. Read-only assets stay
+**Where files go.** An app in an Applications folder (`/Applications`,
+`~/Applications` or a subfolder) is an installed app (engine patch 0019):
+settings, logs, saves and the cartridge live in
+`~/Library/Application Support/TG2Recomp/`. The cartridge search covers that
+folder, and a ROM picked in the launcher is copied there after its CRC check,
+so later launches boot straight in. Anywhere else the app is portable (patch
+0007): the player drops the ROM beside `TG2Recomp.app`, the search covers the
+folder containing the bundle, and data is written beside the `.app` when that
+folder is writable, otherwise to Application Support. Read-only assets stay
 inside the bundle, where SDL reports `Contents/Resources`.
 
 ## Windows notes

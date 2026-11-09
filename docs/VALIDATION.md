@@ -93,6 +93,11 @@ finish claim.
 
 ## 2. All 16 tracks (password route)
 
+For the corrected screen alphabet, original country gate, full 15-bit checksum,
+part-field map, and complete rain/snow table, see [PASSWORDS.md](PASSWORDS.md).
+Geneva has no visible precipitation; its `$44` descriptor does not have the
+weather-enable bit. Munich snow has a new native capture.
+
 Every track is reached through the game's own **ENTER PASSWORD** screen. The
 encoding was reversed from the ROM (`docs/PASSWORDS.md`); the generator is
 `tools/tg2_password.py` and the UI driver `tools/tg2_password_ui.py`. Nothing
@@ -129,7 +134,7 @@ manifests stayed empty.
 | 11 | Scandinavia / Copenhagen | dusk, 5:40 PM | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 | 12 | South America / Chile | dusk, 9:30 PM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 | 13 | Spain / Andalucia | overcast, 3:30 PM | 5 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
-| 14 | Switzerland / Geneva | bright, snow | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
+| 14 | Switzerland / Geneva | bright, no precipitation (flags $44) | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 | 15 | America (picker: U.S.A.) / Las Vegas | **night** (dark palette, city lights) | 4 | pass, 62.13 s | pass, 62.13 s | 0/0/0/0 |
 
 Evidence per cell, `build/qual/cov/cNN-<mode>/`:
@@ -347,7 +352,7 @@ python3 tools/tg2_margin_audit.py --cov build/qual/cov --out build/qual/margin-a
 python3 tools/tg2_nitro_compare.py --port 4490 --out build/qual/nitro/compare \
     --country 0 --window-at 900 --window 90
 # password round-trip
-python3 tools/tg2_password.py decode "KUC2 2HQG CJL2 Y4%T"
+python3 tools/tg2_password.py decode "KVC2 2HQG CJL2 Y4%T"
 
 # task 25: quickstate save -> fresh-process load matrix
 python3 tools/tg2_state_matrix.py --out build/qual/qa-state-matrix
@@ -444,7 +449,7 @@ Every run below is `tools/tg2_progress.py` on the release defaults (16:9
 canvas, 60 fps races, HUD Centered, Hide overscan On, stock RACE SOUND),
 uncapped guest, TCP 4610, one runtime at a time, under the heavy lock. Each
 country starts from a generated password that carries money and full upgrades
-(the checksum allows 150k with every part at max), then races in order; the
+(the fixture uses 150k with every part at max; the checksum is 15-bit, not capped at 255), then races in order; the
 race index is read back before every race. A race is "passed" when it reached
 the finish (the clock froze with speed 0).
 
@@ -749,6 +754,40 @@ same check on the clean rebuild from `tools/apply-engine-patches.sh --reset`
 (`build/qual/qa-state-fix2`) gives speed 5144 and clock 26978822 in both
 processes.
 
+### Quickstate resume continues the guest's callers (2026-11-07)
+
+Owner report (macOS, release build): a quickstate saved and loaded during race
+3 of a country, finished in 2nd place, went back to the main menu after the
+race instead of the results and race 4. Reproduced on a dev build with the
+owner's own `native_save_1.bin`: after the finish the log printed
+`resume loop returned at $0065F2; continuing at dispatcher $001E18`, no results
+screen appeared and the race index stayed at 2.
+
+The real guest stack in a normal race (`get_registers` + WRAM, no state
+loaded) holds one return address: `$001E82` at `$FFFFFA`, pushed by
+`jsr $64C2` at `$001E7C` in the top-level loop. `$001E82` runs the post-race
+flow: `jsr $2301E` (results), the qualification test at `$20A62`, then
+`$FF16BE + 1` and `bra $1E52` (next race). The title and main-menu boundaries
+sit one level down as well, below `jsr $1E764` at `$001E18` (return `$001E1E`).
+The loader reset A7 to the initial SSP and, when the resumed loop returned,
+called the dispatcher `$001E18`, which starts over at the title.
+
+Engine patch 0021 resumes a game boundary inside the restored frame (A7 kept)
+and, when the loop returns, pops each guest return address that follows a
+JSR/BSR and continues it. `game/game.toml` seeds `$001E82` and `$001E1E`
+(both checked as the instruction after the call in the raw ROM).
+
+| Case (dev build, dummy video/audio, one runtime at a time) | Before | After |
+|---|---|---|
+| Owner's race-3 state, autopilot finishes 10th | menu, race index 2, no results | `continuing guest caller $001E82`, race 4 starts (index 3) |
+| Owner's race-3 state, autopilot finishes 12th | — | "YOU HAVE FAILED TO QUALIFY", then the title (stock behaviour) |
+| Title state (`$01E9D8`), fresh process, START → menu → START row | — | `continuing guest caller $001E1E`, race reached |
+| Main-menu state (`$01EBF6`), fresh process, START row | — | `continuing guest caller $001E1E`, race reached |
+
+All four manifests are empty in every loaded run. Stock identity is unchanged:
+`tools/probe_run.py --widescreen off --frames 360` gives frame 60
+`2A0B972960C5E325` and frame 300 `1131D937D70234FD`.
+
 The F-key slots are the same mechanism: Shift+F1..F9 saves into
 `native_save_N.bin`, F1..F9 loads it, both through `runner_save_state_file` /
 `runner_load_state_file`, the entry points the matrix drives directly.
@@ -851,3 +890,109 @@ instruction's stack delta from the ROM with capstone and fails on a missing or
 wrong `_sp_popped` line. Removing the `$740C` accounting line from a copy of the
 generated tree makes it report exactly
 `$00740C add.w (a7)+, d0: expected delta +2, generated +0` (exit 1).
+
+## Quickstate feedback and the menu-dismiss input leak (2026-11-07)
+
+Owner report on macOS: choosing "Save state" in the in-game (Esc) menu with
+Enter wrote no file, and there was no visible confirmation of a save or load.
+
+Cause 1 — the key that accepts the menu row also reached the game. The owner's
+feedback replay (`TG2-feedback.replay`) writes `W` at frame 14690 and the very
+next input line is `I 14690 80`: Genesis START (0x80), which the owner never
+pressed for the game. `input_set_gameplay_blocked(0)` ran on the frame Enter
+closed the menu, and `SDL_GetKeyboardState` still reported Enter (= START).
+
+Fix: engine patch 0022 latches every button and pad button held at the moment
+gameplay capture ends and suppresses it until released.
+
+Cause 2 — the only feedback was the window title, invisible in fullscreen and
+on a Deck. Engine patch 0023 draws a 2.5 s notice at the top-left of the
+presented picture (`STATE SAVED TO SLOT N`, `STATE LOADED FROM SLOT N`,
+`SAVING STATE...`, `SAVE UNAVAILABLE HERE`, `LOAD REJECTED...`), using the
+in-game menu's own 5x7 glyph cell and its light text colour over a dim panel.
+It is presentation only: the guest framebuffer, `--hash-frames`, replays and
+the normal `screenshot` capture are unchanged; `screenshot` with
+`"presented":1` captures the composited window.
+
+Evidence (`tools/tg2_state_notice_probe.py`, dev build, TCP-driven real menu):
+
+| Check | Before 0022 | After 0022 + 0023 |
+|---|---|---|
+| pad mask on the frame Enter closed the menu (`pad`) | 128 (START) | 0 |
+| pad mask on the frame the pad's A closed the menu (virtual controller) | 16 (B) | 0 |
+| state written by the menu save row in a race | yes (see note) | yes, `native_save_1.bin`, 165 523 B |
+| notice in the presented picture | none (title only) | `docs/images/state-notice-4x3-save.png`, `docs/images/state-notice-4x3-load.png` (full set in `build/evidence/state-notice/final-4x3/`) |
+| same notice, 16:9 | — | `docs/images/state-notice-16x9-save.png`, `docs/images/state-notice-16x9-load.png` (full set in `build/evidence/state-notice/final-16x9/`) |
+| notice absent from the guest frame | — | `final-4x3/save-guest.png` (256x200, no overlay) |
+| save refused on a screen with no boundary (password entry) | title only | `SAVE UNAVAILABLE HERE` (`final-4x3/refusal.png`) |
+| load of an empty slot | title only | `LOAD REJECTED: SLOT 1` (`final-4x3/load-rejected.png`) |
+| Off-mode frame 60 / 300 | — | `2A0B972960C5E325` / `1131D937D70234FD` (unchanged) |
+| manifests (`tools/tg2_runner.manifest_counts`) | — | 0 / 0 / 0 / 0 |
+
+Note: the leaked START does reach the race, but on this build the game's PAUSE
+screen still runs the race loop's boundary (`$65F2`), so a save requested while
+paused does complete. The refusal *is* reproducible on a screen without a
+resume site (password entry), and the owner's no-file session is consistent
+with that refusal path; the notice now makes any such outcome visible instead
+of silent.
+
+## Quickstate lost between races (owner report, 2026-11-07)
+
+The owner finished race 3, saved to slot 1 at the start of race 4 through the
+in-game menu, and later loaded slot 1 to find the old race-3 state: the save was
+never written (`native_save_1.bin` kept its 17:10 mtime). The feedback replay
+(`save-lost-r4/TG2-feedback.replay`) shows `W` at frame 20130 with a zero pad
+(the menu-dismiss input leak of patch 0022 is fixed), nine START taps between
+frames 19558 and 19905 after the finish, and two more START taps after the save
+before race 4 starts. That places the save on one of the **inter-race flow
+screens** (race results, championship table, car/gear setup, next-track intro,
+shop). Those screens have no repeatable instruction the host can resume in
+place, so `glue_state_boundary` never parked and the queued save was dropped
+after the engine's 120-frame timeout; the only feedback was the window title.
+
+Measured with `tools/tg2_postrace_save_probe.py` (finishes a race, then saves on
+every screen of the flow):
+
+| Screen | Before | After patch 0024 |
+|---|---|---|
+| race (running) | written | written |
+| finish banner | written | written |
+| race results | **refused** | queued, written at the next race start |
+| championship table | **refused** | queued, written at the next race start |
+| car/gear setup | **refused** | queued, written at the next race start |
+| next-track intro | **refused** | queued, written at the next race start |
+| shop (gears) | **refused** | queued, written at the next race start |
+| next race countdown | — | written |
+| race 2 (running) | written | written |
+
+Adding the screens' own one-frame waits as boundaries was tried first and
+rejected: the saves land, but a load of such a state bails out of the race flow
+to the main menu. The screens' loops are reached by dispatch rather than a
+JSR/BSR chain, so after the resumed loop returns the engine cannot follow the
+guest callers (`floor_unsafe`: `$001E6A ... capsule exit_pc != native loose-A7
+return`); the resumed intro panel returns to the title menu
+(`build/evidence/resume-5/loadcheck2/step1.png`). A quickstate that misbehaves
+on load is worse than a visible refusal, so the sites were not kept.
+
+On the owner's build (patches 0022+0023, before 0024) the refusal *was* drawn
+in the picture: `SAVING STATE...` immediately, then `SAVE UNAVAILABLE HERE` two
+seconds later (`docs/images/state-notice-refusal-owner-build.png`, reproduced on
+the pre-0024 binary by asking for a save on the password screen). The save was
+still lost, which is what this report fixes.
+
+Patch 0024 instead keeps the request queued for up to 15 s of gameplay and
+takes it at the next boundary the game actually reaches. Pressing START to
+begin the next race parks it at the race loop, so the file holds the start of
+that race — the moment the menu row already promises ("the next completed
+gameplay tick") and what a player saving between races wants. The queue is
+visible as `SAVING AT NEXT BOUNDARY...` (`docs/images/state-notice-interrace-save.png`);
+if no boundary appears the request is refused with `SAVE UNAVAILABLE HERE`. A
+later save request replaces the queued one, and a save whose temporary file
+cannot be opened now reports `SAVE FAILED: CANNOT WRITE STATE` instead of being
+dropped in silence.
+
+Loading such a file resumes the race and it runs to its end
+(`tools/tg2_postrace_resume_probe.py --until-countdown`): the saved state is
+parked at `$0065F2` (race loop), and in a fresh process it completes five laps
+and the finish (`build/evidence/resume-countdown/summary.json`,
+`docs/images/state-notice-interrace-resume.png`).

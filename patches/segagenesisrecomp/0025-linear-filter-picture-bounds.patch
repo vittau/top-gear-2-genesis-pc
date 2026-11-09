@@ -1,0 +1,138 @@
+From 53d020edcbe9c453c8786727d363a053865ca0e2 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 20:00:14 -0300
+Subject: [PATCH] Clamp linear presentation to the active picture and honor
+ filter defaults
+
+Use an exactly-sized streaming texture for linear CPU presentation; preserve nearest uploads. Add opt-in exact-frame SDL-output captures for edge validation.
+---
+ runner/main.c | 71 +++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 69 insertions(+), 2 deletions(-)
+
+diff --git a/runner/main.c b/runner/main.c
+index 8b3798a..e8ee0fe 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -762,6 +762,29 @@ static const GenesisScanlineProducer s_custom_producer = {
+     own_custom_row_enabled, own_custom_row
+ };
+ 
++/* A source rectangle does not clamp bilinear sampling to that rectangle.
++ * Keep the linear sampler's texture extent equal to the valid CPU picture.
++ * The nearest path retains its original texture/upload and pixels. */
++static SDL_Texture *s_linear_picture;
++static int s_linear_w, s_linear_h;
++static SDL_Texture *linear_picture(SDL_Renderer *renderer, SDL_Texture *fallback,
++                                  const uint32_t *pixels, int pitch, SDL_Rect *src)
++{
++    if (!s_frame_texture_filtered) return fallback;
++    if (!s_linear_picture || s_linear_w != src->w || s_linear_h != src->h) {
++        SDL_DestroyTexture(s_linear_picture);
++        s_linear_picture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
++            SDL_TEXTUREACCESS_STREAMING, src->w, src->h);
++        s_linear_w = src->w; s_linear_h = src->h;
++        if (s_linear_picture) SDL_SetTextureScaleMode(s_linear_picture, SDL_ScaleModeLinear);
++    }
++    if (!s_linear_picture) return fallback;
++    SDL_UpdateTexture(s_linear_picture, NULL,
++        (const unsigned char *)pixels + src->y * pitch + src->x * 4, pitch);
++    src->x = src->y = 0;
++    return s_linear_picture;
++}
++
+ static void custom_video_prepare(void)
+ {
+     int dw = 0, dh = 0;
+@@ -1725,6 +1748,39 @@ int runner_write_screenshot_file(const char *path)
+     return ok;
+ }
+ 
++/* Opt-in exact-frame capture of the SDL output, including scaling/bars.
++ * Guest framebuffer screenshots retain their existing semantics. */
++static void capture_presented_window(SDL_Renderer *renderer, unsigned frame)
++{
++    const char *frames = getenv("GENESIS_WINDOW_CAPTURE_FRAMES");
++    const char *prefix = getenv("GENESIS_WINDOW_CAPTURE_PREFIX");
++    if (!frames || !prefix) return;
++    int match = 0;
++    while (*frames) {
++        char *end;
++        unsigned long n = strtoul(frames, &end, 10);
++        if (end == frames) break;
++        if (n == frame) match = 1;
++        frames = *end == ',' ? end + 1 : end;
++        if (!*end) break;
++    }
++    if (!match) return;
++    int w, h;
++    SDL_Rect viewport;
++    SDL_GetRendererOutputSize(renderer, &w, &h);
++    SDL_RenderGetViewport(renderer, &viewport);
++    uint32_t *pixels = malloc((size_t)w * h * sizeof *pixels);
++    if (!pixels) return;
++    SDL_RenderSetViewport(renderer, NULL);
++    if (!SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, pixels, w * 4)) {
++        char path[1024];
++        snprintf(path, sizeof path, "%s-%u.png", prefix, frame);
++        png_write_argb(path, pixels, w, h, w);
++    }
++    SDL_RenderSetViewport(renderer, &viewport);
++    free(pixels);
++}
++
+ /* =========================================================================
+  * Frame logging (main-loop version, works in ALL build modes)
+  * ========================================================================= */
+@@ -2394,7 +2450,9 @@ static void local_states_modal(SDL_Renderer *renderer, SDL_Texture *game,
+         if (dw > s_screen_width) dw = s_screen_width;
+         SDL_Rect dst = {(s_screen_width - dw) / 2, 0, dw, s_screen_height};
+         SDL_RenderClear(renderer);
+-        SDL_RenderCopy(renderer, game, &src, NULL);
++        SDL_Texture *background = (s_frame_texture_filtered && s_linear_picture &&
++            s_linear_w == src.w && s_linear_h == src.h) ? s_linear_picture : game;
++        SDL_RenderCopy(renderer, background, &src, NULL);
+         SDL_RenderCopy(renderer, panel, NULL, &dst);
+         SDL_RenderPresent(renderer);
+     }
+@@ -3164,6 +3222,9 @@ int main(int argc, char *argv[])
+     }
+     s_video_renderer = renderer;
+     s_video_texture = &texture;
++    /* Persisted config is authoritative, including a fresh install: an SDL
++     * environment hint must not silently enable filtering behind the UI. */
++    SDL_SetTextureScaleMode(texture, g_app_config.linear_filter ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+     GenesisHdGpu *hd_gpu=NULL;
+     int hd_checked=0;
+     {
+@@ -4345,7 +4406,10 @@ session_begin:;
+             }
+             peer_view_was_active = peer_view_is_active;
+         }
++        if (frame_texture == texture)
++            frame_texture = linear_picture(renderer, texture, present_src, s_frame_stride * 4, &src);
+         SDL_RenderCopy(renderer, frame_texture, &src, NULL);
++        capture_presented_window(renderer, frame_num);
+ #if GENESIS_HAS_RECOMP_NET
+         /* Process the peer INPUT and emit our CONFIRM before the blocking
+          * present, so confirmation delivery overlaps vsync as well. */
+@@ -4420,7 +4484,9 @@ session_begin:;
+                 }
+                 SDL_Rect active={0,0,s_screen_width,s_screen_height};
+                 SDL_UpdateTexture(texture,&active,pixels,s_frame_stride*(int)sizeof(uint32_t));
+-                SDL_RenderClear(renderer);SDL_RenderCopy(renderer,texture,&src,NULL);
++                SDL_RenderClear(renderer);
++                SDL_Texture *interpolated_texture = linear_picture(renderer, texture, pixels, s_frame_stride * 4, &src);
++                SDL_RenderCopy(renderer,interpolated_texture,&src,NULL);
+                 now=SDL_GetPerformanceCounter();
+                 if(now<at) {
+                     Uint64 wait_begin=now;
+@@ -4714,6 +4780,7 @@ session_begin:;
+     if (s_framebuf != s_native_storage) free(s_framebuf);
+     if (s_present_buf != s_present_storage) free(s_present_buf);
+     gamepad_shutdown();
++    SDL_DestroyTexture(s_linear_picture); s_linear_picture = NULL;
+     SDL_DestroyRenderer(renderer);
+     SDL_DestroyWindow(window);
+     genesis_replay_shutdown();
+-- 
+2.54.0 (Apple Git-157)

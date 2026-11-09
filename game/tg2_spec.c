@@ -15,13 +15,29 @@ extern void tg2_frame_post(uint64_t frame_count);
 extern void tg2_audio_frame_pre(void);
 struct RecompLauncherCModProvider;
 const struct RecompLauncherCModProvider *tg2_mods(const struct RecompLauncherCModProvider *base);
+static void tg2_password_trace_command(int id, const char *json);
 static const GameDebugCommand commands[] = {
+    {"tg2_password_trace", tg2_password_trace_command},
     {"tg2_video", tg2_video_command},
     {"tg2_ui", tg2_options_ui_command},
 };
 
 #include <stdio.h>
 #include <string.h>
+#include "cmd_server.h"
+
+/* Last original-ROM validator return; passive, never changes guest state. */
+static struct { unsigned serial, pc, address, result, field_sum; unsigned char work[0x56]; } pw_trace;
+static void tg2_password_trace_command(int id, const char *json)
+{
+    (void)json;
+    char hex[sizeof pw_trace.work * 2 + 1], out[512];
+    for (unsigned i = 0; i < sizeof pw_trace.work; ++i)
+        snprintf(hex + i * 2, 3, "%02x", pw_trace.work[i]);
+    snprintf(out, sizeof out, "{\"id\":%d,\"ok\":true,\"serial\":%u,\"pc\":%u,\"address\":%u,\"result\":%u,\"field_sum\":%u,\"work\":\"%s\"}",
+        id, pw_trace.serial, pw_trace.pc, pw_trace.address, pw_trace.result, pw_trace.field_sum, hex);
+    cmd_send_response(out);
+}
 
 /* The guest always runs at stock cycle cost. Only the host video adapter
  * uses this race-latched preference; no IRQ hooks or temporary RAM writes. */
@@ -63,11 +79,21 @@ static int tg2_instruction_hook(uint32_t pc)
 {
     /* Frame boundary offered for a host snapshot (F-keys / overlay). */
     glue_state_boundary(pc);
+    if (pc == 0x0235C0u || pc == 0x0235C4u) {
+        unsigned address = g_cpu.A[0] & 0xFFFFFFu;
+        if (address >= 0xFF0000u && address <= 0x1000000u - sizeof pw_trace.work) {
+            ++pw_trace.serial; pw_trace.pc = pc; pw_trace.address = address;
+            pw_trace.result = g_cpu.D[0] & 65535;
+            pw_trace.field_sum = g_cpu.D[7] & 65535;
+            memcpy(pw_trace.work, g_ram + (address & 65535u), sizeof pw_trace.work);
+        }
+    }
     if (tg2_audio_hook(pc)) return 1;
     return tg2_video_hook(pc);
 }
 static void tg2_post_reset(void)
 {
+    memset(&pw_trace, 0, sizeof pw_trace);
     tg2_audio_reset();
     tg2_video_reset();
 }
@@ -150,8 +176,10 @@ const GameSpec g_game_spec = {
     .state_load = tg2_state_load,
     .state_at_boundary_site = tg2_state_at_boundary_site,
     .state_resume_pc = tg2_state_resume_pc,
-    /* If a resumed screen finishes (race over, menu left), continue at the
-     * top-level loop, which picks the next scene. */
+    /* When a resumed screen finishes (race over, menu left) the engine
+     * continues the guest callers saved on the stack ($001E82 after a race,
+     * $001E1E after the title/menu; patch 0021). The top-level loop is only
+     * the fallback once that chain ends. */
     .dispatch_main_loop_pc = 0x001E18u,
     .commands = commands,
     .command_count = sizeof commands / sizeof commands[0],

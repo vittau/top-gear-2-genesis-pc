@@ -9,14 +9,14 @@ salted with a fixed key string;
 and the 16 values concatenate big-endian into an 80-bit block (symbol 0 is
 the most significant 5 bits). That block is then un-permuted bit by bit with
 a stock 80-entry table into a 10-byte plaintext record, which unpacks into
-the game-state fields listed in FIELDS. FIELDS['sum'] is an 8-bit additive
+the game-state fields listed in FIELDS. The checksum is a 15-bit additive
 checksum over every other field.
 
 Everything here was verified against the running game: the ROM's own
 prefilled password decodes to a valid record (checksum matches) and is
 accepted through the UI, and generated passwords start real races.
 
-    python3 tools/tg2_password.py decode "KUC2 2HQG CJL2 Y4%T"
+    python3 tools/tg2_password.py decode "KVC2 2HQG CJL2 Y4%T"
     python3 tools/tg2_password.py encode --field country=1
     python3 tools/tg2_password.py tables
 """
@@ -28,7 +28,7 @@ import sys
 
 # The 32 password symbols in keyboard order (left-to-right, top-to-bottom).
 # The keyboard's control keys (arrows, DEL, END) are not part of the alphabet.
-ALPHABET = 'BCDFGHJKLNPQSTUYZ123456789[]?\\#%'
+ALPHABET = 'BCDFGHJKLNPQSTVYZ123456789[]?\\#%'
 assert len(ALPHABET) == 32
 
 # Salt string at ROM $0239B2, applied one byte per symbol.
@@ -52,15 +52,14 @@ PERM = (
 
 # Field layout of the decoded 10-byte record, from the unpacker at $02371A
 # and the packer at $0235C6. (name, bit offset in the plaintext MSB-first
-# bit stream, width).  'sum' is the trailing checksum: its low 7 bits are at
-# stream bits 0..6 (byte 0 bits 7..1) and bit 7 is byte 9 bit 0 (stream bit
-# 79). Stream bits 72..78 are unused.
+# bit stream, width). 'sum' has 15 bits: low 7 at stream bits 0..6
+# (byte 0 bits 7..1), high 8 in byte 9 (stream bits 72..79).
 FIELDS = (
     ('flag',     7, 1),   # $2a
     ('country',  8, 4),   # $28
     ('stage',   12, 2),   # $2c  (validator rejects > 2)
     ('money',   14, 10),  # $2e
-    ('field30', 24, 10),  # $30
+    ('field30', 24, 10),  # $30: player 2 money
     ('u32',     34, 2),
     ('u34',     36, 2),
     ('u36',     38, 2),
@@ -80,15 +79,20 @@ FIELDS = (
     ('u52',     66, 3),
     ('u54',     69, 3),
 )
-SUM_BITS = 8
+SUM_BITS = 15
 
 
 def normalise(text: str) -> str:
-    """Uppercase and strip the 4x4 display spacing; keep only symbols."""
+    """Screen symbols, ignoring spacing; accept historical U as an alias for V."""
     out = []
     for ch in text.upper():
-        if ch in ALPHABET:
-            out.append(ch)
+        if ch.isspace():
+            continue
+        if ch == 'U':                 # old tool spelling of screen code 15
+            ch = 'V'
+        if ch not in ALPHABET:
+            raise ValueError(f'{ch!r} is not a password-screen symbol')
+        out.append(ch)
     return ''.join(out)
 
 
@@ -134,7 +138,7 @@ def _bits(plain: bytes) -> int:
     return int.from_bytes(plain, 'big')
 
 
-def decode(symbols: str) -> dict:
+def decode(symbols: str, picker_country: int = -1) -> dict:
     symbols = normalise(symbols)
     block = chars_to_block(symbols)
     plain = _unpermute(block)
@@ -142,11 +146,18 @@ def decode(symbols: str) -> dict:
     rec = {}
     for name, off, width in FIELDS:
         rec[name] = (bits >> (80 - off - width)) & ((1 << width) - 1)
-    rec['sum'] = ((bits >> (80 - 7)) & 0x7F) | (((bits >> (80 - 79 - 1)) & 1) << 7)
+    rec['sum'] = ((bits >> 73) & 0x7F) | ((bits & 0xFF) << 7)
     rec['_plain'] = plain.hex()
     rec['_cipher'] = f'{block:020x}'
-    rec['valid'] = (sum(rec[name] for name, _, _ in FIELDS)
-                    & 0xFF) == rec['sum']
+    rec['_field_sum'] = sum(rec[name] for name, _, _ in FIELDS)
+    rec['_errors'] = []
+    if rec['_field_sum'] != rec['sum']:
+        rec['_errors'].append('checksum mismatch')
+    if rec['stage'] > 2:
+        rec['_errors'].append('difficulty exceeds 2')
+    if picker_country > rec['country']:
+        rec['_errors'].append(f'country {rec["country"]} is below picker requirement {picker_country}')
+    rec['valid'] = not rec['_errors']
     return rec
 
 
@@ -157,15 +168,49 @@ def encode(**values) -> dict:
         if key not in rec:
             raise KeyError(f'unknown field {key!r}; known: {sorted(rec)}')
         rec[key] = int(value)
-    rec['sum'] = sum(rec[name] for name, _, _ in FIELDS) & 0xFF
+    for name, _, width in FIELDS:
+        if not 0 <= rec[name] < (1 << width):
+            raise ValueError(f'{name} must be in 0..{(1 << width) - 1}')
+    if rec['stage'] > 2:
+        raise ValueError('stage/difficulty must be 0..2')
+    rec['sum'] = sum(rec[name] for name, _, _ in FIELDS)
     bits = (rec['sum'] & 0x7F) << (80 - 7)
-    bits |= (rec['sum'] >> 7 & 1) << (80 - 79 - 1)
+    bits |= rec['sum'] >> 7
     for name, off, width in FIELDS:
         bits |= (rec[name] & ((1 << width) - 1)) << (80 - off - width)
     plain = bits.to_bytes(10, 'big')
     block = _permute(plain)
     return dict(symbols=block_to_chars(block), block=f'{block:020x}',
                 plain=plain.hex(), **rec)
+
+
+def max_upgrades(country: int, stage: int = 0, two_players: bool = False) -> dict:
+    """Both cars: eight level-3 parts, 1023k each, stock red/blue colours."""
+    values = dict(country=country, stage=stage, flag=int(two_players),
+                  money=1023, field30=1023, u52=0, u54=1)
+    values.update({f'u{offset:x}': 3 for offset in range(0x32, 0x52, 2)})
+    return encode(**values)
+
+
+def work_record(work: bytes) -> dict:
+    """Decode a 0x56-byte validator work area (A0, on either menu route)."""
+    if len(work) != 0x56:
+        raise ValueError('work record must contain 0x56 bytes')
+    def word(offset):
+        return int.from_bytes(work[offset:offset + 2], 'big')
+    fields = {}
+    offsets = {'sum': 0x26, 'country': 0x28, 'flag': 0x2a,
+               'stage': 0x2c, 'money': 0x2e, 'field30': 0x30}
+    for name, _, _ in FIELDS:
+        offset = offsets[name] if name in offsets else int(name[1:], 16)
+        fields[name] = word(offset)
+    fields['sum'] = word(0x26)
+    codes = list(work[:16])
+    return dict(codes=codes,
+                symbols=''.join(ALPHABET[c - 1] if 1 <= c <= 32 else '_' for c in codes),
+                cipher=work[0x10:0x1a].hex(), plain=work[0x1a:0x24].hex(),
+                picker_country=int.from_bytes(work[0x24:0x26], 'big', signed=True),
+                fields=fields, field_sum=sum(fields[n] for n, _, _ in FIELDS))
 
 
 def spaced(symbols: str) -> str:
@@ -178,20 +223,27 @@ def main():
     sub = p.add_subparsers(dest='cmd', required=True)
     d = sub.add_parser('decode')
     d.add_argument('password')
+    d.add_argument('--picker-country', type=int, default=-1,
+                   help='country required by COUNTRY SELECT; default PASSWORDS route (-1)')
     e = sub.add_parser('encode')
     e.add_argument('--field', action='append', default=[],
                    help='name=value, repeatable')
     e.add_argument('--json', action='store_true')
+    m = sub.add_parser('max', help='all parts at level 3 and both balances at maximum')
+    m.add_argument('--country', type=int, required=True)
+    m.add_argument('--stage', type=int, choices=(0, 1, 2), default=0)
+    m.add_argument('--two-players', action='store_true')
+    m.add_argument('--json', action='store_true')
     sub.add_parser('tables')
     a = p.parse_args()
     if a.cmd == 'decode':
-        print(json.dumps(decode(a.password), indent=2))
-    elif a.cmd == 'encode':
+        print(json.dumps(decode(a.password, a.picker_country), indent=2))
+    elif a.cmd in ('encode', 'max'):
         values = {}
-        for item in a.field:
+        for item in getattr(a, 'field', []):
             k, v = item.split('=', 1)
             values[k] = int(v, 0)
-        rec = encode(**values)
+        rec = max_upgrades(a.country, a.stage, a.two_players) if a.cmd == 'max' else encode(**values)
         if a.json:
             print(json.dumps(rec, indent=2))
         else:

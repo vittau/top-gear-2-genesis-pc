@@ -1,0 +1,26 @@
+From bc02398de238e882f49fddf05c13819e03dc07ca Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 22:34:39 -0300
+Subject: [PATCH] runtime menu: open on Esc only, free F1 for slot 1 load
+
+---
+ runner/main.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/runner/main.c b/runner/main.c
+index 97c7cf9..e130e14 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -4069,8 +4069,7 @@ session_begin:;
+             }
+             gamepad_handle_event(&ev);
+ #if RECOMP_LAUNCHER
+-            if (ev.type == SDL_KEYDOWN && (ev.key.keysym.sym == SDLK_ESCAPE ||
+-                                           ev.key.keysym.sym == SDLK_F1) &&
++            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE &&
+                 !recomp_runtime_ui_is_open(s_runtime_ui.ui)) {
+                 recomp_runtime_ui_open(s_runtime_ui.ui); continue;
+             }
+-- 
+2.54.0 (Apple Git-157)
+

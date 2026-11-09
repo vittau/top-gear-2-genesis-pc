@@ -1,0 +1,134 @@
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Subject: [PATCH] Quickstate resume continues the guest's own callers
+
+A load resumed the game fiber at the game's boundary loop with A7 reset to
+the initial SSP, and when that loop returned the fiber fell back to the outer
+dispatcher. The native call chain above the loop is not in the snapshot, so
+Top Gear 2 lost its post-race flow: a race loaded from a quickstate ended and
+went back to the title instead of the results and the next race.
+
+A game boundary (state_resume_pc) now resumes inside the restored frame: A7
+stays as saved, and when the loop returns the fiber pops each return address
+from the guest stack (only longs that follow a JSR/BSR) and continues that
+caller, as the 68000 would, before the dispatcher fallback.
+---
+diff --git a/runner/glue.c b/runner/glue.c
+index ed086a8..599902d 100644
+--- a/runner/glue.c
++++ b/runner/glue.c
+@@ -584,6 +584,44 @@ static void interp_drive_mainloop(uint32_t entry_pc) {
+     }
+ }
+ 
++/* s_game_fiber_resume_pc bit 31: the resume PC is a loop inside the restored
++ * guest frame. Keep the restored A7, and when the loop returns continue the
++ * guest's own callers from its stack instead of the outer dispatcher. */
++#define GLUE_RESUME_IN_FRAME 0x80000000u
++
++/* Does a JSR/BSR end right before `addr`? Only such a long on the guest
++ * stack is a return address the 68000 would RTS to. */
++static int guest_call_precedes(uint32_t addr)
++{
++    uint32_t rom_size = g_game_spec.expected_rom_size ? g_game_spec.expected_rom_size
++                                                      : 0x400000u;
++    if ((addr & 1u) || addr < 0x206u || addr >= rom_size) return 0;
++    uint16_t op2 = m68k_read16(addr - 2u), op4 = m68k_read16(addr - 4u);
++    if ((op2 & 0xFF00u) == 0x6100u && (op2 & 0xFFu) != 0 && (op2 & 0xFFu) != 0xFFu)
++        return 1;                                    /* BSR.S */
++    if ((op2 & 0xFFF8u) == 0x4E90u) return 1;        /* JSR (An) */
++    if (op4 == 0x6100u || op4 == 0x4EB8u || op4 == 0x4EBAu || op4 == 0x4EBBu)
++        return 1;                                    /* BSR.W, JSR abs.w/(d16,PC)/(d8,PC,Xn) */
++    if ((op4 & 0xFFF8u) == 0x4EA8u || (op4 & 0xFFF8u) == 0x4EB0u)
++        return 1;                                    /* JSR (d16,An)/(d8,An,Xn) */
++    return m68k_read16(addr - 6u) == 0x4EB9u;        /* JSR abs.l */
++}
++
++/* Pop the next guest return address the way the caller's JSR epilogue would
++ * (generated RTS leaves it on the stack for the caller to pop). */
++static int guest_stack_return(uint32_t *ret)
++{
++    uint32_t sp = g_cpu.A[7] & 0xFFFFFFu;
++    if (!g_game_layout.initial_ssp || (sp & 1u) || sp < 0xFF0000u ||
++        sp + 4u > (g_game_layout.initial_ssp & 0xFFFFFFu))
++        return 0;
++    uint32_t addr = m68k_read32(sp) & 0xFFFFFFu;
++    if (!guest_call_precedes(addr)) return 0;
++    g_cpu.A[7] += 4u;
++    *ret = addr;
++    return 1;
++}
++
+ /* Game fiber entry point. */
+ static void game_fiber_func(void *param)
+ {
+@@ -593,9 +631,15 @@ static void game_fiber_func(void *param)
+     s_game_stack_last_report = 0;
+     if (s_game_fiber_resume_pc) {
+         uint32_t resume_pc = s_game_fiber_resume_pc & 0xFFFFFFu;
++        int in_frame = (s_game_fiber_resume_pc & GLUE_RESUME_IN_FRAME) != 0;
+         s_game_fiber_resume_pc = 0;
+-        g_cpu.A[7] = g_game_layout.initial_ssp;
++        if (!in_frame) g_cpu.A[7] = g_game_layout.initial_ssp;
+         recomp_call_addr(resume_pc);
++        while (in_frame && guest_stack_return(&resume_pc)) {
++            fprintf(stderr, "[GAME] %s resumed frame returned; continuing guest caller $%06X\n",
++                    g_game_spec.short_name, resume_pc);
++            recomp_call_addr(resume_pc);
++        }
+         if (g_game_spec.dispatch_main_loop_pc) {
+             uint32_t dispatch_pc = g_game_spec.dispatch_main_loop_pc & 0xFFFFFFu;
+             fprintf(stderr, "[GAME] %s resume loop returned at $%06X; continuing at dispatcher $%06X\n",
+@@ -1589,6 +1633,13 @@ void glue_restart_game_fiber(uint32_t resume_pc)
+             (unsigned)(resume_pc & 0xFFFFFFu));
+ }
+ 
++void glue_resume_game_fiber_in_frame(uint32_t resume_pc)
++{
++    glue_restart_game_fiber(resume_pc);
++    if (s_game_running && s_game_fiber_resume_pc)
++        s_game_fiber_resume_pc |= GLUE_RESUME_IN_FRAME;
++}
++
+ /* =========================================================================
+  * Memory access — route through clownmdemu's bus layer (M68kReadCallback /
+  * M68kWriteCallback), which handles ROM, work RAM, VDP, IO, Z80 bus, etc.
+diff --git a/runner/glue.h b/runner/glue.h
+index 1787d81..1f1f7f3 100644
+--- a/runner/glue.h
++++ b/runner/glue.h
+@@ -39,6 +39,10 @@ void glue_load_state(FILE *sf);
+  * fiber IN PLACE (same engine-owned stack; see fiber_compat.h). Must be
+  * called from the scheduler (main) fiber. */
+ void glue_restart_game_fiber(uint32_t resume_pc);
++/* Same, for a loop inside the restored guest frame (a host snapshot's
++ * boundary): keeps the restored A7, and when the loop returns continues the
++ * return addresses on the guest stack before the outer dispatcher. */
++void glue_resume_game_fiber_in_frame(uint32_t resume_pc);
+ /* Per-frame boundary a game hook may offer for a host snapshot. Returns 1
+  * when the call parked and the snapshot request was serviced. */
+ int glue_state_boundary(uint32_t site);
+diff --git a/runner/host_state.h b/runner/host_state.h
+index 5c38bce..a64dd25 100644
+--- a/runner/host_state.h
++++ b/runner/host_state.h
+@@ -140,15 +140,17 @@ static int host_state_load(const char *path)
+     if (!ok) { rewind(backup); host_machine_read(backup); goto done; }
+     audio_discard_playback(); /* host payload restored deferred chip events */
+     uint32_t pc=g_game_spec.resume_main_loop_pc;
++    int in_frame=0; /* a game boundary resumes inside the restored frame */
+     if (g_game_spec.state_resume_pc) {
+         uint32_t resume=g_game_spec.state_resume_pc();
+-        if (resume) pc=resume;
++        if (resume) { pc=resume; in_frame=1; }
+     }
+     if (g_game_spec.save_resume_pc && g_game_layout.game_mode_addr) {
+         uint32_t mapped=g_game_spec.save_resume_pc(glue_peek8(g_game_layout.game_mode_addr));
+-        if (mapped) pc=mapped;
++        if (mapped) { pc=mapped; in_frame=0; }
+     }
+-    if (pc) glue_restart_game_fiber(pc);
++    if (pc && in_frame) glue_resume_game_fiber_in_frame(pc);
++    else if (pc) glue_restart_game_fiber(pc);
+ done:
+     if (f) fclose(f); if (backup) fclose(backup); if (staged) fclose(staged); free(body);
+     fprintf(stderr,"[LOAD] %s %s\n",ok?"loaded":"rejected: missing, damaged, incompatible build or configuration",path);

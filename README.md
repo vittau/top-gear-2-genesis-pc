@@ -23,8 +23,9 @@ macOS (Apple Silicon and Intel).
 
 - **Original, Adaptive, 16:9, 21:9 and 32:9 display modes.** The road,
   scenery, opponents and roadside objects extend into the extra width.
-  Adaptive fits the width of your window or screen. The HUD can stay centred
-  or move to the screen edges.
+  Adaptive fits the width of your window or screen. Rain and snow are drawn
+  across the widescreen margins. The HUD can stay centred or move to the screen
+  edges.
 
 - **True 60 fps races.** The original draws about 30 new race pictures per
   second. This mode presents 60, while gameplay, physics and lap times stay
@@ -41,14 +42,19 @@ macOS (Apple Silicon and Intel).
   window. Menus, results and split-screen keep their full picture.
 
 - **Quality of life.** A launcher, an in-game options menu that works with a
-  controller alone, save states, rewind and fast-forward.
+  controller alone, save states, rewind and fast-forward. Save and load show
+  notices at the top left (for example `STATE SAVED TO SLOT 1` and
+  `STATE LOADED FROM SLOT 1`). A save requested between races is written at the
+  start of the next race (`SAVING AT NEXT BOUNDARY...`). The button that closes
+  the options menu does not leak into the game.
 
 With every option off, the picture is byte-identical to the original game.
 
-Linux has been played on real hardware. The Windows and macOS builds pass
-automated boot tests on CI but still need playtesting on real machines, and
-so does the Steam Deck. See [docs/STATUS.md](docs/STATUS.md) for the current
-state and open items.
+It has been played on Linux (x86_64) and macOS (Apple Silicon). Windows, macOS
+on Intel and the Steam Deck are built in CI and pass headless smoke tests, but
+they still need play on real hardware; treat those builds as release
+candidates until they are. See [docs/STATUS.md](docs/STATUS.md) for the current state and
+[docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
 
 ### Widescreen
 
@@ -105,19 +111,19 @@ The game finds the ROM by its content, so any file name and extension work.
 
 ## Download and install
 
-Releases are published on the
-[Releases page](https://github.com/vittau/top-gear-2-genesis-pc/releases).
-The first release (0.1.0) is in preparation. Every download is self-contained:
-SDL and the C/C++ runtime are linked in, and there is nothing to install,
-compile or generate.
+Download versioned builds from the
+[GitHub Releases page](https://github.com/vittau/top-gear-2-genesis-pc/releases).
+Every download is self-contained: SDL and the C/C++ runtime are linked in, and
+there is nothing to install, compile or generate.
 
-| Platform | Download | Requirements |
+Release assets:
+
+| Platform | File | Requirements |
 | --- | --- | --- |
-| Linux / Steam Deck | `TG2Recomp-x86_64.AppImage` (one file) or `TG2Recomp-linux-x86_64.tar.gz` | x86_64, glibc 2.35 or newer (SteamOS 3.x, Ubuntu 22.04+), OpenGL |
+| Linux / Steam Deck | `TG2Recomp-x86_64.AppImage` (single file) or `TG2Recomp-linux-x86_64.tar.gz` | x86_64, glibc 2.35 or newer (SteamOS 3.x, Ubuntu 22.04+), OpenGL |
 | Windows | `TG2Recomp-windows-x64.zip` | Windows 10/11 x64 |
-| macOS | `TG2Recomp-macos.zip` (universal: Apple Silicon and Intel) | macOS 11 or newer |
-
-Each release also includes a `SHA256SUMS` file.
+| macOS | `TG2Recomp-macos.zip` (universal: Apple Silicon and Intel; contains `TG2Recomp.app`) | macOS 11 or newer |
+| All platforms | `SHA256SUMS` | checksums for the files above |
 
 ### Linux
 
@@ -138,8 +144,9 @@ and run it.
 2. Right-click the AppImage → *Properties → Permissions → Is executable*.
 3. In Steam: *Games → Add a Non-Steam Game → Browse*, select the AppImage,
    then *Add Selected Programs*.
-4. Return to Game Mode. The game is in your library and runs with the
-   built-in controls alone; no terminal is needed.
+4. Return to Game Mode. The game is in your library. It is designed for
+   controller-only play in Game Mode, but the Steam Deck build still needs play
+   on real hardware; no terminal is needed after setup.
 
 ### Windows
 
@@ -150,15 +157,23 @@ and run it.
 
 ### macOS
 
-1. Extract `TG2Recomp-macos.zip`.
-2. Put your ROM in the same folder as `TG2Recomp.app`, next to the app, not
-   inside it.
-3. Open `TG2Recomp.app`.
+1. Extract `TG2Recomp-macos.zip` and move `TG2Recomp.app` to
+   *Applications*.
+2. The app is not signed with an Apple Developer ID or notarised, so clear
+   the download quarantine once in Terminal:
+   `xattr -dr com.apple.quarantine /Applications/TG2Recomp.app`
+3. Open `TG2Recomp.app`. On the first launch, pick your ROM in the launcher.
+   The app copies it to `~/Library/Application Support/TG2Recomp/` and boots
+   straight into the game from then on, so the original file can go.
 
-The app is not signed with an Apple Developer ID or notarised. If macOS
-blocks it, right-click the app and choose *Open*, then *Open* again, or allow
-it under *System Settings → Privacy & Security → Open Anyway*. See
-[Apple's instructions](https://support.apple.com/en-us/102445).
+Instead of the Terminal step you can allow the app under *System Settings →
+Privacy & Security → Open Anyway* (see
+[Apple's instructions](https://support.apple.com/en-us/102445)). If the icon
+then keeps bouncing and the game never opens, macOS lost its confirmation
+dialog: restart the Mac and use the Terminal step.
+
+To keep the game portable instead, leave `TG2Recomp.app` in any folder
+outside *Applications* and put the ROM in the same folder, next to the app.
 
 ### Settings, saves and updating
 
@@ -166,14 +181,24 @@ If no matching ROM is found next to the program, the launcher lets you pick
 one.
 
 `settings.ini`, save states and logs are written next to the executable. On
-macOS they go next to `TG2Recomp.app`, or to
-`~/Library/Application Support/TG2Recomp/` when that folder is read-only (for
-example `/Applications`). Keep the folder writable.
+macOS an app in *Applications* keeps them in
+`~/Library/Application Support/TG2Recomp/`, together with the copy of the ROM
+you picked, and also looks for the ROM there. A portable copy elsewhere writes
+them next to `TG2Recomp.app`, or to that Application Support folder when its
+own folder is read-only.
 
 Your championship progress is kept by the game's own passwords, as on the
-cartridge. To update, quit the game and replace the program files, keeping
-`settings.ini` and your save states. Delete `settings.ini` to restore every
-option to its default.
+cartridge. To restore money and car parts, use **CONTINUE → PASSWORD** (the
+upper row), not **COUNTRY SELECT**. On the password screen the symbol is
+**V**, not U. For example, the Germany preset `J4?Z 1]PD #F]\ 4\V?` gives max
+money and every upgrade at the top level for both cars, loading at Germany,
+race 1. Full codec details, country/route notes, and more ready-to-type
+passwords are in [docs/PASSWORDS.md](docs/PASSWORDS.md).
+
+To update, quit the game and replace the program files, keeping `settings.ini`
+and your save states. On macOS, replacing `TG2Recomp.app` in *Applications* is
+enough: your files stay in Application Support. Delete `settings.ini` to
+restore every option to its default.
 
 ## Controls and settings
 
@@ -192,13 +217,18 @@ second gamepad.
 
 | Action | Keyboard | Gamepad |
 | --- | --- | --- |
-| Options menu (pauses the game) | Esc or F1 | Back + RB |
+| Options menu (pauses the game) | Esc | Back + RB |
 | Fullscreen | F11, Alt+Enter, or Ctrl/Cmd+F | |
-| Save state, slots 2–9 | Shift+F2 … Shift+F9 | |
-| Load state, slots 2–9 | F2 … F9 | |
+| Save state (slot 1–9) | Shift+F1 … Shift+F9 | |
+| Load state (slot 1–6, 9) | F1 … F6, F9 | |
 | Save-state browser | F7 | |
 | Rewind | F8 | Back + R3 |
 | Fast-forward (hold) | Tab | |
+
+On Mac keyboards, use **fn** with the function keys unless *System Settings →
+Keyboard* has “Use F1, F2, etc. keys as standard function keys” enabled. Slot
+7 and 8 still save with **Shift+F7** / **Shift+F8**; plain **F7** opens the
+save-state browser and plain **F8** rewinds.
 
 The options live in the launcher and in the in-game options menu, and are
 saved to `settings.ini`:
@@ -212,7 +242,9 @@ saved to `settings.ini`:
 | Race sound | Sound effects, Music, Both | Sound effects |
 
 Race sound is also in the game's own *Sound* menu. Both menus change the same
-setting. A change to 60 fps races takes effect from the next race.
+setting. Linear filter (Graphics) is off by default and avoids edge artifacts
+at the picture boundary (see [docs/LINEAR_FILTER.md](docs/LINEAR_FILTER.md)).
+A change to 60 fps races takes effect from the next race.
 
 ## Build from source
 
@@ -276,6 +308,8 @@ tools/release/build-macos.sh --rom /path/to/your/tg2.bin --sdl "$sdl"
 ```
 
 This builds a universal2 `TG2Recomp.app` and its ZIP under `build-release/`.
+Add `--architectures arm64` (or `x86_64`) for a faster build for your own Mac
+only.
 
 ### Windows (x64, MSVC)
 
@@ -297,7 +331,8 @@ Packaging, CI and the release process are described in
 
 | Doc | Content |
 | --- | --- |
-| [docs/STATUS.md](docs/STATUS.md) | Current state and open items |
+| [docs/STATUS.md](docs/STATUS.md) | Current state and known limitations |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after v0.1.0 |
 | [docs/BRINGUP.md](docs/BRINGUP.md) | How the recompilation was brought up |
 | [docs/WIDESCREEN.md](docs/WIDESCREEN.md) | Widescreen renderer design |
 | [docs/FRAMERATE.md](docs/FRAMERATE.md) | 60 fps design and the physics parity proof |
@@ -307,9 +342,9 @@ Packaging, CI and the release process are described in
 | [docs/RELEASING.md](docs/RELEASING.md) | Builds, packaging and releases |
 | [docs/RAM_MAP.md](docs/RAM_MAP.md), [docs/PASSWORDS.md](docs/PASSWORDS.md) | Reverse-engineering notes |
 
-Report bugs with your platform, the build version (in `BUILD-INFO.txt`), your
-settings, and the steps to reproduce them. Don't attach ROMs, save states or
-generated code.
+Report bugs with your platform, the build version (in `BUILD-INFO.txt`; on
+macOS inside the app, under `Contents/Resources`), your settings, and the
+steps to reproduce them. Don't attach ROMs, save states or generated code.
 
 ## Support the project
 
