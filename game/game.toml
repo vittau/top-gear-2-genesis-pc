@@ -145,13 +145,6 @@ kind = "game_hook"
 [[widescreen_site]]
 addr = 0x006982
 kind = "game_hook"
-# SPIKE (task 29): LOD model index at mapper entry and the resolved piece list.
-[[widescreen_site]]
-addr = 0x00B584
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x00B5F0
-kind = "game_hook"
 
 # Host-snapshot frame boundaries: the race picture-ready loop and the
 # top-level title/menu loop. The adapter parks a queued quickstate here.

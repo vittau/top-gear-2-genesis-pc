@@ -9,7 +9,6 @@
 #include "genesis_runtime.h"
 #include "tg2_video.h"
 #include "tg2_options.h"
-#include "tg2_lod_probe.h"   /* SPIKE (task 29): remove with the probe */
 extern int tg2_audio_hook(uint32_t pc);
 extern void tg2_audio_reset(void);
 extern void tg2_frame_post(uint64_t frame_count);
@@ -21,7 +20,6 @@ static const GameDebugCommand commands[] = {
     {"tg2_password_trace", tg2_password_trace_command},
     {"tg2_video", tg2_video_command},
     {"tg2_ui", tg2_options_ui_command},
-    {"tg2_lod", tg2_lod_command},   /* SPIKE (task 29) */
 };
 
 #include <stdio.h>
@@ -55,7 +53,6 @@ static int race_live(void)
 static void tg2_frame_pre(uint64_t frame_count)
 {
     tg2_audio_frame_pre();          /* BOTH: writer-routed second sound chip */
-    tg2_lod_probe_frame(frame_count);   /* SPIKE (task 29) */
     int live = race_live();
     if (live && !s_race_live) s_race60 = tg2_race60_requested();
     s_race_live = live;
@@ -92,7 +89,6 @@ static int tg2_instruction_hook(uint32_t pc)
         }
     }
     if (tg2_audio_hook(pc)) return 1;
-    if (tg2_lod_probe_hook(pc)) return 1;   /* SPIKE (task 29) */
     return tg2_video_hook(pc);
 }
 static void tg2_post_reset(void)
