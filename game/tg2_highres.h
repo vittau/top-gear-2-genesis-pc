@@ -93,8 +93,8 @@ unsigned tg2_highres_build_frames(void);
  * owns; the row renderer has already written the 1x canvas picture into it,
  * nearest-expanded by the scale. Returns the number of complete rows written:
  * > native_h selects that presented height, 0 keeps the stock picture. */
-int tg2_highres_build(const struct GVDP *vdp, uint32_t *pixels, int stride,
-                      int width, int native_w, int native_h);
+int tg2_highres_build(const struct GVDP *vdp, uint64_t frame, uint32_t *pixels,
+                      int stride, int width, int native_w, int native_h);
 
 #ifdef __cplusplus
 }

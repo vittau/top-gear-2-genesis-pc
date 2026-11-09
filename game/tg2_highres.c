@@ -318,10 +318,90 @@ static void build_terrain(const GVDP *v, const Tg2RowState *r, int src,
     }
 }
 
+/* ── N x road audit (qualification stream, docs/HIGHRES.md §8 S3) ─────────
+ * One record per presented picture under TG2_ROAD_AUDIT_DIR, at native row
+ * granularity (lines 140..212, last sub-row of each). The checker verifies the
+ * built silhouette against the two authored neighbours, the stripe phase, and
+ * row-to-row continuity. Only written when a qualification run asks for it. */
+#define NX_AUDIT_FIRST 140
+#define NX_AUDIT_ROWS  73
+typedef struct {
+    uint32_t line, py_src, py_next;
+    int32_t centre_src, centre_next, left_src, right_src, left_next, right_next;
+    int32_t el_x256, er_x256;          /* interpolated strip edges           */
+    int32_t measured_left, measured_right;
+    uint32_t stripes, stripes_src, flags;
+} NxAuditRow;
+enum { NX_FLAG_ROAD = 1, NX_FLAG_INTERPOLATED = 2 };
+
+static int32_t nx_lane_runs(const GVDP *v, const Tg2RowState *r, int py,
+                            int from, int to) {
+    int runs = 0, prev = 0;
+    for (int x = from; x <= to; ++x) {
+        unsigned attr;
+        unsigned nib = row_plane_pixel(v, r, x, py, &attr) & 15;
+        int lane = nib == 13;
+        if (lane && !prev) ++runs;
+        prev = lane;
+    }
+    return runs;
+}
+
+/* Measure the painted row at native sampling: road-colour extent and lane-mark
+ * runs. Colours come from the row's own palette, so interior texels match
+ * exactly; an antialiased edge column can miss by one native pixel. */
+static void nx_measure(const uint32_t *row, int scale, int w1,
+                       const uint32_t *pal, unsigned char bank,
+                       int *left, int *right, unsigned *stripes) {
+    uint32_t border = pal[(bank << 4) | 6];
+    uint32_t lane = pal[(bank << 4) | 13];
+    uint32_t asphalt = pal[(bank << 4) | 14];
+    int l = -1, r = -1, prev = 0;
+    unsigned runs = 0;
+    for (int u = 0; u < w1; ++u) {
+        uint32_t c = row[u * scale];
+        if (c == border || c == lane || c == asphalt) {
+            if (l < 0) l = u;
+            r = u;
+        }
+        if (c == lane && !prev) ++runs;
+        prev = c == lane;
+    }
+    *left = l;
+    *right = r;
+    *stripes = runs;
+}
+
+static void nx_audit_write(const GVDP *v, uint64_t frame, int scale,
+                           const uint32_t *pixels, int stride, int w1,
+                           int native_w, const NxAuditRow *rows) {
+    static int checked;
+    static const char *dir;
+    if (!checked) {
+        checked = 1;
+        dir = getenv("TG2_ROAD_AUDIT_DIR");
+    }
+    if (!dir || !*dir) return;
+    char path[1024];
+    snprintf(path, sizeof path, "%s/frame-%06llu.nxroad", dir, (unsigned long long)frame);
+    FILE *f = fopen(path, "wb");
+    if (!f) { perror(path); return; }
+    uint32_t header[7] = {0x3152584Eu /* "NXR1" little-endian tag */, (uint32_t)frame,
+                          (uint32_t)scale, (uint32_t)stride, (uint32_t)w1,
+                          (uint32_t)native_w, NX_AUDIT_ROWS};
+    fwrite("TG2NXR01", 1, 8, f);
+    fwrite(header, sizeof header, 1, f);
+    for (int i = 0; i < NX_AUDIT_ROWS; ++i)
+        fwrite(&rows[i], sizeof rows[i], 1, f);
+    fclose(f);
+    (void)v; (void)pixels;
+}
+
 /* Paint one output row of a road row. `row` is the nearest-expanded 1x row
  * (and the output row); the caller guarantees `row` is writable. */
 static void paint_road_row(const GVDP *v, int src, int j, int scale, int w1,
-                           int native_w, uint32_t *row) {
+                           int native_w, uint32_t *row, const uint32_t *native_row,
+                           NxAuditRow *audit) {
     const Tg2RowState *s = &s_rows[src];
     int origin = (w1 - native_w) / 2;
     int vb = s->vsram[1] & 511;
@@ -358,7 +438,7 @@ static void paint_road_row(const GVDP *v, int src, int j, int scale, int w1,
     for (int u = 0; u < w1; ++u) {
         if (!s_terrain[u])
             continue;                        /* sprite / HUD / car / plane A */
-        uint32_t native = row[u * scale];
+        uint32_t native = native_row[u * scale];
         for (int k = 0; k < scale; ++k) {
             int x = u * scale + k;
             double u0 = (double)x / (double)scale;
@@ -390,10 +470,31 @@ static void paint_road_row(const GVDP *v, int src, int j, int scale, int w1,
             row[x] = coverage >= 1.0 ? road : blend(native, road, coverage);
         }
     }
+    if (audit) {
+        int left = -1, right = -1;
+        unsigned stripes = 0;
+        nx_measure(row, scale, w1, pal, s->bank[0], &left, &right, &stripes);
+        audit->line = (uint32_t)src;
+        audit->py_src = (uint32_t)py;
+        audit->py_next = (uint32_t)py;
+        audit->centre_src = centre_s;
+        audit->centre_next = centre_n;
+        audit->left_src = left_s;
+        audit->right_src = right_s;
+        audit->left_next = left_n;
+        audit->right_next = right_n;
+        audit->el_x256 = (int32_t)(el * 256.0 + (el >= 0 ? 0.5 : -0.5));
+        audit->er_x256 = (int32_t)(er * 256.0 + (er >= 0 ? 0.5 : -0.5));
+        audit->measured_left = left;
+        audit->measured_right = right;
+        audit->stripes = stripes;
+        audit->stripes_src = (uint32_t)nx_lane_runs(v, s, py, left_s, right_s);
+        audit->flags = NX_FLAG_ROAD | (interpolate ? NX_FLAG_INTERPOLATED : 0);
+    }
 }
 
-int tg2_highres_build(const GVDP *vdp, uint32_t *pixels, int stride, int width,
-                      int native_w, int native_h) {
+int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int stride,
+                      int width, int native_w, int native_h) {
     int scale = tg2_highres_present_scale();
     if (scale <= 1 || !vdp || !pixels || width <= 0 || stride < width)
         return 0;
@@ -405,19 +506,34 @@ int tg2_highres_build(const GVDP *vdp, uint32_t *pixels, int stride, int width,
     int timing = highres_timing();
     double started = timing ? highres_now_us() : 0;
 
-    for (int src = 0; src < native_h; ++src) {
-        if (s_row_serial[src] != s_serial || !(s_rows[src].flags & TG2_ROW_ROAD))
-            continue;                        /* nearest-scaled native content */
-        if (((src + s_rows[src].vsram[1]) & 511) >= 432)
-            continue;
-        uint32_t *first = pixels + (size_t)src * scale * stride;
-        build_terrain(vdp, &s_rows[src], src, (w1 - native_w) / 2, native_w, w1,
-                      scale, first);
+    /* The row renderer produced one row per native line, already expanded
+     * horizontally by N; each becomes N presented rows. Walk bottom-up so
+     * reading native row `src` is never overwritten by the rows above it. */
+    static uint32_t s_src_row[4096];
+    NxAuditRow audit[NX_AUDIT_ROWS];
+    memset(audit, 0, sizeof audit);
+    for (int src = native_h - 1; src >= 0; --src) {
+        const uint32_t *native = pixels + (size_t)src * stride;
+        memcpy(s_src_row, native, (size_t)width * sizeof *s_src_row);
+        int road = s_row_serial[src] == s_serial &&
+                   (s_rows[src].flags & TG2_ROW_ROAD) &&
+                   ((src + s_rows[src].vsram[1]) & 511) < 432;
+        if (road)
+            build_terrain(vdp, &s_rows[src], src, (w1 - native_w) / 2, native_w,
+                          w1, scale, s_src_row);
         for (int j = 0; j < scale; ++j) {
             uint32_t *row = pixels + (size_t)(src * scale + j) * stride;
-            paint_road_row(vdp, src, j, scale, w1, native_w, row);
+            if (!road) {
+                memcpy(row, s_src_row, (size_t)width * sizeof *row);
+                continue;
+            }
+            NxAuditRow *entry = NULL;
+            if (j == scale - 1 && src >= NX_AUDIT_FIRST && src < NX_AUDIT_FIRST + NX_AUDIT_ROWS)
+                entry = &audit[src - NX_AUDIT_FIRST];
+            paint_road_row(vdp, src, j, scale, w1, native_w, row, s_src_row, entry);
         }
     }
+    nx_audit_write(vdp, frame, scale, pixels, stride, w1, native_w, audit);
     ++s_build_frames;
     if (timing) {
         double elapsed = highres_now_us() - started - s_clock_overhead;

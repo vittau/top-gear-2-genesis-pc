@@ -103,6 +103,8 @@ static int width(int dw, int dh, int nw, int nh) {
      * A render scale above 1 multiplies the whole 1x canvas by N, so the
      * presented picture keeps the exact N:1 relationship in both axes. */
     int scale = canvas_scale();
+    if (mode == 0)                       /* stock canvas = native width */
+        return nw * scale;
     int h = cropped_height(nh);
     double w = h * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
@@ -1078,7 +1080,8 @@ static int compose_presented(uint32_t *pixels, int stride, int width,
      * canvas (widescreen off) is always wide enough. */
     if (width > native_w && width < native_w * scale)
         return 0;
-    return tg2_highres_build(frame_vdp, pixels, stride, width, native_w, native_h);
+    return tg2_highres_build(frame_vdp, present_frame, pixels, stride, width,
+                             native_w, native_h);
 }
 /* Called by the runner once per completed picture, after every native row was
  * produced. Cropping is presentation-only: the bands are dropped from what is
@@ -1203,7 +1206,10 @@ void tg2_video_highres_command(int id, const char *json) {
     cmd_send_response(out);
     free(out);
 }
+/* A render scale above 1 owns the canvas even with widescreen off; enabled()
+ * keeps reporting the widescreen option itself. */
+static int presented_width(void) { return tg2_highres_present_scale() > 1; }
 const GameVideo tg2_video = {
     .configure = configure, .enabled = enabled, .width = width, .scanline = scanline,
     .renderer_enabled = renderer_enabled, .present_window = present_window,
-    .present_frame = compose_presented};
+    .present_frame = compose_presented, .presented_width = presented_width};
