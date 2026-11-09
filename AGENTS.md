@@ -95,6 +95,12 @@ the monthly quota on 2026-11-06.
   Use `platforms=all` only to qualify a release candidate or a change that
   touches platform-specific code (Windows/macOS paths, packaging).
 - Never push `v*` tags without the owner's go-ahead.
+- Never publish a release that contains work in progress on audio or graphics
+  (owner rule). `main` can carry unfinished features (e.g. the high-resolution
+  steps, audio options still being fixed), so a release is cut from a branch
+  that holds only finished, owner-accepted work: start it from the last release
+  tag and bring in the fixes, or wait until the WIP is finished and accepted.
+  Manual `build.yml` runs for testing are fine; they create no release.
 - If the quota is exhausted, wait for the monthly reset. Don't work around
   it, e.g. with new repos or accounts.
 
