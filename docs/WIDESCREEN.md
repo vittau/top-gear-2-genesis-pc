@@ -73,6 +73,13 @@ plane-A texel is the displayed native edge pixel, its colour continues through
 that margin row to the screen edge, so a tunnel wall never exposes the
 plane-B scenery it hides (see below).
 
+**Weather — rain and snow.** The weather region of plane A (atlas rows
+128..383) is sampled in the added columns using each row's original H/V
+scroll and CRAM. This continues individual particles across the old viewport
+boundary without turning an edge particle into a horizontal streak. HUD,
+car and tunnel regions keep their existing treatment. See
+[weather mechanism and paired captures](RAIN_WIDESCREEN.md).
+
 **Sprites — opponent cars and roadside objects.** The game's mapper at
 `$00B584` projects each object and then performs the native horizontal cull at
 `$00B5FA` (`cmpi.w #$100,d3`, bytes `0C430100`). A read-only hook at that
@@ -750,3 +757,10 @@ Probes launch `build/TG2Recomp` directly, so they must not inherit the host's
 build directory. Both project probe tools strip `APPIMAGE` explicitly. The
 tool needs Pillow (present in `build/analysis-venv`), writes only under
 `build/`, and uses port 4400; the output stays out of git.
+
+## Final linear filtering
+
+The runner clamps linear sampling to the active presented picture, including
+the overscan-cropped 200-line race and viewport size changes. Nearest output
+is unchanged and a fresh configuration defaults to filtering Off. See
+[Metal edge captures and default-preference validation](LINEAR_FILTER.md).
