@@ -41,3 +41,5 @@ the machine-resource rules, and never trigger CI.
 | [29](29-highres-design.md) | High-resolution rendering — ground truth and design | Done: `docs/HIGHRES.md`; owner decisions recorded in §9 |
 | [30](30-clean-fm-and-pcm.md) | Clean FM, separate volumes, better engine/nitro PCM | Done (merged 2026-11-09); owner listening pending |
 | [31](31-highres-s1-s2.md) | High-resolution rendering, steps S1 and S2 (capture + engine seam) | Done (merged 2026-11-09) |
+| [32](32-deck-aspect-and-quiet-logs.md) | Steam Deck feedback: device aspect, no logs in normal use | In progress |
+| [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | In progress |
