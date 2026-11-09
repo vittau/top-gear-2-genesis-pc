@@ -44,3 +44,15 @@ The owner selected C as-is. The authoritative source is now `tools/release/tg2re
 Normal builds use the stdlib-only `icon/embed_icon.py` to extract the ICO's 32px RGBA data into a build-local header. No generated C/header or additional runtime image decoder is stored in git or required in the release. macOS packaging uses the checked-in detail PNGs at 16/32 physical pixels and the approved master for larger sizes, through the existing `sips`/`iconutil` path.
 
 Approved derivatives were rendered with Pillow 13.0.0. The resolved DejaVu Sans font was `/usr/share/fonts/TTF/DejaVuSans.ttf`, SHA-256 `6038a160b491e121c1f12c7bccb4a9c8730296e3adc1086a059404ed84b7451c` (Pillow resolves the default font argument by filename on this host). Use `--font` to point at that font on another machine.
+
+## macOS bundle derivative
+
+macOS packaging now runs `macos_icon.swift` on the same approved master. It
+uses Apple's public SwiftUI `RoundedRectangle` with continuous corners
+(radius 185) on an 824×824 body centred at (100,100) in a transparent
+1024×1024 canvas, plus a CoreGraphics shadow (8px downward offset, 16px blur,
+24% black). `sips` derives every ICNS size from this build-local PNG. No
+second binary master or pip dependency is introduced; Windows ICO, embedded
+32px window icon, Linux PNG, and social preview stay unchanged. The macOS
+runtime preserves the bundle icon rather than replacing it with the small
+embedded cross-platform icon.

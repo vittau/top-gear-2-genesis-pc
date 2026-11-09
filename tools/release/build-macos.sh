@@ -64,20 +64,20 @@ app="TG2Recomp.app"
 rm -rf "$stage"
 mkdir -p "$out"
 
-# Build the .icns from the checked-in 1024px release icon with the tools macOS
-# ships (sips + iconutil), so no image package is needed on the runner.
+# Only the macOS derivative gets Apple's continuous-corner body and shadow.
+# The approved master, Windows ICO and Linux PNG remain unchanged. SwiftUI,
+# CoreGraphics, sips and iconutil ship with the macOS/Xcode release toolchain.
+mac_icon="$build/macos-icon.png"
+swift "$repo/tools/release/icon/macos_icon.swift" \
+    "$repo/tools/release/tg2recomp.png" "$mac_icon"
 iconset="$build/icon.iconset"
 rm -rf "$iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-    source="$repo/tools/release/tg2recomp.png"
-    if [ "$size" -le 32 ]; then source="$repo/tools/release/icon/tg2recomp-$size.png"; fi
-    sips -z "$size" "$size" "$source" \
+    sips -z "$size" "$size" "$mac_icon" \
         --out "$iconset/icon_${size}x${size}.png" >/dev/null
     double=$((size * 2))
-    source="$repo/tools/release/tg2recomp.png"
-    if [ "$double" -le 32 ]; then source="$repo/tools/release/icon/tg2recomp-$double.png"; fi
-    sips -z "$double" "$double" "$source" \
+    sips -z "$double" "$double" "$mac_icon" \
         --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$build/TG2Recomp.icns"
