@@ -1,0 +1,181 @@
+diff --git a/runner/main.c b/runner/main.c
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -342,6 +342,10 @@
+     {"states.save","Save states","Save state","Capture the next completed gameplay tick in this slot (overwrites its previous quickstate).",RECOMP_RUNTIME_UI_ACTION},
+     {"states.load","Save states","Load state","Restore this build's quickstate. Character/mod/video setup must match. Unsaved gameplay is replaced.",RECOMP_RUNTIME_UI_ACTION}
+ };
++/* Display-geometry helpers; defined with the widescreen geometry further down. */
++static int  gamescope_session(void);
++static int  display_desktop_size(int *w, int *h);
++static void adaptive_window_size(int scale, int *w, int *h);
+ static int runtime_ui_get(void *p, const RecompRuntimeUiItem *i, int *out) {
+     RuntimeUiContext *c = (RuntimeUiContext *)p;
+     if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_FULLSCREEN)) *out = g_app_config.fullscreen;
+@@ -389,7 +393,15 @@
+         SDL_SetWindowFullscreen(c->window, v == 2 ? SDL_WINDOW_FULLSCREEN : v == 1 ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+     } else if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) {
+         g_app_config.window_scale = v;
+-        if (!(SDL_GetWindowFlags(c->window) & SDL_WINDOW_FULLSCREEN)) SDL_SetWindowSize(c->window, 320*v, 224*v);
++        if (!(SDL_GetWindowFlags(c->window) & SDL_WINDOW_FULLSCREEN)) {
++            int w = 320 * v, h = 224 * v;
++            /* An adaptive renderer follows the window: keep the desktop's
++             * aspect, exactly like the first window (task 32). */
++            if (game_video_viewport_enabled(g_game_spec.video) &&
++                g_app_config.custom_widescreen && g_app_config.custom_aspect == 0)
++                adaptive_window_size(v, &w, &h);
++            SDL_SetWindowSize(c->window, w, h);
++        }
+     } else if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE)) {
+ #if GENESIS_HAS_RECOMP_NET
+         /* The view mode changes the simulated width (widescreen margin and its
+@@ -681,6 +693,67 @@
+  * gameplay full-bleed, menus pillarboxed inside it (see gvdp pillarbox). */
+ static int ws_canvas_h(void) { return ws_canvas_w() * WS_ASPECT_H / WS_ASPECT_W; }
+ 
++/* ---- Device display geometry ---------------------------------------------
++ * An adaptive custom-video renderer follows the window: the runner asks
++ * SDL_GetRendererOutputSize() for drawable_w/drawable_h and the game returns a
++ * picture of that exact aspect. Two device facts therefore decide the picture
++ * before SDL_CreateWindow:
++ *
++ *  1. A gamescope session presents whatever window the game creates as a
++ *     fullscreen surface scaled to the panel. A windowed 16:9 game is
++ *     letterboxed on a 16:10 Steam Deck, so start borderless fullscreen at the
++ *     panel size. Detected from the environment Steam/gamescope export:
++ *       SteamDeck=1                   Steam client on a Steam Deck
++ *       SteamGamepadUI=1              Game Mode's Big Picture session
++ *       SteamTenfoot=1                Big Picture UI
++ *       GAMESCOPE_WAYLAND_DISPLAY     nested inside gamescope (Wayland client)
++ *       GAMESCOPE_XWAYLAND_DISPLAY    gamescope's Xwayland (X11 client)
++ *       XDG_CURRENT_DESKTOP contains "gamescope"
++ *  2. A windowed start on a non-16:9 desktop starts at the DESKTOP's aspect,
++ *     so Adaptive has the right shape on the first frame. A fixed aspect keeps
++ *     the 16:9 window and letterboxes inside it as chosen. */
++static int env_flag(const char *name)
++{
++    const char *v = getenv(name);
++    return v && *v && strcmp(v, "0") != 0;
++}
++static int gamescope_session(void)
++{
++    if (env_flag("SteamDeck") || env_flag("SteamGamepadUI") || env_flag("SteamTenfoot"))
++        return 1;
++    if (env_flag("GAMESCOPE_WAYLAND_DISPLAY") || env_flag("GAMESCOPE_XWAYLAND_DISPLAY"))
++        return 1;
++    const char *desktop = getenv("XDG_CURRENT_DESKTOP");
++    return desktop && strstr(desktop, "gamescope") != NULL;
++}
++/* Desktop size of the first display, before any window exists. */
++static int display_desktop_size(int *w, int *h)
++{
++    SDL_DisplayMode mode;
++    int displays = SDL_GetNumVideoDisplays();
++    for (int d = 0; d < displays; ++d)
++        if (SDL_GetDesktopDisplayMode(d, &mode) == 0 && mode.w > 0 && mode.h > 0) {
++            *w = mode.w; *h = mode.h; return 1;
++        }
++    return 0;
++}
++/* Window for an adaptive renderer: window_scale still sets the height
++ * (224 * scale, the picture's race height with the overscan crop), and the
++ * width follows the desktop's aspect, clamped to the desktop. */
++static void adaptive_window_size(int scale, int *w, int *h)
++{
++    int height = 224 * scale;
++    int dw = 0, dh = 0;
++    *w = (height * 16 + 4) / 9;   /* 16:9 fallback (no display information) */
++    *h = height;
++    if (!display_desktop_size(&dw, &dh)) return;
++    if (height > dh) height = dh;
++    int width = (height * dw + dh / 2) / dh;
++    if (width < 320) width = 320;
++    if (width > dw) width = dw;
++    *w = width; *h = height;
++}
++
+ /* Expanded palette: 192 entries (64 CRAM Ã— 3 brightness levels).
+  * colour_updated_cb converts each entry from Genesis format to ARGB8888. */
+ static uint32_t s_cram[192];
+@@ -3488,17 +3561,40 @@
+ 
+     /* Start widescreen games in a wide window. The built-in custom renderer
+      * does not arm the legacy VDP widescreen path, so check it separately.
+-     * Adaptive mode then has a 16:9 window to follow on the first frame. */
++     * Adaptive mode follows the window (SDL_GetRendererOutputSize below), so
++     * the window's shape decides the picture on any panel that is not 16:9:
++     * size it from the desktop's aspect, never a fixed 16:9. */
+     int win_scale = g_app_config.window_scale;
+     if (win_scale < 1) win_scale = 1; else if (win_scale > 8) win_scale = 8;
+     int win_w = 320 * win_scale, win_h = 224 * win_scale;   /* scale 2 = 640x448 (4:3) */
+     int custom_video_on = game_video_viewport_enabled(g_game_spec.video);
+-    if (custom_video_on) {
++    int adaptive_video = custom_video_on && g_app_config.custom_widescreen &&
++                         g_app_config.custom_aspect == 0;
++    int gamescope = gamescope_session();
++    if (adaptive_video) {
++        adaptive_window_size(win_scale, &win_w, &win_h);
++    } else if (custom_video_on) {
++        /* Fixed aspect: the picture letterboxes inside a 16:9 window. */
+         win_w = (win_h * 16 + 4) / 9;
+     } else if (ws_armed()) {
+         win_w = ws_canvas_w() * win_scale;
+         win_h = win_w * WS_ASPECT_H / WS_ASPECT_W;   /* true 16:9 */
+     }
++    /* Gamescope (Steam Deck Game Mode and Steam's gaming session) turns the
++     * game's window into a fullscreen surface and scales it to the panel, so
++     * a windowed 16:9 game is letterboxed on a 16:10 Deck. Start borderless
++     * fullscreen at the panel size instead: Adaptive then fills it, with no
++     * setup and no terminal. An exclusive-mode choice (2) is kept. */
++    if (gamescope && !benchmark_frames && g_app_config.fullscreen == 0) {
++        g_app_config.fullscreen = 1;
++        fprintf(stderr, "[VIDEO] gamescope/Steam Deck session: starting borderless fullscreen\n");
++    }
++    {
++        int dw = 0, dh = 0;
++        if (display_desktop_size(&dw, &dh))
++            fprintf(stderr, "[VIDEO] display %dx%d (aspect %.3f)%s\n", dw, dh,
++                    (double)dw / dh, gamescope ? " gamescope/Steam-Deck session" : "");
++    }
+     /* Scripted launcher tests must stay hidden after the handoff to gameplay. */
+     int test_hidden = getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN");
+     Uint32 win_flags = ((benchmark_frames || test_hidden) ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN)
+@@ -3534,8 +3630,12 @@
+         }
+     }
+ #endif
+-    fprintf(stderr, "[VIDEO] window %dx%d (%s)\n", win_w, win_h,
+-            (custom_video_on || ws_armed()) ? "16:9 widescreen" : "4:3");
++    fprintf(stderr, "[VIDEO] window %dx%d (aspect %.3f, %s, %s)\n", win_w, win_h,
++            (double)win_w / win_h,
++            adaptive_video ? "adaptive" : custom_video_on ? "fixed aspect" :
++            ws_armed() ? "16:9 widescreen" : "4:3",
++            g_app_config.fullscreen == 2 ? "exclusive fullscreen" :
++            g_app_config.fullscreen == 1 ? "borderless fullscreen" : "windowed");
+ 
+     /* Texture scaling filter (settings.ini / launcher): nearest vs bilinear. */
+     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, g_app_config.linear_filter ? "1" : "0");
+@@ -4410,6 +4510,23 @@
+                   s_screen_height = last - first;
+               }
+           }
++          /* Presentation geometry, on change only: the drawable the adaptive
++           * renderer followed and the picture it asked for. Stderr only. */
++          if (!benchmark_frames) {
++              int ow = 0, oh = 0;
++              static int last_ow, last_oh, last_pw, last_ph;
++              SDL_GetRendererOutputSize(renderer, &ow, &oh);
++              if (ow != last_ow || oh != last_oh ||
++                  s_screen_width != last_pw || s_screen_height != last_ph) {
++                  last_ow = ow; last_oh = oh;
++                  last_pw = s_screen_width; last_ph = s_screen_height;
++                  fprintf(stderr,
++                          "[VIDEO] output %dx%d (aspect %.3f) picture %dx%d (aspect %.3f)\n",
++                          ow, oh, oh > 0 ? (double)ow / oh : 0.0,
++                          s_screen_width, s_screen_height,
++                          s_screen_height > 0 ? (double)s_screen_width / s_screen_height : 0.0);
++              }
++          }
+           if (!completed) {                        /* reverse-debug quit */
+               fprintf(stderr,genesis_replay_finished()?"[session] diagnostic replay completed\n":
+                   "[session] tick stopped by the post-drain hook (reverse-debug quit)\n");
