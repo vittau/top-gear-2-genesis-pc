@@ -65,3 +65,5 @@ commit; local fixes remain visible as its applied working-tree diff.
 - `0026-preserve-macos-bundle-icon.patch`: on macOS keep the bundle ICNS for Dock/Cmd+Tab instead of assigning the embedded 32px SDL window icon; the host passes no launcher icon override.
 
 - `0027-menu-esc-only-f1-loads-slot1.patch`: open the runtime menu on Esc only (gamepad Back+RB unchanged) so plain F1 reaches the engine's slot 1 load and Shift+F1 saves slot 1, with the state notices and menu-dismiss latch unchanged.
+
+- `0033-presented-picture-height.patch`: a `GameVideo.present_frame` hook lets a game provider compose and report a presented picture taller than the VDP's own geometry (after every native row, before the presented-window crop), with the buffers/texture sized for 4 x 224 rows; the interlace halving and netplay half-view clamp now key on the VDP's interlace mode instead of a height threshold, so a tall non-interlaced picture is shown at full height. Required by Top Gear 2's high-resolution rendering (task 31, S2).

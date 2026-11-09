@@ -1,5 +1,6 @@
 /* TG2 USA presentation. Guest raster state is authoritative on every row. */
 #include "tg2_video.h"
+#include "tg2_highres.h"
 #include "cmd_server.h"
 #include "genesis_runtime.h"
 #include "video/genesis_dac.h"
@@ -87,11 +88,16 @@ static int cropped_height(int nh) {
 }
 static int width(int dw, int dh, int nw, int nh) {
     /* The canvas follows the presented height: with the empty race bands
-     * cropped, 16:9 at 200 lines is 356 pixels wide instead of 398 at 224. */
+     * cropped, 16:9 at 200 lines is 356 pixels wide instead of 398 at 224.
+     * A render scale above 1 multiplies the whole 1x canvas by N, so the
+     * presented picture keeps the exact N:1 relationship in both axes. */
+    int scale = tg2_highres_present_scale();
     int h = cropped_height(nh);
     double w = h * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
-    return result < nw ? nw : result;
+    result *= scale;
+    if (result > 4096) result = 4096;
+    return result < nw * scale ? nw * scale : result;
 }
 /* Snapshots match the SAT actually displayed, rather than the CPU's next
  * scene. These hooks only read registers, RAM and ROM. */
@@ -119,6 +125,7 @@ static unsigned read16(unsigned a) {
 static unsigned read32(unsigned a) { return (read16(a) << 16) | read16(a + 2); }
 void tg2_video_reset(void) {
     presentation_clear();
+    tg2_highres_reset();
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
     shown = NULL;
@@ -561,6 +568,10 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
     if (line == 223) fflush(margin_audit);
 }
 static int synthesizing, audit_race_frame;
+/* The last picture was a qualified single-player race (set on its first row).
+ * The presented-height builder and the test provider use it, not a re-check
+ * of live RAM at frame end, so 2P split-screen frames stay native. */
+static int last_frame_race;
 /* Only remove a band that is visibly empty in this exact presented picture:
  * the top rows when the stock window band was blanked, the bottom rows when
  * every one of their rendered pixels is the empty backdrop. */
@@ -585,6 +596,9 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     pa_extend_mask = 0;
     if (!line) {
         audit_race_frame = nw == 256 && race(v);
+        last_frame_race = audit_race_frame;
+        if (last_frame_race)
+            tg2_highres_picture_start();
         crop_race_ok = audit_race_frame;
         crop_top_rows = 0;
         crop_bottom_ok = 1;
@@ -632,6 +646,10 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     rows[line].vb = vb;
     rows[line].a = ba;
     rows[line].b = bb;
+    /* S1: compact per-row capture, only when the render scale is above 1, so
+     * the stock path pays nothing. It records exactly the row state the
+     * renderer is about to use. */
+    tg2_highres_capture_row(v, line, ha, hb);
     uint32_t pal[64];
     for (int i = 0; i < 64; ++i)
         pal[i] = genesis_dac_cram_to_argb(v->cram[i], 0);
@@ -1000,17 +1018,30 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     /* Endpoint snapshots must read as real pictures in the audit export. */
     audit_row(line, a, b, row_vdp, (int)hs);
 }
+/* Engine seam (patch 0033): called once per completed picture, after every
+ * native row was produced and before the presented-window crop. Only a
+ * qualified single-player race picture with the scale above 1 is composited
+ * taller; menus, 2P split-screen and interlaced pictures (native_h 448) keep
+ * the machine's own picture and height. */
+static int compose_presented(uint32_t *pixels, int stride, int width,
+                             int native_w, int native_h) {
+    if (!pixels || native_h != 224 || !last_frame_race)
+        return 0;
+    return tg2_highres_build(pixels, stride, width, native_w, native_h);
+}
 /* Called by the runner once per completed picture, after every native row was
  * produced. Cropping is presentation-only: the bands are dropped from what is
  * shown, so screenshots, hashes and the logical canvas all use the cropped
- * height, while guest output and the margin audit keep all 224 lines. */
+ * height, while guest output and the margin audit keep all 224 lines. An N x
+ * picture drops the same bands at its own height (8N top, 16N bottom). */
 static int present_window(int native_w, int native_h, int *first, int *last) {
-    int crop = tg2_video_get_hide_overscan() && crop_race_ok && crop_bottom_ok &&
-               crop_top_rows == CROP_TOP && native_h == 224 && native_w >= 256;
+    int factor = native_h > 0 && native_h % 224 == 0 ? native_h / 224 : 0;
+    int crop = factor > 0 && tg2_video_get_hide_overscan() && crop_race_ok &&
+               crop_bottom_ok && crop_top_rows == CROP_TOP && native_w >= 256;
     presented_cropped = crop;
     if (crop) {
-        *first = CROP_TOP;
-        *last = native_h - CROP_BOTTOM;
+        *first = CROP_TOP * factor;
+        *last = native_h - CROP_BOTTOM * factor;
         ++crop_frames;
     } else if (tg2_video_get_hide_overscan() && crop_race_ok) {
         /* The crop was wanted but this picture draws into a band. */
@@ -1040,6 +1071,13 @@ void tg2_video_command(int id, const char *json) {
                   race60, PRESENT_DELAY, (unsigned long long)present_frame,
                   (unsigned long long)(from_picture ? from_picture->frame : 0),
                   (unsigned long long)(to_picture ? to_picture->frame : 0), phase_num, phase_den);
+    n += snprintf(out + n, sizeof out - n,
+                  ",\"highres_scale\":%d,\"highres_present_scale\":%d,"
+                  "\"highres_test_provider\":%d,\"highres_capture_frames\":%u,"
+                  "\"highres_capture_us\":%.3f,\"highres_capture_rows\":%u",
+                  tg2_highres_scale(), tg2_highres_present_scale(),
+                  tg2_highres_test_provider(), tg2_highres_capture_frames(),
+                  tg2_highres_capture_us(), tg2_highres_capture_rows_done());
     if (json && strstr(json, "\"rows\"")) {
         n += snprintf(out + n, sizeof out - n, ",\"rows\":[");
         for (int i = 0; i < 224; ++i)
@@ -1064,6 +1102,53 @@ void tg2_video_command(int id, const char *json) {
     snprintf(out + n, sizeof out - n, "}");
     cmd_send_response(out);
 }
+/* S1 evidence: the captured compact row state next to the live per-row words
+ * the renderer used for the same picture (rows[] is written in the same branch
+ * as the capture). Rows whose serial is not the latest picture were skipped by
+ * the renderer (for example the blanked overscan band) and must not be
+ * compared. */
+void tg2_video_highres_command(int id, const char *json) {
+    enum { CAPACITY = 98304 };
+    char *out = malloc(CAPACITY);
+    if (!out) {
+        cmd_send_response("{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    }
+    const Tg2RowState *captured = tg2_highres_rows();
+    const unsigned short *row_serial = tg2_highres_row_serial();
+    unsigned serial = tg2_highres_serial();
+    int n = snprintf(out, CAPACITY,
+                     "{\"id\":%d,\"ok\":true,\"scale\":%d,\"present_scale\":%d,"
+                     "\"test_provider\":%d,\"capture_frames\":%u,\"serial\":%u,"
+                     "\"capture_us\":%.3f,\"capture_rows\":%u",
+                     id, tg2_highres_scale(), tg2_highres_present_scale(),
+                     tg2_highres_test_provider(), tg2_highres_capture_frames(),
+                     serial, tg2_highres_capture_us(),
+                     tg2_highres_capture_rows_done());
+    if (json && strstr(json, "\"rows\"") && n > 0 && n < CAPACITY) {
+        n += snprintf(out + n, CAPACITY - n, ",\"rows\":[");
+        for (int line = 0; line < TG2_HIGHRES_ROWS && n > 0 && n < CAPACITY; ++line) {
+            const Tg2RowState *r = &captured[line];
+            n += snprintf(out + n, CAPACITY - n,
+                          "%s{\"gen\":%u,\"ha\":%u,\"hb\":%u,\"va\":%u,\"vb\":%u,"
+                          "\"hscroll\":[%u,%u],\"bank\":[%u,%u],\"k\":%d,\"flags\":%u}",
+                          line ? "," : "", row_serial[line], r->hscroll[0], r->hscroll[1],
+                          r->vsram[0], r->vsram[1], r->hscroll[0], r->hscroll[1],
+                          r->bank[0], r->bank[1], r->width_k, r->flags);
+        }
+        n += snprintf(out + n, CAPACITY - n, "],\"live\":[");
+        for (int line = 0; line < 224 && n > 0 && n < CAPACITY; ++line)
+            n += snprintf(out + n, CAPACITY - n,
+                          "%s{\"ha\":%d,\"hb\":%d,\"va\":%d,\"vb\":%d}",
+                          line ? "," : "", rows[line].ha, rows[line].hb,
+                          rows[line].va, rows[line].vb);
+        n += snprintf(out + n, CAPACITY - n, "]");
+    }
+    if (n > 0 && n < CAPACITY) snprintf(out + n, CAPACITY - n, "}");
+    cmd_send_response(out);
+    free(out);
+}
 const GameVideo tg2_video = {
     .configure = configure, .enabled = enabled, .width = width, .scanline = scanline,
-    .renderer_enabled = renderer_enabled, .present_window = present_window};
+    .renderer_enabled = renderer_enabled, .present_window = present_window,
+    .present_frame = compose_presented};

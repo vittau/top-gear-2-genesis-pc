@@ -2,6 +2,8 @@
 #include "game_video.h"
 extern const GameVideo tg2_video;
 void tg2_video_command(int id, const char *json);
+/* Compact row-state dump for S1 evidence (see docs/HIGHRES.md §8). */
+void tg2_video_highres_command(int id, const char *json);
 int tg2_video_hook(uint32_t pc);
 void tg2_video_reset(void);
 /* Presentation preference: 0 = Centered (default), 1 = Edges. */

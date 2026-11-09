@@ -19,6 +19,7 @@ static void tg2_password_trace_command(int id, const char *json);
 static const GameDebugCommand commands[] = {
     {"tg2_password_trace", tg2_password_trace_command},
     {"tg2_video", tg2_video_command},
+    {"tg2_highres", tg2_video_highres_command},
     {"tg2_ui", tg2_options_ui_command},
 };
 
