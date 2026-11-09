@@ -26,7 +26,8 @@ The owner picked the first items to work on, in this order:
    ([task 29](tasks/29-highres-design.md), in progress), then implementation
    from that design (a later task).
 3. **Clean FM, separate volumes and better engine/nitro PCM** —
-   [task 30](tasks/30-clean-fm-and-pcm.md), in progress.
+   [task 30](tasks/30-clean-fm-and-pcm.md), implemented; awaiting the owner's
+   listening confirmation.
 
 How they run, to avoid rework (at most two workers at once): task 29 and
 task 30 run in parallel now, since audio shares no code with the video work.
@@ -58,8 +59,8 @@ The other groups have no set order.
 | Gameplay | [Cheats page](#cheats-page) | Pick any of the 64 races and set money/upgrades from the Esc menu, through the game's own password path. | |
 | Save states | [Car setup screen](#save-states-on-the-car-setup-screen) | Save and load on the setup screen, on a new game and between races. | [27](tasks/27-setup-screen-quickstate.md) |
 | Save states | [Live 2P race after a load](#live-2p-race-after-a-load) | Show a loaded split-screen race resuming live, not under the game's PAUSE. | |
-| Audio | [Clean FM and separate volumes](#clean-fm-and-separate-volumes) | Optional YM3438-style FM without the ladder distortion, plus Music and SFX volume sliders. **Priority 3.** | [30](tasks/30-clean-fm-and-pcm.md) |
-| Audio | [Better engine and nitro PCM](#better-engine-and-nitro-pcm) | Band-limited resampling of the original PCM instead of the DAC's sample-and-hold. **Priority 3.** | [30](tasks/30-clean-fm-and-pcm.md) |
+| Audio | [Clean FM and separate volumes](#clean-fm-and-separate-volumes) | **Done (task 30).** Optional YM3438-style FM without the ladder distortion, plus Music and SFX volume sliders in every sound mode. | [30](tasks/30-clean-fm-and-pcm.md) |
+| Audio | [Better engine and nitro PCM](#better-engine-and-nitro-pcm) | **Done (task 30).** Band-limited reconstruction of the original DAC stream instead of the chip's sample-and-hold. | [30](tasks/30-clean-fm-and-pcm.md) |
 | Audio | [Auckland music re-attacks](#auckland-music-re-attacks) | Channels 1–2 re-attack some notes differently from the owner's VGM reference. | |
 | Platforms | [Android](#android) | A future release target. Not started. | |
 
@@ -292,20 +293,29 @@ continues the guest's callers").
 
 ### Clean FM and separate volumes
 
-*Owner request, 2026-11-06.* A small optional audio task. It adds a "clean FM"
-option (ymfm YM3438 variant, no ladder distortion; the default stays the stock
-YM2612 sound) plus separate **Music volume** and **SFX volume** sliders in the
-in-game Esc menu, next to the existing master Volume, in every sound mode.
-Default 100% stays byte-identical. Classify by source: the Z80 music driver is
-music; the 68k FM/PSG engine and the race Z80 SFX image are SFX.
+*Owner request, 2026-11-06.* **Implemented in task 30** (`docs/AUDIO.md` §13).
+A "Clean FM" option (ymfm YM3438 core, no ladder distortion; the default stays
+the stock YM2612, sample-exact) plus **Music volume** and **SFX volume** sliders
+in the in-game Audio section under the master Volume and on the launcher's Mods
+page, in every sound mode. Writes are classified by source: the resident Z80
+music driver is music; the 68K FM/PSG engine and the race Z80 SFX image are
+sound effects (the game tells the mixer when the first core runs the race image
+instead of the driver). At 100% every stock MUSIC/SFX/BOTH capture and the
+4:3 frame hashes are byte-identical; the measured level ratios, pop/dropout
+counts and A/B files are in `AUDIO.md` §13. The owner's listening confirmation
+is the remaining step.
 
 ### Better engine and nitro PCM
 
 The engine and nitro **are** PCM (correction from task 20): a 6.6 kHz DAC
 player in the race Z80 SFX image (ROM `$0701F6`); the 68k FM part is only a
-drone. The owner's "better version of the same asset" fits here: band-limited
-resampling of the original PCM instead of the DAC's sample-and-hold. Rejected:
-engine samples from other games or versions.
+drone. **Implemented in task 30** (`docs/AUDIO.md` §13.5): a "Clean engine
+samples" option replays the cartridge's own `$2A` stream through a 95-tap
+Kaiser-windowed-sinc reconstruction at 3.3 kHz instead of the chip's
+sample-and-hold, once per chip output sample, inside the chip model. Images at
+6.6k/13.2k/19.8k drop from −26 to −60 dBc at a 0.88 ms group delay; the default
+stays the stock DAC and byte-identical. Rejected, and still rejected: engine
+samples from other games or versions.
 
 ### Auckland music re-attacks
 

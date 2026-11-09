@@ -1,0 +1,490 @@
+diff --git a/runner/audio/mixer.c b/runner/audio/mixer.c
+index 16e213f..a313e04 100644
+--- a/runner/audio/mixer.c
++++ b/runner/audio/mixer.c
+@@ -260,6 +260,18 @@ void audio_mixer_set_source_volumes(int music_pct, int sfx_pct)
+ }
+ int audio_mixer_frame_sources(void) { return s_frame_sources; }
+ 
++/* FM core variant and DAC reconstruction: host options, applied to both
++ * virtual chips. Defaults (0) leave every stock path untouched. */
++void audio_mixer_set_fm_variant(int ym3438)
++{
++    ym2612_set_variant(0, ym3438);
++    ym2612_set_variant(1, ym3438);
++}
++void audio_mixer_set_dac_resample(int on)
++{
++    ym2612_set_dac_resample(0, on);
++    ym2612_set_dac_resample(1, on);
++}
+ 
+ static void mixer_scale(int16_t *buf, size_t samples, unsigned channels, int gain)
+ {
+diff --git a/runner/audio/mixer.h b/runner/audio/mixer.h
+index 521a573..f845c41 100644
+--- a/runner/audio/mixer.h
++++ b/runner/audio/mixer.h
+@@ -44,6 +44,12 @@ void audio_mixer_set_source_volumes(int music_pct, int sfx_pct);
+ /* Sources present in the last drain: bit0 music, bit1 sound effects. */
+ int  audio_mixer_frame_sources(void);
+ 
++/* FM core variant for both virtual chips: 0 = stock YM2612 (default),
++ * 1 = YM3438 (no ladder discontinuity). */
++void audio_mixer_set_fm_variant(int ym3438);
++/* Band-limited reconstruction of the DAC stream, both chips. Off by default. */
++void audio_mixer_set_dac_resample(int on);
++
+ /* Presentation preference, default0: bypass the native FM/PSG hardware LPFs.
+  * Both canonical filters keep advancing. Changes on the emulation/main thread
+  * fade over5ms without resetting chips, clocks or playback. Safe before init;
+diff --git a/runner/audio/ym2612.h b/runner/audio/ym2612.h
+index a04cbea..b0717d4 100644
+--- a/runner/audio/ym2612.h
++++ b/runner/audio/ym2612.h
+@@ -29,6 +29,17 @@ size_t ym2612_render_pair_chip(int index, int16_t *filtered,
+                                int16_t *unfiltered, size_t sample_count);
+ size_t ym2612_samples_available_chip(int index);
+ 
++/* FM core variant (host option, default 0 = stock): 0 = YM2612, 1 = YM3438.
++ * The YM3438 is the same FM engine without the YM2612's 9-bit ladder
++ * discontinuity. Switching rebuilds the chip from reset; nothing else in the
++ * wrapper changes. */
++void   ym2612_set_variant(int index, int variant);
++
++/* Band-limited reconstruction of the DAC ($2A) stream instead of the chip's
++ * sample-and-hold (host option, default off). Only the DAC register is
++ * affected: every FM channel is rendered exactly as before. */
++void   ym2612_set_dac_resample(int index, int on);
++
+ /* Advance internal state by `cycles_68k` 68K cycles without any register
+  * writes. Ticks envelope/phase/LFO for each operator. */
+ void ym2612_advance(uint32_t cycles_68k);
+diff --git a/runner/audio/ym2612_ymfm.cpp b/runner/audio/ym2612_ymfm.cpp
+index 90878bf..68ac675 100644
+--- a/runner/audio/ym2612_ymfm.cpp
++++ b/runner/audio/ym2612_ymfm.cpp
+@@ -31,6 +31,7 @@ extern "C" {
+ #include <cstdint>
+ #include <cstdlib>
+ #include <cstdio>
++#include <cmath>
+ #include <vector>
+ 
+ #ifndef GENESIS_FM_BLOCK_SAMPLES
+@@ -58,6 +59,61 @@ constexpr int32_t YM_GAIN_DEN = 256;
+ /* Minimal interface: all-default (no timers, no busy, no external memory). */
+ struct YmfmIface : public ymfm::ymfm_interface {};
+ 
++/* ---- Engine/nitro DAC reconstruction (option: clean engine samples) ------
++ * The race Z80 image plays its samples by writing YM2612 register $2A at
++ * ~6.6 kHz; the chip's DAC holds each value until the next write, so the
++ * output carries the sample-and-hold staircase and its images at 6.6 kHz and
++ * up. The option replays the stream through a band-limited reconstruction
++ * instead: the staircase is low-passed at the source's own Nyquist and the
++ * filtered value is written back to $2A once per chip output sample, so the
++ * DAC follows a smooth (image-free) waveform while every other FM channel,
++ * the ladder behaviour and the DAC's own bit depth are untouched.
++ *
++ * The kernel is a Kaiser-windowed sinc (95 taps, 3.3 kHz corner, beta 7):
++ * flat to 2 kHz, -2.7 dB at 3 kHz, -73 dB at 5 kHz, so the images at 6.6 kHz
++ * and above land below -80 dB. 47 samples of group delay = 0.88 ms, which is
++ * inside the audio/visual budget the engine already keeps. */
++constexpr int    DAC_FIR_TAPS = 95;
++constexpr int    DAC_FIR_HALF = DAC_FIR_TAPS / 2;
++constexpr double DAC_FIR_CUTOFF_HZ = 3300.0;
++constexpr double DAC_FIR_BETA = 7.0;
++constexpr double DAC_FIR_PI = 3.14159265358979323846;
++
++static double s_dac_fir[DAC_FIR_TAPS];
++static int    s_dac_fir_ready = 0;
++
++static double bessel_i0(double x)
++{
++    /* Series form: accurate to ~1e-9 for the beta range used here. */
++    double sum = 1.0, term = 1.0;
++    for (int k = 1; k < 48; ++k) {
++        term *= (x / (2.0 * k)) * (x / (2.0 * k));
++        sum += term;
++        if (term < 1e-12 * sum) break;
++    }
++    return sum;
++}
++
++static void dac_fir_init(void)
++{
++    if (s_dac_fir_ready) return;
++    s_dac_fir_ready = 1;
++    const double fs = (double)YM_CLOCK / 144.0;     /* 53267 Hz */
++    const double fc = DAC_FIR_CUTOFF_HZ / fs;       /* cycles / sample */
++    const double denom = bessel_i0(DAC_FIR_BETA);
++    double sum = 0.0;
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) {
++        double m = (double)(i - DAC_FIR_HALF);
++        double s = (m == 0.0) ? 2.0 * fc
++                              : sin(2.0 * DAC_FIR_PI * fc * m) / (DAC_FIR_PI * m);
++        double r = 2.0 * (double)i / (double)(DAC_FIR_TAPS - 1) - 1.0;
++        double w = bessel_i0(DAC_FIR_BETA * sqrt(1.0 - r * r)) / denom;
++        s_dac_fir[i] = s * w;
++        sum += s_dac_fir[i];
++    }
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) s_dac_fir[i] /= sum;
++}
++
+ /* One wrapper instance per virtual YM2612. Index 0 is the canonical chip and
+  * keeps the exact arithmetic of the single-chip build; index 1 is the
+  * writer-routed second chip (BOTH mode only). Instantiating the state per chip
+@@ -67,9 +123,10 @@ constexpr size_t FM_SCRATCH_STEREO_SAMPLES = 8192;
+ 
+ struct YmChip {
+     YmfmIface      iface;
+-    ymfm::ym2612  *chip = nullptr;
++    ymfm::ym2612  *chip = nullptr;   /* YM2612, or a YM3438 when variant = 1 */
+     int            inited = 0;
+     int            index = 0;
++    int            variant = 0;      /* 0 = YM2612 (stock), 1 = YM3438 */
+ 
+     /* Output scratch ring, mirroring ym2612.c's so ym2612_render semantics match. */
+     int16_t scratch[FM_SCRATCH_STEREO_SAMPLES * 2];
+@@ -82,10 +139,59 @@ struct YmChip {
+     /* Hardware FM output low-pass state (see the coefficients below). */
+     int32_t lpf_prev[2] = {0, 0};
+     int32_t lpf_out[2]  = {0, 0};
++
++    /* Register-address shadows, so a $2A data write can be recognised (the DAC
++     * lives in the low bank: address $2A on port 0, data on port 1) and so the
++     * reconstruction can address that register without disturbing the guest's
++     * own latch. */
++    uint8_t addr_lo = 0;
++    uint8_t addr_hi = 0;
++
++    /* Engine/nitro DAC reconstruction (option; see dac_fir_init above). */
++    int       dac_resample = 0;
++    uint8_t   dac_byte = 0x80;             /* last $2A byte the guest wrote */
++    double    dac_hist[DAC_FIR_TAPS] = {0};
++    unsigned  dac_pos = 0;
+ };
+ 
+ YmChip s_chips[2];
+ 
++inline void chip_generate(YmChip &c, ymfm::ym2612::output_data *out,
++                          uint32_t count)
++{
++    if (c.variant)
++        static_cast<ymfm::ym3438 *>(c.chip)->generate(out, count);
++    else
++        c.chip->generate(out, count);
++}
++
++/* Push the current (held) DAC level into the reconstruction history and return
++ * the band-limited value to feed back into $2A. */
++inline uint8_t dac_reconstruct(YmChip &c)
++{
++    c.dac_hist[c.dac_pos] = (double)c.dac_byte;
++    c.dac_pos = (c.dac_pos + 1) % (unsigned)DAC_FIR_TAPS;
++    double acc = 0.0;
++    unsigned idx = c.dac_pos;   /* oldest sample */
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) {
++        acc += s_dac_fir[i] * c.dac_hist[idx];
++        if (++idx == (unsigned)DAC_FIR_TAPS) idx = 0;
++    }
++    long v = lround(acc);
++    if (v < 0) v = 0; else if (v > 255) v = 255;
++    return (uint8_t)v;
++}
++
++/* Write one reconstructed DAC value without leaving the guest's address latch
++ * changed. */
++inline void dac_emit_sample(YmChip &c)
++{
++    uint8_t v = dac_reconstruct(c);
++    if (c.addr_lo != 0x2A) c.chip->write(0, 0x2A);
++    c.chip->write(1, v);
++    if (c.addr_lo != 0x2A) c.chip->write(0, c.addr_lo);
++}
++
+ /* Hardware FM output low-pass -- the real Genesis filters the FM DAC output, and
+  * clownmdemu models it (low-pass-filter.c, coefficients 6.910, 4.910) after
+  * FM_OutputSamples. ymfm emits the bare chip output (excess >8 kHz energy); this
+@@ -119,7 +225,8 @@ void emit_one_sample(YmChip &c) {
+         return;
+     }
+     ymfm::ym2612::output_data out;
+-    c.chip->generate(&out, 1);
++    if (c.dac_resample) dac_emit_sample(c);
++    chip_generate(c, &out, 1);
+     int32_t l = out.data[0] * YM_GAIN_NUM / YM_GAIN_DEN;
+     int32_t r = out.data[1] * YM_GAIN_NUM / YM_GAIN_DEN;
+     c.scratch[c.scratch_write * 2 + 0] = (int16_t)fm_lpf(c, 0, l);   /* hardware FM output LPF (matches reference; tames ymfm's excess highs) */
+@@ -134,10 +241,28 @@ void emit_samples(YmChip &c, uint32_t count) {
+     if (count > available) count = (uint32_t)available;
+     /* No register write can occur within this advance interval. Keep ymfm's
+      * exact sample sequence and the serial LPF, amortizing the outer calls. */
++    if (c.dac_resample) {
++        /* Reconstruction feeds the DAC register once per output sample, so the
++         * samples are generated one at a time (the chip's own sequence is
++         * unchanged otherwise: same clock per sample). */
++        for (uint32_t i = 0; i < count; ++i) {
++            ymfm::ym2612::output_data out;
++            dac_emit_sample(c);
++            chip_generate(c, &out, 1);
++            int32_t l = out.data[0] * YM_GAIN_NUM / YM_GAIN_DEN;
++            int32_t r = out.data[1] * YM_GAIN_NUM / YM_GAIN_DEN;
++            c.scratch[c.scratch_write * 2] = (int16_t)fm_lpf(c, 0, l);
++            c.scratch[c.scratch_write * 2 + 1] = (int16_t)fm_lpf(c, 1, r);
++            c.raw_scratch[c.scratch_write * 2] = clamp16(l);
++            c.raw_scratch[c.scratch_write * 2 + 1] = clamp16(r);
++            ++c.scratch_write;
++        }
++        return;
++    }
+     ymfm::ym2612::output_data block[64];
+     while (count) {
+         uint32_t chunk = count < 64 ? count : 64;
+-        c.chip->generate(block, chunk);
++        chip_generate(c, block, chunk);
+         for (uint32_t i = 0; i < chunk; ++i) {
+             int32_t l = block[i].data[0] * YM_GAIN_NUM / YM_GAIN_DEN;
+             int32_t r = block[i].data[1] * YM_GAIN_NUM / YM_GAIN_DEN;
+@@ -158,18 +283,60 @@ extern "C" void ym2612_init_chip(int index) {
+     if (index < 0 || index > 1) return;
+     YmChip &c = s_chips[index];
+     c.index = index;
+-    if (!c.chip)
++    if (!c.chip) {
++        c.variant = 0;
+         c.chip = new ymfm::ym2612(c.iface);
++    }
+     c.chip->reset();
+     c.scratch_write = c.scratch_read = 0;
+     c.master_accum = 0;
+     c.lpf_prev[0] = c.lpf_prev[1] = 0;
+     c.lpf_out[0]  = c.lpf_out[1]  = 0;
++    c.addr_lo = c.addr_hi = 0;
++    c.dac_byte = 0x80;
++    c.dac_pos = 0;
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) c.dac_hist[i] = 0.0;
+     c.inited = 1;
+ }
+ 
+ extern "C" void ym2612_init(void) { ym2612_init_chip(0); }
+ 
++/* FM core variant: 0 = stock YM2612 (default), 1 = YM3438 (no ladder
++ * discontinuity). Recreating the chip resets its register state, so the next
++ * writes rebuild the current voice; the wrapper's own sample-clock remainder,
++ * LPF history and DAC reconstruction restart with it. */
++extern "C" void ym2612_set_variant(int index, int variant) {
++    if (index < 0 || index > 1) return;
++    YmChip &c = s_chips[index];
++    int v = variant ? 1 : 0;
++    if (c.variant == v) return;
++    delete c.chip;
++    c.chip = v ? static_cast<ymfm::ym2612 *>(new ymfm::ym3438(c.iface))
++               : new ymfm::ym2612(c.iface);
++    c.variant = v;
++    c.chip->reset();
++    c.scratch_write = c.scratch_read = 0;
++    c.master_accum = 0;
++    c.lpf_prev[0] = c.lpf_prev[1] = 0;
++    c.lpf_out[0]  = c.lpf_out[1]  = 0;
++    c.addr_lo = c.addr_hi = 0;
++    c.dac_byte = 0x80;
++    c.dac_pos = 0;
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) c.dac_hist[i] = 0.0;
++    c.inited = 1;
++}
++
++extern "C" void ym2612_set_dac_resample(int index, int on) {
++    if (index < 0 || index > 1) return;
++    YmChip &c = s_chips[index];
++    int want = on != 0;
++    if (c.dac_resample == want) return;
++    if (want) dac_fir_init();
++    c.dac_resample = want;
++    c.dac_pos = 0;
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) c.dac_hist[i] = (double)c.dac_byte;
++}
++
+ extern "C" void ym2612_advance_chip(int index, uint32_t cycles_master) {
+     if (index < 0 || index > 1) return;
+     YmChip &c = s_chips[index];
+@@ -199,8 +366,18 @@ extern "C" void ym2612_write_chip(int index, uint8_t port, uint8_t value) {
+     if (!c.inited) ym2612_init_chip(index);
+     /* port 0/1 = part-1 address/data, port 2/3 = part-2 address/data --
+      * exactly ymfm::ym2612::write()'s offset convention. */
+-    if (port <= 3)
+-        c.chip->write(port, value);
++    if (port > 3) return;
++    if (port == 0) c.addr_lo = value;
++    else if (port == 2) c.addr_hi = value;
++    /* The DAC data register ($2A, low bank) is held, not latched: with the
++     * reconstruction option on, the write only updates the level the
++     * reconstruction filter sees, and the filtered value reaches the chip once
++     * per output sample (dac_emit_sample). Every other write passes through. */
++    if (c.dac_resample && port == 1 && c.addr_lo == 0x2A) {
++        c.dac_byte = value;
++        return;
++    }
++    c.chip->write(port, value);
+ }
+ 
+ extern "C" void ym2612_write(uint8_t port, uint8_t value)
+@@ -250,24 +427,66 @@ extern "C" uint32_t ym2612_sample_rate(void) {
+     return s_chips[0].chip->sample_rate(YM_CLOCK);
+ }
+ 
++/* Extension of the wrapper state introduced with the FM variant and DAC
++ * reconstruction options (task 30): the active core variant, the register
++ * address shadows, and the reconstruction filter history. Written after the
++ * ymfm blob and the pre-existing wrapper fields, so a state always carries
++ * the filter's phase (a loaded state resumes with the same waveform). */
++struct YmExtraState {
++    int32_t  variant;
++    int32_t  dac_resample;
++    uint32_t addr_lo;
++    uint32_t addr_hi;
++    uint32_t dac_byte;
++    uint32_t dac_pos;
++    double   dac_hist[DAC_FIR_TAPS];
++};
++
++static void ym_extra_get(YmChip &c, YmExtraState *s)
++{
++    s->variant = c.variant;
++    s->dac_resample = c.dac_resample;
++    s->addr_lo = c.addr_lo;
++    s->addr_hi = c.addr_hi;
++    s->dac_byte = c.dac_byte;
++    s->dac_pos = c.dac_pos;
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) s->dac_hist[i] = c.dac_hist[i];
++}
++
++static void ym_extra_set(YmChip &c, const YmExtraState *s)
++{
++    if (c.variant != (s->variant != 0))
++        ym2612_set_variant(c.index, s->variant != 0);
++    c.dac_resample = s->dac_resample != 0;
++    if (c.dac_resample) dac_fir_init();
++    c.addr_lo = (uint8_t)s->addr_lo;
++    c.addr_hi = (uint8_t)s->addr_hi;
++    c.dac_byte = (uint8_t)s->dac_byte;
++    c.dac_pos = s->dac_pos < (uint32_t)DAC_FIR_TAPS ? s->dac_pos : 0;
++    for (int i = 0; i < DAC_FIR_TAPS; ++i) c.dac_hist[i] = s->dac_hist[i];
++}
++
+ /* Save-state hooks (own-backend snapshots): the whole ymfm chip state via
+  * ymfm_saved_state (size-prefixed blob; the size is whatever the vendored
+  * ymfm version serializes -- the format is private to a build), plus this
+- * wrapper's sample-clock remainder and output-LPF state. The output scratch
+- * ring is transient (drained every frame) and is reset on load. Only the
+- * canonical chip 0 is in the state format; the second chip is re-synced from
+- * the next frame of 68K writes after a load. */
++ * wrapper's sample-clock remainder, output-LPF state and the task-30
++ * extension. The output scratch ring is transient (drained every frame) and is
++ * reset on load. Only the canonical chip 0 is in the state format; the second
++ * chip is re-synced from the next frame of 68K writes after a load. */
+ extern "C" int ym2612_save_state(FILE *f) {
+     if (!s_chips[0].inited) ym2612_init();
+     std::vector<uint8_t> buf;
+     ymfm::ymfm_saved_state st(buf, true);
+     s_chips[0].chip->save_restore(st);
+     uint32_t n = (uint32_t)buf.size();
++    YmExtraState ex;
++    ym_extra_get(s_chips[0], &ex);
+     if (fwrite(&n, sizeof n, 1, f) != 1) return 0;
+     if (n && fwrite(buf.data(), 1, n, f) != n) return 0;
+     if (fwrite(&s_chips[0].master_accum, sizeof s_chips[0].master_accum, 1, f) != 1) return 0;
+     if (fwrite(s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev, 1, f) != 1) return 0;
+     if (fwrite(s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out,  1, f) != 1) return 0;
++    if (fwrite(&ex, sizeof ex, 1, f) != 1) return 0;
+     return 1;
+ }
+ 
+@@ -286,9 +505,16 @@ extern "C" uint64_t ym2612_cosim_hash(void) {
+     h = cosim_fnv_u32(h, s_chips[0].master_accum);
+     h = cosim_fnv_bytes(h, s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev);
+     h = cosim_fnv_bytes(h, s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out);
++    {   /* task-30 extension: variant, address shadows, DAC reconstruction */
++        YmExtraState ex;
++        ym_extra_get(s_chips[0], &ex);
++        h = cosim_fnv_bytes(h, &ex, sizeof ex);
++    }
+     return h;
+ }
+ 
++#define YM_EX_MAGIC 0x54473203u   /* "TG2" + task 3 */
++
+ extern "C" size_t ym2612_rb_save(void *dst, size_t cap) {
+     if (!s_chips[0].inited) ym2612_init();
+     std::vector<uint8_t> buf;
+@@ -296,8 +522,12 @@ extern "C" size_t ym2612_rb_save(void *dst, size_t cap) {
+     s_chips[0].chip->save_restore(st);
+     uint32_t n = (uint32_t)buf.size();
+     uint32_t pend = (uint32_t)(s_chips[0].scratch_write - s_chips[0].scratch_read);
++    YmExtraState ex;
++    ym_extra_get(s_chips[0], &ex);
++    uint32_t magic = YM_EX_MAGIC;
+     size_t need = sizeof n + n + sizeof s_chips[0].master_accum + sizeof s_chips[0].lpf_prev +
+-                  sizeof s_chips[0].lpf_out + sizeof pend + (size_t)pend * 4u * sizeof(int16_t);
++                  sizeof s_chips[0].lpf_out + sizeof pend + (size_t)pend * 4u * sizeof(int16_t) +
++                  sizeof magic + sizeof ex;
+     if (!dst) return need;
+     if (cap < need) return 0;
+     uint8_t *o = (uint8_t *)dst;
+@@ -310,6 +540,9 @@ extern "C" size_t ym2612_rb_save(void *dst, size_t cap) {
+     std::memcpy(o, &s_chips[0].scratch[s_chips[0].scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
+     o += (size_t)pend * 2u * sizeof(int16_t);
+     std::memcpy(o, &s_chips[0].raw_scratch[s_chips[0].scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
++    o += (size_t)pend * 2u * sizeof(int16_t);
++    std::memcpy(o, &magic, sizeof magic); o += sizeof magic;
++    std::memcpy(o, &ex, sizeof ex);
+     return need;
+ }
+ 
+@@ -323,8 +556,12 @@ extern "C" int ym2612_rb_load(const void *src, size_t len) {
+     size_t fixed = sizeof s_chips[0].master_accum + sizeof s_chips[0].lpf_prev + sizeof s_chips[0].lpf_out + sizeof pend;
+     if (n > (1u << 20) || (size_t)(end - i) < (size_t)n + fixed) return 0;
+     std::memcpy(&pend, i + n + fixed - sizeof pend, sizeof pend);
+-    if (pend > FM_SCRATCH_STEREO_SAMPLES ||
+-        (size_t)(end - i) != (size_t)n + fixed + (size_t)pend * 4u * sizeof(int16_t)) return 0;
++    if (pend > FM_SCRATCH_STEREO_SAMPLES) return 0;
++    size_t body = (size_t)n + fixed + (size_t)pend * 4u * sizeof(int16_t);
++    /* Accept the pre-task-30 image too (defaults for the variant/DAC fields):
++     * a rollback snapshot taken earlier in the same process is still valid. */
++    size_t extra = (size_t)(end - i) - body;
++    if (extra != 0 && extra != sizeof(uint32_t) + sizeof(YmExtraState)) return 0;
+     std::vector<uint8_t> buf(i, i + n); i += n;
+     ymfm::ymfm_saved_state st(buf, false);
+     s_chips[0].chip->save_restore(st);
+@@ -335,6 +572,16 @@ extern "C" int ym2612_rb_load(const void *src, size_t len) {
+     std::memcpy(s_chips[0].scratch, i, (size_t)pend * 2u * sizeof(int16_t));
+     i += (size_t)pend * 2u * sizeof(int16_t);
+     std::memcpy(s_chips[0].raw_scratch, i, (size_t)pend * 2u * sizeof(int16_t));
++    i += (size_t)pend * 2u * sizeof(int16_t);
++    if (extra) {
++        uint32_t magic = 0;
++        std::memcpy(&magic, i, sizeof magic); i += sizeof magic;
++        if (magic == YM_EX_MAGIC) {
++            YmExtraState ex;
++            std::memcpy(&ex, i, sizeof ex);
++            ym_extra_set(s_chips[0], &ex);
++        }
++    }
+     s_chips[0].scratch_read = 0;
+     s_chips[0].scratch_write = pend;
+     return 1;
+@@ -351,6 +598,14 @@ extern "C" int ym2612_load_state(FILE *f) {
+     if (fread(&s_chips[0].master_accum, sizeof s_chips[0].master_accum, 1, f) != 1) return 0;
+     if (fread(s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev, 1, f) != 1) return 0;
+     if (fread(s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out,  1, f) != 1) return 0;
++    {   /* task-30 extension; absent in a state written before it */
++        uint32_t magic = 0;
++        if (fread(&magic, sizeof magic, 1, f) == 1 && magic == YM_EX_MAGIC) {
++            YmExtraState ex;
++            if (fread(&ex, sizeof ex, 1, f) != 1) return 0;
++            ym_extra_set(s_chips[0], &ex);
++        }
++    }
+     s_chips[0].scratch_read = s_chips[0].scratch_write = 0;
+     return 1;
+ }

@@ -26,6 +26,7 @@
 typedef enum Tg2OptionKind {
     TG2_OPT_BOOL,       /* feature checkbox / BOOL row                 */
     TG2_OPT_CHOICE,     /* enumerated feature option / CHOICE row      */
+    TG2_OPT_INT,        /* integer slider / INT row (min, max, step)    */
 } Tg2OptionKind;
 
 typedef struct Tg2Option {
@@ -45,12 +46,34 @@ typedef struct Tg2Option {
     const char *const *labels;    /* player-facing choice labels */
     int         choice_count;
     void      (*apply)(int value); /* live renderer/config update, optional */
+    int         min_value;    /* TG2_OPT_INT range and step */
+    int         max_value;
+    int         step;
 } Tg2Option;
+
+/* Engine audio entry points (runner/audio/mixer.h). */
+extern void audio_mixer_set_source_volumes(int music_pct, int sfx_pct);
+extern void audio_mixer_set_fm_variant(int ym3438);
+extern void audio_mixer_set_dac_resample(int on);
 
 static int s_race60 = 1;        /* task default: 60 fps races On */
 static int s_hud_edges = 0;     /* task default: HUD Centered */
 static int s_hide_overscan = 1; /* task default: Hide overscan On */
 static int s_racesound = 0;     /* 0 = SOUND EFFECTS (stock), 1 = MUSIC, 2 = BOTH */
+static int s_musicvol = 100;    /* % of the stock music level */
+static int s_sfxvol = 100;      /* % of the stock sound-effects level */
+static int s_cleanfm = 0;       /* 0 = stock YM2612, 1 = YM3438 (no ladder) */
+static int s_dacresample = 0;   /* 0 = DAC sample-and-hold, 1 = band-limited */
+
+static void apply_volumes(void)
+{
+    audio_mixer_set_source_volumes(s_musicvol, s_sfxvol);
+}
+
+static void apply_musicvol(int value) { s_musicvol = value; apply_volumes(); }
+static void apply_sfxvol(int value)   { s_sfxvol = value;   apply_volumes(); }
+static void apply_cleanfm(int value)  { s_cleanfm = value != 0; audio_mixer_set_fm_variant(s_cleanfm); }
+static void apply_dacresample(int value) { s_dacresample = value != 0; audio_mixer_set_dac_resample(s_dacresample); }
 
 static const char *const s_hud_choices[] = { "centered", "edges" };
 static const char *const s_hud_labels[]  = { "Centered", "Edges" };
@@ -108,6 +131,44 @@ static const Tg2Option s_options[] = {
       "Both", "Sound effects",
       0, &s_racesound, TG2_OPT_CHOICE, s_sound_choices, s_sound_labels, 3,
       apply_race_sound },
+    /* Music and sound effects are separate faders. The split is by *writer*
+     * (see docs/AUDIO.md): the resident Z80 music driver is music; the 68K
+     * FM/PSG engine and the race SFX PCM image are sound effects. 100% is the
+     * stock level and leaves the generated stream byte-identical. */
+    { "musicvol", "mods.musicvol", "level",
+      "Music volume", "Music volume", "Sound",
+      "Music level, as a percentage of the stock mix. Only the cartridge's "
+      "music driver is affected; engine, nitro and effect sounds keep their "
+      "own slider. 100% is the stock level.",
+      "100%", "0%",
+      100, &s_musicvol, TG2_OPT_INT, NULL, NULL, 0, apply_musicvol, 0, 100, 5 },
+    { "sfxvol", "mods.sfxvol", "level",
+      "SFX volume", "SFX volume", "Sound",
+      "Sound-effects level, as a percentage of the stock mix: the 68K FM/PSG "
+      "engine and the race Z80 sample player (engine, nitro, impacts). Music "
+      "keeps its own slider. 100% is the stock level.",
+      "100%", "0%",
+      100, &s_sfxvol, TG2_OPT_INT, NULL, NULL, 0, apply_sfxvol, 0, 100, 5 },
+    /* Clean FM: the YM3438 (Mega Drive 2 / CMOS) FM core, which has no
+     * 9-bit ladder discontinuity. Off keeps the stock YM2612 output. */
+    { "cleanfm", "mods.cleanfm", "enabled",
+      "Clean FM", "Clean FM", "Sound",
+      "Render the FM channels with ymfm's YM3438 core instead of the stock "
+      "YM2612 model: same register behaviour and notes, without the YM2612's "
+      "ladder-discontinuity distortion. Off is the stock chip, sample-exact.",
+      "YM3438 (clean)", "YM2612 (stock)",
+      0, &s_cleanfm, TG2_OPT_BOOL, NULL, NULL, 0, apply_cleanfm },
+    /* Engine and nitro: the race Z80 image plays its 6.6 kHz DAC stream, whose
+     * sample-and-hold images are audible as grit. On = band-limited
+     * reconstruction of that stream at the chip's own output rate. */
+    { "dacresample", "mods.dacresample", "enabled",
+      "Clean engine samples", "Clean engine samples", "Sound",
+      "The engine and nitro are a 6.6 kHz sample player feeding the Yamaha "
+      "DAC. On reconstructs that stream band-limited instead of holding each "
+      "sample, removing the sample-and-hold images above half the sample "
+      "rate. Off is the stock DAC. Applies to the cartridge's own samples.",
+      "Band-limited", "Stock (sample and hold)",
+      0, &s_dacresample, TG2_OPT_BOOL, NULL, NULL, 0, apply_dacresample },
 };
 #define TG2_OPTION_COUNT ((int)(sizeof s_options / sizeof s_options[0]))
 
@@ -120,9 +181,14 @@ static void apply_option(const Tg2Option *o)
 
 static const char *option_text(const Tg2Option *o)
 {
+    static char s_num[16];
     if (o->kind == TG2_OPT_CHOICE && o->choices &&
         *o->value >= 0 && *o->value < o->choice_count)
         return o->choices[*o->value];
+    if (o->kind == TG2_OPT_INT) {
+        snprintf(s_num, sizeof s_num, "%d", *o->value);
+        return s_num;
+    }
     return *o->value ? "1" : "0";
 }
 
@@ -149,6 +215,12 @@ static int parse_option(const Tg2Option *o, const char *v)
     if (o->kind == TG2_OPT_CHOICE) {
         for (int i = 0; i < o->choice_count; ++i)
             if (!strcmp(v, o->choices[i])) return i;
+    }
+    if (o->kind == TG2_OPT_INT) {
+        int n = (int)strtol(v, NULL, 10);
+        if (n < o->min_value) n = o->min_value;
+        if (n > o->max_value) n = o->max_value;
+        return n;
     }
     return parse_bool(v) ? 1 : 0;
 }
@@ -308,12 +380,50 @@ void tg2_options_apply_env(void)
         s_racesound = mode;
         tg2_audio_set_race_sound(mode);
     }
+    const char *mv = getenv("TG2_MUSIC_VOL");
+    if (mv) {
+        int n = (int)strtol(mv, NULL, 10);
+        s_musicvol = n < 0 ? 0 : n > 100 ? 100 : n;
+    }
+    const char *sv = getenv("TG2_SFX_VOL");
+    if (sv) {
+        int n = (int)strtol(sv, NULL, 10);
+        s_sfxvol = n < 0 ? 0 : n > 100 ? 100 : n;
+    }
+    apply_volumes();
+    const char *cfm = getenv("TG2_CLEAN_FM");
+    if (cfm)
+        s_cleanfm = !(cfm[0] == '0' || cfm[0] == 'n' || cfm[0] == 'N' ||
+                      cfm[0] == 'f' || cfm[0] == 'F');
+    apply_cleanfm(s_cleanfm);
+    const char *drs = getenv("TG2_DAC_RESAMPLE");
+    if (drs)
+        s_dacresample = !(drs[0] == '0' || drs[0] == 'n' || drs[0] == 'N' ||
+                          drs[0] == 'f' || drs[0] == 'F');
+    apply_dacresample(s_dacresample);
 }
 
 /* ── In-game overlay rows ─────────────────────────────────────────────────── */
 
 #if RECOMP_LAUNCHER
 static const RecompRuntimeUiItem s_runtime_items[] = {
+    { "mods.musicvol.level", "Audio", "Music volume",
+      "Music level, as a percentage of the stock mix. Only the cartridge's "
+      "music driver follows it; the engine, nitro and effects have their own "
+      "slider. 100% is the stock level.",
+      RECOMP_RUNTIME_UI_INT, 0, 100, 5, NULL, 0, NULL },
+    { "mods.sfxvol.level", "Audio", "SFX volume",
+      "Sound-effects level, as a percentage of the stock mix: the 68K FM/PSG "
+      "engine and the race Z80 sample player. 100% is the stock level.",
+      RECOMP_RUNTIME_UI_INT, 0, 100, 5, NULL, 0, NULL },
+    { "mods.cleanfm.enabled", "Audio", "Clean FM",
+      "Render the FM channels with the YM3438 core instead of the stock "
+      "YM2612 model: same notes, without the YM2612's ladder distortion.",
+      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
+    { "mods.dacresample.enabled", "Audio", "Clean engine samples",
+      "Reconstruct the engine and nitro DAC stream band-limited instead of "
+      "holding each 6.6 kHz sample, removing the sample-and-hold grit.",
+      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
     { "mods.race60.enabled", "Mods", "60 fps races",
       "Interpolate race pictures at 60 fps with 50 ms of added display delay. "
       "Physics and sound keep stock timing. Off restores the stock rate. "
@@ -489,7 +599,7 @@ static int tg2_package_get(void *ctx, int i, RecompLauncherCModPackage *out)
     snprintf(out->version, sizeof out->version, "1");
     snprintf(out->author, sizeof out->author, "Top Gear 2 Recomp contributors");
     snprintf(out->description, sizeof out->description, "%s", o->description);
-    out->enabled = *o->value != 0;
+    out->enabled = o->kind == TG2_OPT_INT ? 1 : (*o->value != 0);
     return 1;
 }
 
@@ -518,10 +628,12 @@ static int tg2_feature_get(void *ctx, int i, RecompLauncherCModFeature *out)
     snprintf(out->description, sizeof out->description, "%s", o->description);
     if (o->kind == TG2_OPT_CHOICE)
         snprintf(out->status, sizeof out->status, "%s", o->labels[*o->value]);
+    else if (o->kind == TG2_OPT_INT)
+        snprintf(out->status, sizeof out->status, "%d%%", *o->value);
     else
         snprintf(out->status, sizeof out->status, "%s",
                  *o->value ? o->status_on : o->status_off);
-    out->enabled = *o->value != 0;
+    out->enabled = o->kind == TG2_OPT_INT ? 1 : (*o->value != 0);
     out->option_count = o->kind == TG2_OPT_CHOICE ? 1 : 0;
     return 1;
 }
@@ -549,19 +661,34 @@ static int tg2_option_get(void *ctx, const char *package, const char *feature,
 {
     const Tg2Option *o = option_by_identity(package, feature);
     if (o) {
-        if (!out || i != 0 || o->kind != TG2_OPT_CHOICE) return 0;
+        if (!out || i != 0) return 0;
         memset(out, 0, sizeof *out);
-        out->type = RECOMP_MOD_OPTION_CHOICE;
-        out->step = 1;
-        out->choice_count = o->choice_count;
-        snprintf(out->id, sizeof out->id, "%s", o->key);
-        snprintf(out->label, sizeof out->label, "Placement");
-        snprintf(out->description, sizeof out->description,
-                 "Centered keeps the HUD with the car; Edges anchors it to the "
-                 "widescreen margins.");
-        snprintf(out->value, sizeof out->value, "%s", o->choices[*o->value]);
-        snprintf(out->default_value, sizeof out->default_value, "%s",
-                 o->choices[o->default_value]);
+        if (o->kind == TG2_OPT_CHOICE) {
+            out->type = RECOMP_MOD_OPTION_CHOICE;
+            out->step = 1;
+            out->choice_count = o->choice_count;
+            snprintf(out->id, sizeof out->id, "%s", o->key);
+            snprintf(out->label, sizeof out->label, "Placement");
+            snprintf(out->description, sizeof out->description,
+                     "Centered keeps the HUD with the car; Edges anchors it to the "
+                     "widescreen margins.");
+            snprintf(out->value, sizeof out->value, "%s", o->choices[*o->value]);
+            snprintf(out->default_value, sizeof out->default_value, "%s",
+                     o->choices[o->default_value]);
+        } else if (o->kind == TG2_OPT_INT) {
+            out->type = RECOMP_MOD_OPTION_INTEGER;
+            out->min_value = o->min_value;
+            out->max_value = o->max_value;
+            out->step = o->step > 0 ? o->step : 1;
+            snprintf(out->id, sizeof out->id, "%s", o->key);
+            snprintf(out->label, sizeof out->label, "%s", o->name);
+            snprintf(out->description, sizeof out->description, "%s", o->description);
+            snprintf(out->value, sizeof out->value, "%d", *o->value);
+            snprintf(out->default_value, sizeof out->default_value, "%d",
+                     o->default_value);
+        } else {
+            return 0;
+        }
         return 1;
     }
     return s_base->feature_option_get
@@ -599,6 +726,8 @@ static int tg2_feature_enable(void *ctx, const char *package, const char *featur
              * MUSIC and the feedback replay diverged on its first frame.
              * Turning it off returns the feature's off value. */
             if (!on) *o->value = 0;
+        } else if (o->kind == TG2_OPT_INT) {
+            /* A slider owns its own value; the feature toggle is inert. */
         } else {
             *o->value = on != 0;
         }
@@ -622,6 +751,15 @@ static int tg2_feature_set(void *ctx, const char *package, const char *feature,
                 return 1;
             }
         return 0;
+    }
+    if (o && o->kind == TG2_OPT_INT && option && value &&
+        !strcmp(option, o->key)) {
+        int n = (int)strtol(value, NULL, 10);
+        if (n < o->min_value) n = o->min_value;
+        if (n > o->max_value) n = o->max_value;
+        *o->value = n;
+        apply_option(o);
+        return 1;
     }
     return s_base->feature_set_option
         ? s_base->feature_set_option(s_base->ctx, package, feature, option, value) : 0;
