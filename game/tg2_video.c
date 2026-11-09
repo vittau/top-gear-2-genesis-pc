@@ -86,12 +86,23 @@ static int renderer_enabled(void) {
 static int cropped_height(int nh) {
     return presented_cropped && nh > CROP_BANDS ? nh - CROP_BANDS : nh;
 }
+/* The Nth picture is presented only for qualified race pictures (see
+ * compose_presented), and the runner asks for the canvas before the picture
+ * exists. Like the overscan crop, the canvas follows the previous completed
+ * picture: a race raises it to N x, any other screen keeps the stock canvas so
+ * menus stay exactly as they are at 1x. A provider that declines the paint
+ * (for example on the first race frame, before the wider canvas exists) still
+ * raises the flag, so the transition costs one frame, not a squashed picture. */
+static int highres_wanted;
+static int canvas_scale(void) {
+    return highres_wanted ? tg2_highres_present_scale() : 1;
+}
 static int width(int dw, int dh, int nw, int nh) {
     /* The canvas follows the presented height: with the empty race bands
      * cropped, 16:9 at 200 lines is 356 pixels wide instead of 398 at 224.
      * A render scale above 1 multiplies the whole 1x canvas by N, so the
      * presented picture keeps the exact N:1 relationship in both axes. */
-    int scale = tg2_highres_present_scale();
+    int scale = canvas_scale();
     int h = cropped_height(nh);
     double w = h * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
@@ -126,6 +137,7 @@ static unsigned read32(unsigned a) { return (read16(a) << 16) | read16(a + 2); }
 void tg2_video_reset(void) {
     presentation_clear();
     tg2_highres_reset();
+    highres_wanted = 0;
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
     shown = NULL;
@@ -597,6 +609,7 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     if (!line) {
         audit_race_frame = nw == 256 && race(v);
         last_frame_race = audit_race_frame;
+        highres_wanted = last_frame_race && tg2_highres_present_scale() > 1;
         if (last_frame_race)
             tg2_highres_picture_start();
         crop_race_ok = audit_race_frame;
@@ -806,6 +819,8 @@ void tg2_video_frame(uint64_t frame, int on) {
     if (on != race60 || frame < present_frame) presentation_clear();
     race60 = on;
     present_frame = frame;
+    /* No row producer runs, so no picture will raise the N x canvas. */
+    if (!renderer_enabled()) highres_wanted = 0;
 }
 static int mix_reverse;
 /* Undo log for the per-row VDP edit (see scanline()). The presented row is
@@ -1026,6 +1041,14 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
 static int compose_presented(uint32_t *pixels, int stride, int width,
                              int native_w, int native_h) {
     if (!pixels || native_h != 224 || !last_frame_race)
+        return 0;
+    int scale = tg2_highres_present_scale();
+    if (scale <= 1)
+        return 0;
+    /* A wider canvas is asked for one frame late (see canvas_scale); never
+     * paint into a canvas that cannot hold the Nth picture. A native-width
+     * canvas (widescreen off) is always wide enough. */
+    if (width > native_w && width < native_w * scale)
         return 0;
     return tg2_highres_build(pixels, stride, width, native_w, native_h);
 }
