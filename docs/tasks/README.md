@@ -39,5 +39,5 @@ the machine-resource rules, and never trigger CI.
 | [27](27-setup-screen-quickstate.md) | Save states on the car setup screen | Mapped, not started ([roadmap](../ROADMAP.md#save-states-on-the-car-setup-screen)) |
 | [28](28-ntsc-scanlines.md) | Blargg NTSC filter and scanlines | Paused by the owner (2026-11-09), not started |
 | [29](29-highres-design.md) | High-resolution rendering — ground truth and design | Done: `docs/HIGHRES.md`; owner decisions recorded in §9 |
-| [30](30-clean-fm-and-pcm.md) | Clean FM, separate volumes, better engine/nitro PCM | In progress |
-| [31](31-highres-s1-s2.md) | High-resolution rendering, steps S1 and S2 (capture + engine seam) | In progress |
+| [30](30-clean-fm-and-pcm.md) | Clean FM, separate volumes, better engine/nitro PCM | Done (merged 2026-11-09); owner listening pending |
+| [31](31-highres-s1-s2.md) | High-resolution rendering, steps S1 and S2 (capture + engine seam) | Done (merged 2026-11-09) |
