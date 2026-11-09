@@ -1413,8 +1413,10 @@ done
 
 # measurements
 python3 tools/audio_glitch_detect.py --device build/t/run.wav
+python3 tools/tg2_audio_levels.py ratio build/t/opt.wav build/t/stock.wav
+python3 tools/tg2_audio_levels.py bands build/t/run.wav 85 6
 # model harness (links the game's own ym2612_ymfm.cpp)
-clang++ -O2 -std=c++17 -o build/t/model_harness build/t/model_harness.cpp \
+clang++ -O2 -std=c++17 -o build/t/model_harness tools/tg2_fm_model_probe.cpp \
     segagenesisrecomp/runner/audio/ym2612_ymfm.cpp \
     segagenesisrecomp/runner/external/ymfm/src/*.cpp \
     -I segagenesisrecomp/runner/audio -I segagenesisrecomp/runner \
