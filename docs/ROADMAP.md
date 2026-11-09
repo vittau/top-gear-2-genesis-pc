@@ -60,8 +60,9 @@ The other groups have no set order.
 | Gameplay | [Cheats page](#cheats-page) | Pick any of the 64 races and set money/upgrades from the Esc menu, through the game's own password path. | |
 | Save states | [Car setup screen](#save-states-on-the-car-setup-screen) | Save and load on the setup screen, on a new game and between races. | [27](tasks/27-setup-screen-quickstate.md) |
 | Save states | [Live 2P race after a load](#live-2p-race-after-a-load) | Show a loaded split-screen race resuming live, not under the game's PAUSE. | |
-| Audio | [Clean FM and separate volumes](#clean-fm-and-separate-volumes) | **Done (task 30).** Optional YM3438-style FM without the ladder distortion, plus Music and SFX volume sliders in every sound mode. | [30](tasks/30-clean-fm-and-pcm.md) |
-| Audio | [Better engine and nitro PCM](#better-engine-and-nitro-pcm) | **Done (task 30).** Band-limited reconstruction of the original DAC stream instead of the chip's sample-and-hold. | [30](tasks/30-clean-fm-and-pcm.md) |
+| Audio | [Separate Music and SFX volumes](#separate-music-and-sfx-volumes) | **Done (task 30).** Two live-switchable faders in every sound mode, byte-identical at 100 %. | [30](tasks/30-clean-fm-and-pcm.md) |
+| Audio | [Clean FM (rejected)](#clean-fm-rejected) | **Rejected by the owner after listening (2026-11-09):** the YM3438 core was inaudible to him. Built, measured, removed. | [30](tasks/30-clean-fm-and-pcm.md) |
+| Audio | [Better engine and nitro PCM (rejected)](#better-engine-and-nitro-pcm-rejected) | **Rejected by the owner after listening (2026-11-09):** the reconstruction sounded muffled (6.6 kHz samples have nothing above 3.3 kHz). Built, measured, removed. | [30](tasks/30-clean-fm-and-pcm.md) |
 | Audio | [Auckland music re-attacks](#auckland-music-re-attacks) | Channels 1–2 re-attack some notes differently from the owner's VGM reference. | |
 | Platforms | [Android](#android) | A future release target. Not started. | |
 
@@ -302,36 +303,41 @@ continues the guest's callers").
 
 ## Audio
 
-### Clean FM and separate volumes
+### Separate Music and SFX volumes
 
 *Owner request, 2026-11-06.* **Implemented in task 30** (`docs/AUDIO.md` §13).
-A "Clean FM" option (ymfm YM3438 core, no ladder distortion; the default stays
-the stock YM2612, sample-exact) plus **Music volume** and **SFX volume** sliders
-in the in-game Audio section under the master Volume and on the launcher's Mods
-page, in every sound mode. Writes are classified by source: the resident Z80
-music driver is music; the 68K FM/PSG engine and the race Z80 SFX image are
-sound effects (the game tells the mixer when the first core runs the race image
-instead of the driver). At 100% every stock MUSIC/SFX/BOTH capture and the
-4:3 frame hashes are byte-identical; the measured level ratios, pop/dropout
-counts and A/B files are in `AUDIO.md` §13. The owner's listening confirmation
-is the remaining step. Follow-up: the options must also be safe to switch
-*while sound plays*; the two defects that broke that (a chip reset on a live
-Clean FM switch, and a mid-race routing change) are fixed in patch 0042 and
-covered by `tools/tg2_live_toggle_probe.py` (`AUDIO.md` §13.7).
+Music volume and SFX volume faders in the in-game Audio section under the master
+Volume and on the launcher's Mods page, in every sound mode. Writes are
+classified by source: the resident Z80 music driver is music; the 68K FM/PSG
+engine and the race Z80 SFX image are sound effects (the game tells the mixer
+when the first core runs the race image instead of the driver). At 100 % every
+stock MUSIC/SFX/BOTH capture and the 4:3 frame hashes are byte-identical. The
+faders switch live (a one-frame gain ramp; the fader never touches chip routing)
+and `tools/tg2_live_toggle_probe.py` covers the menu, the pre-race screens, the
+countdown, the race start and mid-race in all three modes, plus a cold start and
+a mid-race RACE SOUND switch.
 
-### Better engine and nitro PCM
+### Clean FM (rejected)
+
+*Owner request, 2026-11-06; rejected 2026-11-09.* A "Clean FM" option (ymfm's
+YM3438 core, no ladder distortion) was built and measured: it removed the
+ladder's DC offset and harmonic distortion (`AUDIO.md` §13.5) while leaving
+every pitch, note and tempo bit-identical (log-spectrum correlation 0.9999
+against the stock chip). The owner heard no improvement, so the option and its
+engine patch (0041) were removed.
+
+### Better engine and nitro PCM (rejected)
 
 The engine and nitro **are** PCM (correction from task 20): a 6.6 kHz DAC
-player in the race Z80 SFX image (ROM `$0701F6`); the 68k FM part is only a
-drone. **Implemented in task 30** (`docs/AUDIO.md` §13.5): a "Clean engine
-samples" option replays the cartridge's own `$2A` stream through a 95-tap
-Kaiser-windowed-sinc reconstruction at 3.3 kHz instead of the chip's
-sample-and-hold, once per chip output sample, inside the chip model. Images at
-6.6k/13.2k/19.8k drop from −26 to −60 dBc at a 0.88 ms group delay; the default
-stays the stock DAC and byte-identical. The option is switchable while a race
-runs: enabling starts from the held level and disabling restores the guest's
-last DAC byte, so the stock stream resumes exactly. Rejected, and still
-rejected: engine samples from other games or versions.
+player in the race Z80 SFX image (ROM `$0701F6`). A "Clean engine samples"
+option reconstructed that stream band-limited (95-tap Kaiser sinc at 3.3 kHz)
+instead of the chip's sample-and-hold. Measured on the model: images at
+6.6k/13.2k/19.8k dropped from -26 to -60 dBc. **Rejected by the owner after
+listening (2026-11-09):** it sounded muffled rather than more detailed - a
+6.6 kHz stream has nothing above 3.3 kHz to recover - and, worse, the option
+also rewrote the *music* driver's own DAC stream (the driver streams the DAC
+channel continuously; 170,063 reconstructed writes in 40 s of menu music), which
+muffled the music. Option and patch removed; the stock DAC is kept.
 
 ### Auckland music re-attacks
 

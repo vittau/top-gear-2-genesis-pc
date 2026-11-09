@@ -51,10 +51,8 @@ typedef struct Tg2Option {
     int         step;
 } Tg2Option;
 
-/* Engine audio entry points (runner/audio/mixer.h). */
+/* Engine audio entry point (runner/audio/mixer.h). */
 extern void audio_mixer_set_source_volumes(int music_pct, int sfx_pct);
-extern void audio_mixer_set_fm_variant(int ym3438);
-extern void audio_mixer_set_dac_resample(int on);
 
 static int s_race60 = 1;        /* task default: 60 fps races On */
 static int s_hud_edges = 0;     /* task default: HUD Centered */
@@ -62,8 +60,6 @@ static int s_hide_overscan = 1; /* task default: Hide overscan On */
 static int s_racesound = 0;     /* 0 = SOUND EFFECTS (stock), 1 = MUSIC, 2 = BOTH */
 static int s_musicvol = 100;    /* % of the stock music level */
 static int s_sfxvol = 100;      /* % of the stock sound-effects level */
-static int s_cleanfm = 0;       /* 0 = stock YM2612, 1 = YM3438 (no ladder) */
-static int s_dacresample = 0;   /* 0 = DAC sample-and-hold, 1 = band-limited */
 
 static void apply_volumes(void)
 {
@@ -72,8 +68,6 @@ static void apply_volumes(void)
 
 static void apply_musicvol(int value) { s_musicvol = value; apply_volumes(); }
 static void apply_sfxvol(int value)   { s_sfxvol = value;   apply_volumes(); }
-static void apply_cleanfm(int value)  { s_cleanfm = value != 0; audio_mixer_set_fm_variant(s_cleanfm); }
-static void apply_dacresample(int value) { s_dacresample = value != 0; audio_mixer_set_dac_resample(s_dacresample); }
 
 static const char *const s_hud_choices[] = { "centered", "edges" };
 static const char *const s_hud_labels[]  = { "Centered", "Edges" };
@@ -149,28 +143,18 @@ static const Tg2Option s_options[] = {
       "keeps its own slider. 100% is the stock level.",
       "100%", "0%",
       100, &s_sfxvol, TG2_OPT_INT, NULL, NULL, 0, apply_sfxvol, 0, 100, 5 },
-    /* Clean FM: the YM3438 (Mega Drive 2 / CMOS) FM core, which has no
-     * 9-bit ladder discontinuity. Off keeps the stock YM2612 output. */
-    { "cleanfm", "mods.cleanfm", "enabled",
-      "Clean FM", "Clean FM", "Sound",
-      "Render the FM channels with ymfm's YM3438 core instead of the stock "
-      "YM2612 model: same register behaviour and notes, without the YM2612's "
-      "ladder-discontinuity distortion. Off is the stock chip, sample-exact.",
-      "YM3438 (clean)", "YM2612 (stock)",
-      0, &s_cleanfm, TG2_OPT_BOOL, NULL, NULL, 0, apply_cleanfm },
-    /* Engine and nitro: the race Z80 image plays its 6.6 kHz DAC stream, whose
-     * sample-and-hold images are audible as grit. On = band-limited
-     * reconstruction of that stream at the chip's own output rate. */
-    { "dacresample", "mods.dacresample", "enabled",
-      "Clean engine samples", "Clean engine samples", "Sound",
-      "The engine and nitro are a 6.6 kHz sample player feeding the Yamaha "
-      "DAC. On reconstructs that stream band-limited instead of holding each "
-      "sample, removing the sample-and-hold images above half the sample "
-      "rate. Off is the stock DAC. Applies to the cartridge's own samples.",
-      "Band-limited", "Stock (sample and hold)",
-      0, &s_dacresample, TG2_OPT_BOOL, NULL, NULL, 0, apply_dacresample },
 };
 #define TG2_OPTION_COUNT ((int)(sizeof s_options / sizeof s_options[0]))
+
+/* Options that shipped for a while and were withdrawn by the owner after
+ * listening (2026-11-09). An older settings.ini may still carry their
+ * sections: loading ignores them (nothing reads those keys) and the next save
+ * drops them. */
+static const char *const s_retired_sections[] = {
+    "mods.cleanfm",
+    "mods.dacresample",
+};
+#define TG2_RETIRED_COUNT ((int)(sizeof s_retired_sections / sizeof s_retired_sections[0]))
 
 int tg2_race60_requested(void) { return s_race60 != 0; }
 
@@ -327,6 +311,8 @@ int tg2_options_save(const char *settings_path)
             skip = 0;
             for (int i = 0; i < TG2_OPTION_COUNT; ++i)
                 if (!strcmp(s + 1, s_options[i].section)) skip = 1;
+            for (int i = 0; i < TG2_RETIRED_COUNT; ++i)
+                if (!strcmp(s + 1, s_retired_sections[i])) skip = 1;
         }
         if (!skip) fputs(line, out);
     }
@@ -391,16 +377,6 @@ void tg2_options_apply_env(void)
         s_sfxvol = n < 0 ? 0 : n > 100 ? 100 : n;
     }
     apply_volumes();
-    const char *cfm = getenv("TG2_CLEAN_FM");
-    if (cfm)
-        s_cleanfm = !(cfm[0] == '0' || cfm[0] == 'n' || cfm[0] == 'N' ||
-                      cfm[0] == 'f' || cfm[0] == 'F');
-    apply_cleanfm(s_cleanfm);
-    const char *drs = getenv("TG2_DAC_RESAMPLE");
-    if (drs)
-        s_dacresample = !(drs[0] == '0' || drs[0] == 'n' || drs[0] == 'N' ||
-                          drs[0] == 'f' || drs[0] == 'F');
-    apply_dacresample(s_dacresample);
 }
 
 /* ── In-game overlay rows ─────────────────────────────────────────────────── */
@@ -416,14 +392,6 @@ static const RecompRuntimeUiItem s_runtime_items[] = {
       "Sound-effects level, as a percentage of the stock mix: the 68K FM/PSG "
       "engine and the race Z80 sample player. 100% is the stock level.",
       RECOMP_RUNTIME_UI_INT, 0, 100, 5, NULL, 0, NULL },
-    { "mods.cleanfm.enabled", "Audio", "Clean FM",
-      "Render the FM channels with the YM3438 core instead of the stock "
-      "YM2612 model: same notes, without the YM2612's ladder distortion.",
-      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
-    { "mods.dacresample.enabled", "Audio", "Clean engine samples",
-      "Reconstruct the engine and nitro DAC stream band-limited instead of "
-      "holding each 6.6 kHz sample, removing the sample-and-hold grit.",
-      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
     { "mods.race60.enabled", "Mods", "60 fps races",
       "Interpolate race pictures at 60 fps with 50 ms of added display delay. "
       "Physics and sound keep stock timing. Off restores the stock rate. "

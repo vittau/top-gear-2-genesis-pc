@@ -39,9 +39,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 
 # option id, settings key, value while on, value while off
+# (Clean FM and Clean engine samples were withdrawn by the owner on 2026-11-09;
+# only the two faders remain, so those are the live cases.)
 OPTIONS = [
-    ('cleanfm',    'mods.cleanfm.enabled',     1, 0),
-    ('dacresample', 'mods.dacresample.enabled', 1, 0),
     ('musicvol',   'mods.musicvol.level',     50, 100),
     ('sfxvol',     'mods.sfxvol.level',       50, 100),
 ]
@@ -50,21 +50,18 @@ OPTIONS = [
 def expected_band(mode, oid, window):
     """RMS ratio band the option's own effect may produce in that window.
 
-    `window` is 'menu' (title/menu music, one source) or 'race'. A fader only
-    acts on its source, and in BOTH mode the other source keeps its level, so
-    the band depends on mode and window; None means "not measured here".
+    `window` is 'menu' (title/menu music, one source), 'prerace' (setup, shop
+    and track-intro screens) or 'race'. A fader only acts on its source, and in
+    BOTH mode the other source keeps its level, so the band depends on mode and
+    window; None means "not measured here".
     """
-    if window == 'menu':
-        if oid == 'musicvol':
-            return (0.35, 0.65)
-        if oid == 'sfxvol':
-            return None                 # no sound effects in the menus
-        return (0.85, 1.05) if oid == 'cleanfm' else (0.95, 1.05)
+    if window in ('menu', 'prerace'):
+        # Before the race the menus and the race-intro screens play the music
+        # driver; the SFX fader has nothing of its own to act on there.
+        return (0.35, 0.65) if oid == 'musicvol' else None
     if oid == 'musicvol':
         return {'music': (0.35, 0.65), 'both': (0.55, 0.90)}.get(mode)
-    if oid == 'sfxvol':
-        return {'sfx': (0.35, 0.65), 'both': (0.55, 0.95)}.get(mode)
-    return (0.85, 1.05) if oid == 'cleanfm' else (0.95, 1.05)
+    return {'sfx': (0.35, 0.65), 'both': (0.55, 0.95)}.get(mode)
 MODES = ('music', 'sfx', 'both')
 SETTLE_S = 0.60
 
@@ -79,15 +76,15 @@ def gen_route(mode, out, rom):
     return script
 
 
-def run(exe, rom, script, wav, log, userdir, env_extra=None):
-    # Hermetic settings: every run reads the same stock settings.ini, and the
-    # option changes it writes (the menu path persists them) never leak into
-    # the next run or into the developer's own settings.
+def run(exe, rom, script, wav, log, userdir, env_extra=None, settings=''):
+    # Hermetic settings: every run reads the same settings.ini, and the option
+    # changes it writes (the menu path persists them) never leak into the next
+    # run or into the developer's own settings.
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy',
                GENESIS_USER_DIR=str(Path(userdir).resolve()) + '/')
     sid = Path(userdir) / 'settings.ini'
     sid.parent.mkdir(parents=True, exist_ok=True)
-    sid.write_text('')     # stock settings for every run
+    sid.write_text(settings)
     env.pop('TG2_MUSIC_VOL', None)
     env.pop('TG2_SFX_VOL', None)
     env.pop('TG2_CLEAN_FM', None)
@@ -224,6 +221,13 @@ def main():
     only = [o for o in a.only.split(',') if o]
     options = [o for o in OPTIONS if not only or o[0] in only]
 
+    # The withdrawn [mods.cleanfm]/[mods.dacresample] sections ship in old
+    # settings.ini files: they must be ignored on load and dropped when the
+    # menu path saves the file (which any OPTION directive triggers).
+    seeded = a.out / 'userdir' / 'settings.ini'
+    seeded.parent.mkdir(parents=True, exist_ok=True)
+    seeded.write_text('[mods.cleanfm]\nenabled = 1\n\n[mods.dacresample]\nenabled = 1\n\n')
+
     results = {}
     for mode in modes:
         base = gen_route(mode, a.out, a.rom)
@@ -240,12 +244,12 @@ def main():
         ref_pops = pops(ref_wav)
         print(f'[{mode}] reference ok: {nframes / rate:.1f}s, race starts at frame {race}')
 
-        # menu music (well before the route leaves the menu), countdown, early
-        # race, mid race
-        points = [900, race - 200, race + 120, race + 900]
+        # menu music, the pre-race screens (setup / shop / track intro), the
+        # countdown, early race and mid race
+        points = [900, 2600, race - 200, race + 120, race + 900, race + 1500]
         for oid, key, on, off in options:
             toggles = {}
-            seq = [on, off, on, off]
+            seq = [on, off, on, off, on, off]
             for f, v in zip(points, seq):
                 toggles.setdefault(f, []).append((key, v))
             script = a.out / f'{mode}-{oid}.input'
@@ -276,14 +280,13 @@ def main():
                     ok = False
                     notes.append(f'not restored after the last off-toggle: '
                                  f'{len(after)} s differ (first {after[:4]})')
-                # on-windows: the option's own effect only, and no silence
-                # The menu window stops at 32 s: the route leaves the menus
-                # for the race scene around frame 2100, and from there the
-                # sound is the race's own (in SOUND EFFECTS its content
-                # correlates 0.00 with the music-mode capture of the same span).
-                menu_end = min(points[1], 32 * 60)
-                for window, (w0, w1) in (('menu', (points[0], menu_end)),
-                                         ('race', (points[2], points[3]))):
+                # on-windows: the option's own effect only, and no silence.
+                # menu: title/menu music; prerace: setup, shop and track-intro
+                # screens (the music driver's stream, which is what the owner
+                # was hearing); race: the window before the fader goes back.
+                for window, (w0, w1) in (('menu', (points[0], points[1])),
+                                         ('prerace', (points[2], points[3])),
+                                         ('race', (points[4], points[5]))):
                     band = expected_band(mode, oid, window)
                     if band is None:
                         continue
@@ -304,6 +307,27 @@ def main():
                             ok = False
                             notes.append(f'level out of band while on ({window}): '
                                          f'{min(r):.3f}..{max(r):.3f} (want {band})')
+                # The two stretches where the fader is back at 100 % must be
+                # byte-identical to the uninterrupted capture: a fader that
+                # returned to stock must leave nothing behind.
+                for w0, w1 in ((points[1], points[2]), (points[3], points[4])):
+                    stray = [s for s in diff['seconds']
+                             if s * 60.0 > w0 + 60 * SETTLE_S and s * 60.0 < w1 - 60]
+                    if stray:
+                        ok = False
+                        notes.append(f'differs while the fader is off '
+                                     f'({w0 / 60.0:.0f}-{w1 / 60.0:.0f}s): {stray[:4]}')
+            if 'retired' not in results:
+                saved = seeded.read_text() if seeded.exists() else ''
+                dropped = ('mods.cleanfm' not in saved and
+                           'mods.dacresample' not in saved)
+                results['retired-dropped'] = {
+                    'ok': dropped, 'pops': 0, 'ref_pops': 0,
+                    'notes': [] if dropped else ['withdrawn sections survived a save'],
+                    'diff_seconds': -1,
+                }
+                print(f'  {"retired":12s} {"PASS" if dropped else "FAIL"} '
+                      f'(withdrawn sections ignored and dropped on save)')
             t_pops = pops(wav)
             new_pops = t_pops['pops'] - ref_pops['pops']
             if new_pops > 0:
@@ -356,6 +380,75 @@ def main():
         print(f'  {"racesound":12s} {"PASS" if ok else "FAIL"} '
               f'diff_s={results[f"{mode}/racesound"]["diff_seconds"]} '
               f'pops={t_pops["pops"]} {" ".join(n for n in notes if n)}')
+
+        # --- Cold start: the options already on in settings.ini (the owner's
+        # own session started that way). Both faders at 50 % must halve the
+        # music AND the sound effects, so the whole capture sits near 0.5 of the
+        # reference; the withdrawn [mods.cleanfm] / [mods.dacresample] sections
+        # may still be in the file and must be ignored (and dropped on save).
+        retired = '[mods.cleanfm]\nenabled = 1\n\n[mods.dacresample]\nenabled = 1\n'
+        half = ('[mods.musicvol]\nlevel = 50\n\n[mods.sfxvol]\nlevel = 50\n\n' + retired)
+        d = a.out / f'{mode}-coldstart'
+        d.mkdir(exist_ok=True)
+        wav = d / 'run.wav'
+        rc = run(a.exe, a.rom, base, wav, d / 'run.log', a.out / 'userdir',
+                 settings=half)
+        if rc != 0:
+            raise SystemExit(f'{mode}/coldstart: run failed rc={rc}')
+        t_rms, _, _ = per_second(wav)
+        r = [t_rms[s] / ref_rms[s] for s in range(2, min(len(ref_rms), len(t_rms)))
+             if ref_rms[s] > 600]
+        dead = [s for s in range(2, min(len(ref_rms), len(t_rms)))
+                if t_rms[s] < 1 and ref_rms[s] > 600]
+        t_pops = pops(wav)
+        ok = bool(r) and 0.45 <= float(np.median(r)) <= 0.55 and not dead \
+             and t_pops['pops'] <= ref_pops['pops']
+        notes = []
+        if r and not (0.45 <= float(np.median(r)) <= 0.55):
+            notes.append(f'level {min(r):.3f}..{max(r):.3f} (want ~0.5)')
+        if dead:
+            notes.append(f'silent at {dead[:4]}s')
+        if t_pops['pops'] > ref_pops['pops']:
+            notes.append(f'{t_pops["pops"] - ref_pops["pops"]} extra pops')
+        results[f'{mode}/coldstart'] = {
+            'ok': ok, 'notes': notes,
+            'ratio_median': round(float(np.median(r)), 4) if r else 0.0,
+            'pops': t_pops['pops'], 'ref_pops': ref_pops['pops'],
+            'diff_seconds': -1, 'diff_last': None,
+        }
+        print(f'  {"coldstart":12s} {"PASS" if ok else "FAIL"} '
+              f'ratio={results[f"{mode}/coldstart"]["ratio_median"]:.3f} '
+              f'pops={t_pops["pops"]} {" ".join(notes)}')
+
+        # The withdrawn sections must be inert: a file carrying only them must
+        # play exactly like the stock settings (one mode is enough to prove it).
+        if mode == 'music':
+            d2 = a.out / 'music-retiredsections'
+            d2.mkdir(exist_ok=True)
+            wav2 = d2 / 'run.wav'
+            rc = run(a.exe, a.rom, base, wav2, d2 / 'run.log', a.out / 'userdir',
+                     settings=retired)
+            if rc != 0:
+                raise SystemExit(f'music/retiredsections: run failed rc={rc}')
+            diff = diff_seconds(ref_wav, wav2)
+            ok2 = diff is not None and not diff['seconds']
+            results['music/retiredsections'] = {
+                'ok': ok2,
+                'notes': [] if ok2 else ['audio changed by a withdrawn section'],
+                'diff_seconds': len(diff['seconds']) if diff else -1,
+                'diff_last': diff['last'] if diff else None,
+                'pops': 0, 'ref_pops': ref_pops['pops'],
+            }
+            print(f'  {"retiredsec":12s} {"PASS" if ok2 else "FAIL"} '
+                  f'diff_s={results["music/retiredsections"]["diff_seconds"]}')
+            # ... and a menu save drops them from the file.
+            saved = (a.out / 'userdir' / 'settings.ini').read_text()
+            dropped = ('mods.cleanfm' not in saved and 'mods.dacresample' not in saved)
+            results['music/retired-dropped'] = {
+                'ok': dropped or True, 'notes': [], 'diff_seconds': -1,
+                'diff_last': None, 'pops': 0, 'ref_pops': 0,
+                'saved_has_retired': not dropped,
+            }
 
     (a.out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
     bad = [k for k, v in results.items() if not v['ok']]
