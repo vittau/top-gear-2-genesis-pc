@@ -50,10 +50,9 @@ macOS (Apple Silicon and Intel).
 
 With every option off, the picture is byte-identical to the original game.
 
-The owner has played the macOS (Apple Silicon) build. Windows, Linux
-(including the Steam Deck and the Linux AppImage/tarball builds) and macOS on
-Intel are built in CI and pass headless smoke tests, but they have not been
-validated by play on real hardware yet; treat those builds as release
+It has been played on Linux (x86_64) and macOS (Apple Silicon). Windows, macOS
+on Intel and the Steam Deck are built in CI and pass headless smoke tests, but
+they still need play on real hardware; treat those builds as release
 candidates until they are. See [docs/STATUS.md](docs/STATUS.md) and
 [docs/RELEASING.md](docs/RELEASING.md) for the current state and open items.
 
@@ -145,8 +144,9 @@ and run it.
 2. Right-click the AppImage → *Properties → Permissions → Is executable*.
 3. In Steam: *Games → Add a Non-Steam Game → Browse*, select the AppImage,
    then *Add Selected Programs*.
-4. Return to Game Mode. The game is in your library and runs with the
-   built-in controls alone; no terminal is needed.
+4. Return to Game Mode. The game is in your library. It is designed for
+   controller-only play in Game Mode, but the Steam Deck build still needs play
+   on real hardware; no terminal is needed after setup.
 
 ### Windows
 
@@ -164,9 +164,7 @@ and run it.
    `xattr -dr com.apple.quarantine /Applications/TG2Recomp.app`
 3. Open `TG2Recomp.app`. On the first launch, pick your ROM in the launcher.
    The app copies it to `~/Library/Application Support/TG2Recomp/` and boots
-   straight into the game from then on, so the original file can go. The macOS
-   bundle uses a native-resolution icon (see
-   [docs/MACOS_ICON.md](docs/MACOS_ICON.md)).
+   straight into the game from then on, so the original file can go.
 
 Instead of the Terminal step you can allow the app under *System Settings →
 Privacy & Security → Open Anyway* (see
@@ -192,10 +190,10 @@ own folder is read-only.
 Your championship progress is kept by the game's own passwords, as on the
 cartridge. To restore money and car parts, use **CONTINUE → PASSWORD** (the
 upper row), not **COUNTRY SELECT**. On the password screen the symbol is
-**V** (code 15), not U. For example, the Germany max-parts / max-money preset
-is `J4?Z 1]PD #F]\ 4\V?` (both balances 1023, all part fields at level 3; it
-loads at Germany, race 1). Full codec details, country/route notes, and more
-ready-to-type passwords are in [docs/PASSWORDS.md](docs/PASSWORDS.md).
+**V**, not U. For example, the Germany preset `J4?Z 1]PD #F]\ 4\V?` gives max
+money and every upgrade at the top level for both cars, loading at Germany,
+race 1. Full codec details, country/route notes, and more ready-to-type
+passwords are in [docs/PASSWORDS.md](docs/PASSWORDS.md).
 
 To update, quit the game and replace the program files, keeping `settings.ini`
 and your save states. On macOS, replacing `TG2Recomp.app` in *Applications* is

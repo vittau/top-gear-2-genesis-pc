@@ -136,11 +136,12 @@ and `README.txt` with end-user instructions. The `build` run URL identifies the
 exact commit each payload came from.
 
 The artifacts are release candidates for platforms not yet validated by play
-on real hardware. The owner has played the macOS (Apple Silicon) build;
-Windows, Linux (including Steam Deck/SteamOS with a controller) and macOS on
-Intel are built in CI and pass headless smoke tests but still need validation
-on real devices. CI proves the Linux glibc floor and a headless boot on all
-three platforms; it does not prove audio, input or rendering on a device.
+on real hardware. The game has been played on Linux (x86_64) and macOS
+(Apple Silicon). Windows, macOS on Intel and the Steam Deck (SteamOS with a
+controller) are built in CI and pass headless smoke tests but still need
+validation on real devices. CI proves the Linux glibc floor and a headless
+boot on all three platforms; it does not prove audio, input or rendering on a
+device.
 
 ## End-user instructions (English)
 
