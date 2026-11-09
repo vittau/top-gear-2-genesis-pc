@@ -107,6 +107,12 @@ assets.
 First steps: map the LOD tables (pattern sets per object and distance
 thresholds), and find which per-line road state is enough to re-rasterise.
 
+Design and ground truth: [docs/HIGHRES.md](HIGHRES.md) (task 29). It maps the
+per-line road state, the atlas geometry and palette banks, and the sprite LOD
+tables, then proposes the architecture, the engine seam (patch 0033) and the
+step-by-step plan with per-step acceptance. Owner decisions it needs are listed
+in its §9.
+
 ### NTSC filter and scanlines
 
 *Owner request, 2026-11-07.*
