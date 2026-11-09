@@ -55,10 +55,16 @@ def expected_band(mode, oid, window):
     BOTH mode the other source keeps its level, so the band depends on mode and
     window; None means "not measured here".
     """
-    if window in ('menu', 'prerace'):
-        # Before the race the menus and the race-intro screens play the music
-        # driver; the SFX fader has nothing of its own to act on there.
+    if window == 'menu':
+        # Menus play the music driver; the SFX fader has nothing to act on.
         return (0.35, 0.65) if oid == 'musicvol' else None
+    if window == 'prerace':
+        # The race-intro screens differ by mode: in SOUND EFFECTS the race
+        # scene starts at the track intro (its own SFX content, no music), while
+        # MUSIC and BOTH keep the music driver playing through it.
+        if oid == 'musicvol':
+            return {'music': (0.35, 0.65), 'both': (0.35, 0.65)}.get(mode)
+        return (0.35, 0.65) if mode == 'sfx' else None
     if oid == 'musicvol':
         return {'music': (0.35, 0.65), 'both': (0.55, 0.90)}.get(mode)
     return {'sfx': (0.35, 0.65), 'both': (0.55, 0.95)}.get(mode)
@@ -284,7 +290,8 @@ def main():
                 # menu: title/menu music; prerace: setup, shop and track-intro
                 # screens (the music driver's stream, which is what the owner
                 # was hearing); race: the window before the fader goes back.
-                for window, (w0, w1) in (('menu', (points[0], points[1])),
+                menu_end = min(points[1], 2280)   # route leaves the menus ~38 s
+                for window, (w0, w1) in (('menu', (points[0], menu_end)),
                                          ('prerace', (points[2], points[3])),
                                          ('race', (points[4], points[5]))):
                     band = expected_band(mode, oid, window)
