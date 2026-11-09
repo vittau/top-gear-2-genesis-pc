@@ -611,7 +611,10 @@ void tg2_audio_reset(void)
     s_page_seen = 0;
     s_saved_n = 0;
     s_sfx_upload = 0;
-    s_applied = s_mode;
+    /* A guest reset reboots the cartridge (no race running, so the player's
+     * selection applies); a state loaded mid-race keeps the routing that race
+     * was running, because the restored chip state belongs to it. */
+    if (!race_running()) s_applied = s_mode;
     apply_mode();
     /* A guest reset reboots the cartridge, whose init re-uploads the music
      * driver; a state load restores the Z80 RAM and the per-frame check
