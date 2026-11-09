@@ -42,4 +42,4 @@ the machine-resource rules, and never trigger CI.
 | [30](30-clean-fm-and-pcm.md) | Clean FM, separate volumes, better engine/nitro PCM | Merged 2026-11-09; live-toggle bugs fixed (patch 0042, `tools/tg2_live_toggle_probe.py`); owner listening pending |
 | [31](31-highres-s1-s2.md) | High-resolution rendering, steps S1 and S2 (capture + engine seam) | Done (merged 2026-11-09) |
 | [32](32-deck-aspect-and-quiet-logs.md) | Steam Deck feedback: device aspect, no logs in normal use | Done (merged 2026-11-09); needs a real Deck run |
-| [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | In progress (resumed 2026-11-09) |
+| [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | Paused 2026-11-09 at session end: branch `vittau/tg2-highres-s3` (6d8e019, pushed) plus uncommitted docs/tool edits in the `tg2-highres-s1-s2` worktree (also in local `refs/keep/tg2-highres-s3-session-end`) |
