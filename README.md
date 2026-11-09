@@ -204,13 +204,18 @@ second gamepad.
 
 | Action | Keyboard | Gamepad |
 | --- | --- | --- |
-| Options menu (pauses the game) | Esc or F1 | Back + RB |
+| Options menu (pauses the game) | Esc | Back + RB |
 | Fullscreen | F11, Alt+Enter, or Ctrl/Cmd+F | |
-| Save state, slots 2–9 | Shift+F2 … Shift+F9 | |
-| Load state, slots 2–9 | F2 … F9 | |
+| Save state (slot 1–9) | Shift+F1 … Shift+F9 | |
+| Load state (slot 1–6, 9) | F1 … F6, F9 | |
 | Save-state browser | F7 | |
 | Rewind | F8 | Back + R3 |
 | Fast-forward (hold) | Tab | |
+
+On Mac keyboards, use **fn** with the function keys unless *System Settings →
+Keyboard* has “Use F1, F2, etc. keys as standard function keys” enabled. Slot
+7 and 8 still save with **Shift+F7** / **Shift+F8**; plain **F7** opens the
+save-state browser and plain **F8** rewinds.
 
 The options live in the launcher and in the in-game options menu, and are
 saved to `settings.ini`:

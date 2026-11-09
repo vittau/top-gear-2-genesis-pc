@@ -240,7 +240,7 @@ where the end-user instructions above describe.
   already beside the executable (a plain double-click still boots straight
   into the game). Open **Mods**, then **Features**. D-pad moves, A/click
   selects or toggles, B goes back.
-- **In-game menu:** press F1 or Esc on a keyboard. On a controller, hold
+- **In-game menu:** press Esc on a keyboard. On a controller, hold
   **Back + RB** to open or close it. D-pad moves, A accepts or toggles, B goes
   back, X closes.
 - **60 fps races** applies from the next race start. Changing it during a race
@@ -268,7 +268,7 @@ onde as instruções para o usuário acima indicam.
   ao lado do executável (um duplo clique normal continua indo direto ao jogo).
   Abra **Mods** e depois **Features**. O direcional move, A/clique seleciona
   ou alterna, B volta.
-- **Menu dentro do jogo:** F1 ou Esc no teclado. No controle, segure
+- **Menu dentro do jogo:** Esc no teclado. No controle, segure
   **Back + RB** para abrir ou fechar. O direcional move, A aceita ou alterna,
   B volta, X fecha.
 - **60 fps nas corridas** vale a partir da próxima corrida. Mudar durante uma
