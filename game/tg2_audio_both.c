@@ -67,6 +67,12 @@ void audio_set_first_z80_is_sfx(int is_sfx);
 enum { TG2_SOUND_SFX = 0, TG2_SOUND_MUSIC = 1, TG2_SOUND_BOTH = 2 };
 
 static int s_mode = TG2_SOUND_SFX;  /* player's choice; stock default */
+/* The mode whose routing is LIVE. A RACE SOUND change made while a race is
+ * running is remembered (s_mode, the option and the page show it) but its
+ * routing/policy layer is adopted at the next race: re-routing mid-race would
+ * hand the running music's voices to a chip that was never fed them, which is
+ * exactly how a live BOTH/SFX switch used to kill the music. */
+static int s_applied = TG2_SOUND_SFX;
 static int s_patched;               /* present/restore nesting depth */
 static int s_page_seen;             /* RACE SOUND page handler observed */
 /* One saved cartridge value per nesting level, so an SFX-side read nested
@@ -96,7 +102,31 @@ static uint16_t page_value(void)
 
 static int both_active(void)
 {
-    return s_mode == TG2_SOUND_BOTH;
+    return s_applied == TG2_SOUND_BOTH;
+}
+
+/* A race installs its own V-int vector at $FF01EE; while it is live, routing
+ * and the BOTH policy layer are frozen at the mode the race started with. */
+static int race_running(void)
+{
+    return ram_read16(0xFF0000u + 0x01EEu) == 0x4714u;
+}
+
+/* Push the applied mode into the engine (routing, second core, Z80 routing). */
+static int z80_route(int access, uint16_t off, uint8_t value);
+static void apply_mode(void)
+{
+    audio_set_chip_routing(both_active());
+    audio_second_z80_set_enabled(both_active());
+    audio_set_z80_route_fn(z80_route);
+}
+
+/* Adopt the player's choice when nothing is running on the old one. */
+static void adopt_mode(void)
+{
+    if (race_running()) return;
+    s_applied = s_mode;
+    apply_mode();
 }
 
 /* ---- Second Z80 core: the race SFX PCM image -----------------------------
@@ -558,12 +588,10 @@ void tg2_audio_set_race_sound(int mode)
 {
     if (mode < TG2_SOUND_SFX || mode > TG2_SOUND_BOTH) return;
     s_mode = mode;
-    /* Two virtual chips and a second Z80 core only while BOTH is the choice;
-     * stock modes keep the single chip and core so their output stays
-     * byte-identical. */
-    audio_set_chip_routing(both_active());
-    audio_second_z80_set_enabled(both_active());
-    audio_set_z80_route_fn(z80_route);
+    /* Two virtual chips and a second Z80 core only while BOTH is the live
+     * choice; stock modes keep the single chip and core so their output stays
+     * byte-identical. A change made mid-race is adopted at the next race. */
+    adopt_mode();
 }
 
 /* Per-frame, before the guest runs: keep the engine's chip routing in step
@@ -571,9 +599,7 @@ void tg2_audio_set_race_sound(int mode)
  * change it, and a guest reset reloads the cartridge's own word). */
 void tg2_audio_frame_pre(void)
 {
-    audio_set_chip_routing(both_active());
-    audio_second_z80_set_enabled(both_active());
-    audio_set_z80_route_fn(z80_route);
+    adopt_mode();
     update_z80_role();
 }
 
@@ -585,9 +611,8 @@ void tg2_audio_reset(void)
     s_page_seen = 0;
     s_saved_n = 0;
     s_sfx_upload = 0;
-    audio_set_chip_routing(both_active());
-    audio_second_z80_set_enabled(both_active());
-    audio_set_z80_route_fn(z80_route);
+    s_applied = s_mode;
+    apply_mode();
     /* A guest reset reboots the cartridge, whose init re-uploads the music
      * driver; a state load restores the Z80 RAM and the per-frame check
      * corrects the role on the next frame either way. */
