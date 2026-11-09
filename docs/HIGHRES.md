@@ -430,6 +430,17 @@ implementation task:
   physically small), or at exact integer N× (crisp and proportional). Both are
   feasible because the HUD is name-table cells with known pattern IDs; the
   current renderer already classifies them.
+- **HD menus, fonts and HUD pack (later extension).** That pack replaces the
+  original tile art with faithful HD redraws keyed by the original tile
+  content, and validates each entry by box-filter downsampling it back to the
+  original size and comparing pixel-for-pixel (`ROADMAP.md`). N× is where the
+  pack becomes useful: at 1× the pack could only be drawn downsampled, at N× a
+  2×/4× entry lands on an exact output grid. The seam is the same as the HUD
+  decision above: our HUD/tile sampler takes an optional texture source keyed
+  by `(pattern id, palette bank)`, falls back to VRAM art when the pack has no
+  entry, and is Off by default. No game logic or font data changes. The same
+  box-filter-downsample rule doubles as the whole-frame acceptance check for
+  N× itself (§8, S3).
 - **Plane-A effects** (car, tunnel, weather): weather needs the N× coordinate
   mapping (it already samples per-line scroll); tunnel needs the same
   edge-continuation rule at N×; the car stays native-size (or N× if we accept
