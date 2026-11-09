@@ -314,7 +314,10 @@ sound effects (the game tells the mixer when the first core runs the race image
 instead of the driver). At 100% every stock MUSIC/SFX/BOTH capture and the
 4:3 frame hashes are byte-identical; the measured level ratios, pop/dropout
 counts and A/B files are in `AUDIO.md` §13. The owner's listening confirmation
-is the remaining step.
+is the remaining step. Follow-up: the options must also be safe to switch
+*while sound plays*; the two defects that broke that (a chip reset on a live
+Clean FM switch, and a mid-race routing change) are fixed in patch 0042 and
+covered by `tools/tg2_live_toggle_probe.py` (`AUDIO.md` §13.7).
 
 ### Better engine and nitro PCM
 
@@ -325,8 +328,10 @@ samples" option replays the cartridge's own `$2A` stream through a 95-tap
 Kaiser-windowed-sinc reconstruction at 3.3 kHz instead of the chip's
 sample-and-hold, once per chip output sample, inside the chip model. Images at
 6.6k/13.2k/19.8k drop from −26 to −60 dBc at a 0.88 ms group delay; the default
-stays the stock DAC and byte-identical. Rejected, and still rejected: engine
-samples from other games or versions.
+stays the stock DAC and byte-identical. The option is switchable while a race
+runs: enabling starts from the held level and disabling restores the guest's
+last DAC byte, so the stock stream resumes exactly. Rejected, and still
+rejected: engine samples from other games or versions.
 
 ### Auckland music re-attacks
 

@@ -1,0 +1,678 @@
+diff --git a/runner/audio/mixer.c b/runner/audio/mixer.c
+index a313e04..c1fffd2 100644
+--- a/runner/audio/mixer.c
++++ b/runner/audio/mixer.c
+@@ -233,22 +233,29 @@ static size_t   s_chip_fm_n[2], s_chip_psg_n[2];
+  * FM/PSG engine and the race SFX PCM image (second core, or the first core
+  * after the 68K uploads it) are sound effects.
+  *
+- * In every stock mode a single frame usually carries exactly one source, and
+- * then the gain is a plain scale of the one chip's output - byte-exact
+- * relative to the stock stream, with no extra chip and no extra DAC offset.
+- * Only a frame that really carries both sources is rendered on two chips,
+- * exactly like BOTH mode (which always does). At 100%/100% nothing in this
+- * section runs and the stock paths are byte-identical. */
+-static int s_music_gain = 256;   /* fixed point, 256 = 100% */
++ * The fader never changes which chip a write goes to: routing is the game's
++ * (BOTH mode) and nothing else. A one-source frame is the stock stream scaled
++ * by that source's gain; in BOTH mode (two chips) each chip's own gain applies.
++ * A frame that carries both sources in one chip belongs to the source that
++ * wrote most of it, so the fader cannot switch routing mid-stream.
++ *
++ * A gain change is a *ramp across the next frame* (16.7 ms): the last sample
++ * of the frame already has the new gain, so a switch back to 100% makes the
++ * following frame byte-identical to an uninterrupted capture, and a live move
++ * cannot click. At 100%/100% none of this runs. */
++static int s_music_gain = 256;   /* target, fixed point, 256 = 100% */
+ static int s_sfx_gain   = 256;
+-static int s_vol_split  = 0;     /* a slider is off 100% */
+ static int s_frame_sources = 0;  /* applied this frame: bit0 music, bit1 sfx */
+ /* What the chip is still sounding with on a frame that carried no write: the
+- * sources of the last frame that did. Reverb-tailed voices keep playing with
+- * no new events, so the fader must follow the sounding source, not the empty
+- * frame. */
++ * sources of the last frame that did. Voices with no new events keep playing,
++ * so the fader follows the sounding source, not the empty frame. */
+ static int s_live_sources = 0;
+-static int s_live_both = 0;      /* the two sources have coexisted: two chips */
++/* Gain at the end of the previous frame, so a change ramps from here. */
++static int s_gain_cur_dual_music = 256, s_gain_cur_dual_sfx = 256;
++static int s_gain_cur_single = 256;
++/* A fader moved while nothing was sounding takes effect with no ramp on the
++ * next sounding frame (there is no old gain to fade from). */
++static int s_snap_gains = 0;
+ 
+ void audio_mixer_set_source_volumes(int music_pct, int sfx_pct)
+ {
+@@ -256,7 +263,7 @@ void audio_mixer_set_source_volumes(int music_pct, int sfx_pct)
+     if (sfx_pct   < 0) sfx_pct   = 0; else if (sfx_pct   > 100) sfx_pct   = 100;
+     s_music_gain = (music_pct * 256 + 50) / 100;
+     s_sfx_gain   = (sfx_pct   * 256 + 50) / 100;
+-    s_vol_split  = (s_music_gain != 256 || s_sfx_gain != 256);
++    if (!s_live_sources) s_snap_gains = 1;
+ }
+ int audio_mixer_frame_sources(void) { return s_frame_sources; }
+ 
+@@ -273,11 +280,24 @@ void audio_mixer_set_dac_resample(int on)
+     ym2612_set_dac_resample(1, on);
+ }
+ 
+-static void mixer_scale(int16_t *buf, size_t samples, unsigned channels, int gain)
++/* A linear gain ramp across one frame's buffer. `from`/`to` are 256ths. The
++ * last sample carries exactly `to`, so the next frame is unmodified when it
++ * stays there. */
++static void mixer_gain_ramp(int16_t *buf, size_t samples, unsigned channels,
++                            int from, int to)
+ {
+-    if (!buf || !samples || gain == 256) return;
+-    for (size_t i = 0; i < samples * channels; ++i)
+-        buf[i] = (int16_t)((int32_t)buf[i] * gain / 256);
++    if (!buf || !samples) return;
++    if (from == 256 && to == 256) return;   /* default: no arithmetic at all */
++    const int64_t span = samples > 1 ? (int64_t)samples - 1 : 1;
++    const int64_t base = (int64_t)from << 8;            /* q16 */
++    const int64_t delta = ((int64_t)to - from) << 8;
++    for (size_t i = 0; i < samples; ++i) {
++        int g = (int)(base + delta * (int64_t)i / span);
++        for (unsigned c = 0; c < channels; ++c) {
++            size_t p = i * channels + c;
++            buf[p] = (int16_t)(((int32_t)buf[p] * g) >> 16);
++        }
++    }
+ }
+ 
+ /* Per-chip stream produced by the last dual drain (diagnostic export). */
+@@ -299,40 +319,65 @@ static int16_t mixer_clamp16(int32_t v)
+     return (int16_t)v;
+ }
+ 
+-/* Sum chip A (music) + chip B (sound effects). At 100%/100% the gains are
+- * identity (x*256/256 == x) and the sum is the BOTH-mode A+B mix the
+- * acceptance measurements were made on. The voice levels are the models' own
+- * stock levels (music chip as in MUSIC, SFX chip as in SOUND EFFECTS), so
+- * each source keeps its stock loudness; the sum is only clamped if it would
+- * leave int16, and the measured peaks leave that headroom unused
+- * (docs/AUDIO.md records the numbers). */
+-static size_t mixer_sum_fm(int16_t *out, int16_t *raw_out, size_t capacity)
++/* Sum chip A (music) + chip B (sound effects), each with its own gain ramp
++ * across the frame. At 100%/100% the gains are identity (x*256/256 == x) and
++ * the sum is the BOTH-mode A+B mix the acceptance measurements were made on.
++ * The voice levels are the models' own stock levels (music chip as in MUSIC,
++ * SFX chip as in SOUND EFFECTS), so each source keeps its stock loudness; the
++ * sum is only clamped if it would leave int16, and the measured peaks leave
++ * that headroom unused (docs/AUDIO.md records the numbers). */
++static void mixer_sum_fm(int16_t *out, int16_t *raw_out, size_t n,
++                         int m_from, int m_to, int s_from, int s_to)
+ {
+-    size_t n = s_chip_fm_n[0] < s_chip_fm_n[1] ? s_chip_fm_n[0] : s_chip_fm_n[1];
+-    if (n > capacity) n = capacity;
+-    for (size_t i = 0; i < n * 2u; i++) {
+-        int32_t a = (int32_t)s_chip_fm[0][i] * s_music_gain / 256;
+-        int32_t b = (int32_t)s_chip_fm[1][i] * s_sfx_gain / 256;
+-        if (out)     out[i]     = mixer_clamp16(a + b);
+-        if (raw_out) raw_out[i] = mixer_clamp16(
+-            (int32_t)s_chip_fm_raw[0][i] * s_music_gain / 256 +
+-            (int32_t)s_chip_fm_raw[1][i] * s_sfx_gain / 256);
++    if (!n) return;
++    if (m_from == 256 && m_to == 256 && s_from == 256 && s_to == 256) {
++        for (size_t i = 0; i < n * 2u; i++) {
++            if (out)     out[i]     = mixer_clamp16((int32_t)s_chip_fm[0][i] + s_chip_fm[1][i]);
++            if (raw_out) raw_out[i] = mixer_clamp16((int32_t)s_chip_fm_raw[0][i] + s_chip_fm_raw[1][i]);
++        }
++        return;
++    }
++    const int64_t span = n > 1 ? (int64_t)n - 1 : 1;
++    const int64_t mb = (int64_t)m_from << 8, md = ((int64_t)m_to - m_from) << 8;
++    const int64_t sb = (int64_t)s_from << 8, sd = ((int64_t)s_to - s_from) << 8;
++    for (size_t i = 0; i < n; i++) {
++        int64_t gm = mb + md * (int64_t)i / span;
++        int64_t gs = sb + sd * (int64_t)i / span;
++        for (unsigned c = 0; c < 2; ++c) {
++            size_t p = i * 2 + c;
++            int32_t a = (int32_t)(((int64_t)s_chip_fm[0][p] * gm) >> 16);
++            int32_t b = (int32_t)(((int64_t)s_chip_fm[1][p] * gs) >> 16);
++            if (out) out[p] = mixer_clamp16(a + b);
++            if (raw_out) raw_out[p] = mixer_clamp16(
++                (int32_t)(((int64_t)s_chip_fm_raw[0][p] * gm) >> 16) +
++                (int32_t)(((int64_t)s_chip_fm_raw[1][p] * gs) >> 16));
++        }
+     }
+-    return n;
+ }
+-static size_t mixer_sum_psg(int16_t *out, int16_t *raw_out, size_t capacity)
++static void mixer_sum_psg(int16_t *out, int16_t *raw_out, size_t n,
++                          int m_from, int m_to, int s_from, int s_to)
+ {
+-    size_t n = s_chip_psg_n[0] < s_chip_psg_n[1] ? s_chip_psg_n[0] : s_chip_psg_n[1];
+-    if (n > capacity) n = capacity;
++    if (!n) return;
++    if (m_from == 256 && m_to == 256 && s_from == 256 && s_to == 256) {
++        for (size_t i = 0; i < n; i++) {
++            if (out)     out[i]     = mixer_clamp16((int32_t)s_chip_psg[0][i] + s_chip_psg[1][i]);
++            if (raw_out) raw_out[i] = mixer_clamp16((int32_t)s_chip_psg_raw[0][i] + s_chip_psg_raw[1][i]);
++        }
++        return;
++    }
++    const int64_t span = n > 1 ? (int64_t)n - 1 : 1;
++    const int64_t mb = (int64_t)m_from << 8, md = ((int64_t)m_to - m_from) << 8;
++    const int64_t sb = (int64_t)s_from << 8, sd = ((int64_t)s_to - s_from) << 8;
+     for (size_t i = 0; i < n; i++) {
+-        int32_t a = (int32_t)s_chip_psg[0][i] * s_music_gain / 256;
+-        int32_t b = (int32_t)s_chip_psg[1][i] * s_sfx_gain / 256;
+-        if (out)     out[i]     = mixer_clamp16(a + b);
++        int64_t gm = mb + md * (int64_t)i / span;
++        int64_t gs = sb + sd * (int64_t)i / span;
++        int32_t a = (int32_t)(((int64_t)s_chip_psg[0][i] * gm) >> 16);
++        int32_t b = (int32_t)(((int64_t)s_chip_psg[1][i] * gs) >> 16);
++        if (out) out[i] = mixer_clamp16(a + b);
+         if (raw_out) raw_out[i] = mixer_clamp16(
+-            (int32_t)s_chip_psg_raw[0][i] * s_music_gain / 256 +
+-            (int32_t)s_chip_psg_raw[1][i] * s_sfx_gain / 256);
++            (int32_t)(((int64_t)s_chip_psg_raw[0][i] * gm) >> 16) +
++            (int32_t)(((int64_t)s_chip_psg_raw[1][i] * gs) >> 16));
+     }
+-    return n;
+ }
+ 
+ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -417,20 +462,39 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+     }
+     }
+ 
+-    /* Which sources this frame actually carries (bit0 music, bit1 SFX). A
+-     * frame with one source needs no second chip: the volume is a scale of the
+-     * one chip's stock output, so the slider cannot change anything else. */
++    /* Which sources this frame carries (bit0 music, bit1 SFX), and (when both
++     * appear in the same frame) which one wrote most of it: that is the source
++     * the chip is playing, so that is whose fader applies. The fader never
++     * changes routing - it only scales the generated stream. */
+     s_frame_sources = 0;
+-    for (size_t i = 0; i < n_apply; i++)
+-        s_frame_sources |= mixer_event_is_sfx(&evs[i].e) ? 2 : 1;
+-    if (s_frame_sources) s_live_sources = s_frame_sources;
+-    if (s_live_sources == 3) s_live_both = 1;
+-    const int split_dual = dual ||
+-        (s_vol_split && (s_frame_sources == 3 || s_live_both));
++    size_t music_events = 0;
++    for (size_t i = 0; i < n_apply; i++) {
++        if (mixer_event_is_sfx(&evs[i].e)) s_frame_sources |= 2;
++        else { s_frame_sources |= 1; ++music_events; }
++    }
++    int frame_source = s_frame_sources;
++    if (s_frame_sources == 3)
++        frame_source = (music_events * 2u > n_apply) ? 1 : 2;
++    if (frame_source) s_live_sources = frame_source;
+     /* A frame without writes is still sounding with the previous frame's
+-     * sources; the two sources coexisting means two chips from then on, so a
+-     * chip's voices are never dropped from the mix mid-note. */
++     * source; the chip keeps playing its voices. */
+     const int sources = s_live_sources;
++    /* Gain targets for this frame: the fader of the source the chip is
++     * playing (single-chip modes) or one per chip (BOTH). */
++    const int m_to = s_music_gain;
++    const int s_to = s_sfx_gain;
++    const int single_to = (sources == 2) ? s_sfx_gain
++                        : (sources == 1) ? s_music_gain : 256;
++    int single_from = s_gain_cur_single;
++    int m_from = s_gain_cur_dual_music, s_from = s_gain_cur_dual_sfx;
++    if (s_snap_gains && sources) {
++        /* Fader moved while nothing was sounding: no ramp from an old gain. */
++        single_from = single_to; m_from = m_to; s_from = s_to;
++        s_snap_gains = 0;
++        s_gain_cur_single = single_to;
++        s_gain_cur_dual_music = m_to;
++        s_gain_cur_dual_sfx = s_to;
++    }
+     if (n_apply < n) {
+         AudioEvent *defer=scratch.deferred;
+         size_t d = 0;
+@@ -470,14 +534,16 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+         }
+         if(fm_written)*fm_written=fm.written;
+         if(psg_written)*psg_written=psg.written;
+-        if (s_vol_split && sources && sources != 3) {
+-            int g = sources == 2 ? s_sfx_gain : s_music_gain;
+-            mixer_scale(fm.output, fm.written, 2, g);
+-            mixer_scale(psg.output, psg.written, 1, g);
++        if (single_from != 256 || single_to != 256) {
++            mixer_gain_ramp(fm.output, fm.written, 2, single_from, single_to);
++            mixer_gain_ramp(psg.output, psg.written, 1, single_from, single_to);
+         }
++        s_gain_cur_single = single_to;
++        s_gain_cur_dual_music = m_to;
++        s_gain_cur_dual_sfx = s_to;
+         return;
+     }
+-    if (split_dual) {
++    if (dual) {
+         /* Chip 0 <- music-classified writes (the resident music driver, exactly
+          * as in MUSIC mode while it runs that image), applied in its own
+          * writer's push order. Chip 1 <- every sound-effect write: the 68K
+@@ -528,8 +594,16 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+ 
+         size_t fm_n  = 0, psg_n = 0;
+         static int16_t sum_fm_raw[MIXER_CHIP_SAMPLES * 2], sum_psg_raw[MIXER_CHIP_SAMPLES];
+-        fm_n  = mixer_sum_fm(fm_stereo_out, sum_fm_raw, fm_cap);
+-        psg_n = mixer_sum_psg(psg_mono_out, sum_psg_raw, psg_cap);
++        fm_n  = fm_common;  psg_n = psg_common;
++        if (fm_n  > fm_cap ) fm_n  = fm_cap;
++        if (psg_n > psg_cap) psg_n = psg_cap;
++        mixer_sum_fm(fm_stereo_out, sum_fm_raw, fm_n,
++                     m_from, m_to, s_from, s_to);
++        mixer_sum_psg(psg_mono_out, sum_psg_raw, psg_n,
++                      m_from, m_to, s_from, s_to);
++        s_gain_cur_dual_music = m_to;
++        s_gain_cur_dual_sfx   = s_to;
++        s_gain_cur_single     = single_to;
+         if (fm_stereo_out && fm_n > 0)
+             filter_present(fm_stereo_out, sum_fm_raw, fm_n, 2,
+                            &s_fm_filter_mix, s_fm_filter_span, 1);
+@@ -634,15 +708,15 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+         filter_present(psg_mono_out,raw_psg,psg_n,1,&s_psg_filter_mix,s_psg_filter_span,1);
+     if((fm_stereo_out && fm_n>0) || (psg_mono_out && psg_n>0))s_filter_started=1;
+ 
+-    /* Separate Music / SFX volume: a frame that carries one source is the one
+-     * chip's stock stream, so the slider is exactly a scale of it (and the
+-     * source's own idle DAC offset scales with it, as a real fader would).
+-     * A frame with both sources took the two-chip path above. */
+-    if (s_vol_split && !split_dual && sources && sources != 3) {
+-        int g = sources == 2 ? s_sfx_gain : s_music_gain;
+-        mixer_scale(fm_stereo_out, fm_n, 2, g);
+-        mixer_scale(psg_mono_out, psg_n, 1, g);
+-    }
++    /* Separate Music / SFX volume on the one chip: a linear ramp to this
++     * frame's target. At 100% both ends are 256 and nothing is touched. */
++    if (fm_stereo_out && (single_from != 256 || single_to != 256))
++        mixer_gain_ramp(fm_stereo_out, fm_n, 2, single_from, single_to);
++    if (psg_mono_out && (single_from != 256 || single_to != 256))
++        mixer_gain_ramp(psg_mono_out, psg_n, 1, single_from, single_to);
++    s_gain_cur_single = single_to;
++    s_gain_cur_dual_music = m_to;   /* keep the other path's cursor in step */
++    s_gain_cur_dual_sfx   = s_to;
+ 
+     if (fm_written)  *fm_written  = fm_n;
+     if (psg_written) *psg_written = psg_n;
+diff --git a/runner/audio/mixer.h b/runner/audio/mixer.h
+index f845c41..7a6ac2b 100644
+--- a/runner/audio/mixer.h
++++ b/runner/audio/mixer.h
+@@ -38,16 +38,20 @@ int audio_mixer_chip_output(int chip, const int16_t **fm, size_t *fm_n,
+ /* Separate Music / SFX volume (player sliders), 0..100 each, 100 = stock.
+  * Classified per writer: the resident music driver is music; the 68K FM/PSG
+  * engine and the race SFX PCM image are sound effects. The gains are applied
+- * to the generated mix (before WAV capture), so a capture measures them. At
+- * 100/100 nothing extra runs and the stock paths stay byte-identical. */
++ * to the generated mix (before WAV capture), so a capture measures them. The
++ * fader never changes chip routing, and a change ramps across one frame, so it
++ * is safe live and returns to byte-identical output at 100%. */
+ void audio_mixer_set_source_volumes(int music_pct, int sfx_pct);
+ /* Sources present in the last drain: bit0 music, bit1 sound effects. */
+ int  audio_mixer_frame_sources(void);
+ 
+ /* FM core variant for both virtual chips: 0 = stock YM2612 (default),
+- * 1 = YM3438 (no ladder discontinuity). */
++ * 1 = YM3438 (no ladder discontinuity). A live switch carries the chip's
++ * whole state across and crossfades the models, so no note restarts. */
+ void audio_mixer_set_fm_variant(int ym3438);
+-/* Band-limited reconstruction of the DAC stream, both chips. Off by default. */
++/* Band-limited reconstruction of the DAC stream, both chips. Off by default.
++ * Safe live: enabling seeds the filter from the held level and disabling
++ * restores the guest's last $2A byte, so the stock stream resumes exactly. */
+ void audio_mixer_set_dac_resample(int on);
+ 
+ /* Presentation preference, default0: bypass the native FM/PSG hardware LPFs.
+diff --git a/runner/audio/ym2612_ymfm.cpp b/runner/audio/ym2612_ymfm.cpp
+index 68ac675..b7c269d 100644
+--- a/runner/audio/ym2612_ymfm.cpp
++++ b/runner/audio/ym2612_ymfm.cpp
+@@ -73,8 +73,12 @@ struct YmfmIface : public ymfm::ymfm_interface {};
+  * flat to 2 kHz, -2.7 dB at 3 kHz, -73 dB at 5 kHz, so the images at 6.6 kHz
+  * and above land below -80 dB. 47 samples of group delay = 0.88 ms, which is
+  * inside the audio/visual budget the engine already keeps. */
+-constexpr int    DAC_FIR_TAPS = 95;
+-constexpr int    DAC_FIR_HALF = DAC_FIR_TAPS / 2;
++constexpr int    DAC_FIR_TAPS = 95;constexpr int    DAC_FIR_HALF = DAC_FIR_TAPS / 2;
++/* A live FM-core switch crossfades the outgoing core into the new one over this
++ * many output samples (256 / 53267 Hz = 4.8 ms): long enough that the model's
++ * DC/crossover difference cannot click, short enough to be inaudible. */
++constexpr int    FM_VARIANT_FADE_SAMPLES = 256;
++
+ constexpr double DAC_FIR_CUTOFF_HZ = 3300.0;
+ constexpr double DAC_FIR_BETA = 7.0;
+ constexpr double DAC_FIR_PI = 3.14159265358979323846;
+@@ -124,6 +128,12 @@ constexpr size_t FM_SCRATCH_STEREO_SAMPLES = 8192;
+ struct YmChip {
+     YmfmIface      iface;
+     ymfm::ym2612  *chip = nullptr;   /* YM2612, or a YM3438 when variant = 1 */
++    /* Variant crossfade: the outgoing core, kept for FM_VARIANT_FADE_SAMPLES
++     * after a live switch. It is handed the same register writes and clocked
++     * the same number of times, so the switch blends two identical performances
++     * (only the model's ladder difference) instead of restarting the chip. */
++    ymfm::ym2612  *prev = nullptr;
++    int            fade_left = 0, fade_total = 0;
+     int            inited = 0;
+     int            index = 0;
+     int            variant = 0;      /* 0 = YM2612 (stock), 1 = YM3438 */
+@@ -165,6 +175,17 @@ inline void chip_generate(YmChip &c, ymfm::ym2612::output_data *out,
+         c.chip->generate(out, count);
+ }
+ 
++/* The outgoing core of a variant crossfade is always the *previous* variant, so
++ * its kind is the opposite of the active one. */
++inline void chip_generate_prev(YmChip &c, ymfm::ym2612::output_data *out,
++                               uint32_t count)
++{
++    if (!c.variant)
++        static_cast<ymfm::ym3438 *>(c.prev)->generate(out, count);
++    else
++        c.prev->generate(out, count);
++}
++
+ /* Push the current (held) DAC level into the reconstruction history and return
+  * the band-limited value to feed back into $2A. */
+ inline uint8_t dac_reconstruct(YmChip &c)
+@@ -183,13 +204,20 @@ inline uint8_t dac_reconstruct(YmChip &c)
+ }
+ 
+ /* Write one reconstructed DAC value without leaving the guest's address latch
+- * changed. */
++ * changed. Both the live core and (during a variant crossfade) the outgoing one
++ * get it: the DAC level is the same analogue signal on both. */
++inline void chip_write(YmChip &c, uint32_t port, uint8_t value)
++{
++    c.chip->write(port, value);
++    if (c.prev) c.prev->write(port, value);
++}
++
+ inline void dac_emit_sample(YmChip &c)
+ {
+     uint8_t v = dac_reconstruct(c);
+-    if (c.addr_lo != 0x2A) c.chip->write(0, 0x2A);
+-    c.chip->write(1, v);
+-    if (c.addr_lo != 0x2A) c.chip->write(0, c.addr_lo);
++    if (c.addr_lo != 0x2A) chip_write(c, 0, 0x2A);
++    chip_write(c, 1, v);
++    if (c.addr_lo != 0x2A) chip_write(c, 0, c.addr_lo);
+ }
+ 
+ /* Hardware FM output low-pass -- the real Genesis filters the FM DAC output, and
+@@ -217,8 +245,11 @@ inline int32_t fm_lpf(YmChip &c, int ch, int32_t in) {
+     return out;
+ }
+ 
+-#if !GENESIS_FM_BLOCK_SAMPLES
+-void emit_one_sample(YmChip &c) {
++/* One output sample: advance the active core (and, while a variant crossfade
++ * runs, the outgoing core) and store the (blended) result through the serial
++ * hardware LPF. */
++void emit_one_sample(YmChip &c)
++{
+     if (c.scratch_write >= FM_SCRATCH_STEREO_SAMPLES) {
+         /* Scratch full -- consumer didn't drain. Shouldn't happen at
+          * ~888 samples/frame into an 8192 buffer; drop to stay safe. */
+@@ -227,36 +258,38 @@ void emit_one_sample(YmChip &c) {
+     ymfm::ym2612::output_data out;
+     if (c.dac_resample) dac_emit_sample(c);
+     chip_generate(c, &out, 1);
+-    int32_t l = out.data[0] * YM_GAIN_NUM / YM_GAIN_DEN;
+-    int32_t r = out.data[1] * YM_GAIN_NUM / YM_GAIN_DEN;
++    int32_t l = out.data[0], r = out.data[1];
++    if (c.prev) {
++        ymfm::ym2612::output_data old;
++        chip_generate_prev(c, &old, 1);
++        /* Linear crossfade to the new core across the fade window: the two
++         * cores hold the same register state, so only the model difference
++         * (the ladder's DC and crossover step) is blended - no note is
++         * restarted and nothing is doubled. */
++        const int k = c.fade_total - c.fade_left;
++        l = (int32_t)(((int64_t)l * k + (int64_t)old.data[0] * (c.fade_total - k)) / c.fade_total);
++        r = (int32_t)(((int64_t)r * k + (int64_t)old.data[1] * (c.fade_total - k)) / c.fade_total);
++        if (--c.fade_left <= 0) { delete c.prev; c.prev = nullptr; c.fade_total = 0; }
++    }
++    l = l * YM_GAIN_NUM / YM_GAIN_DEN;
++    r = r * YM_GAIN_NUM / YM_GAIN_DEN;
+     c.scratch[c.scratch_write * 2 + 0] = (int16_t)fm_lpf(c, 0, l);   /* hardware FM output LPF (matches reference; tames ymfm's excess highs) */
+     c.scratch[c.scratch_write * 2 + 1] = (int16_t)fm_lpf(c, 1, r);
+     c.raw_scratch[c.scratch_write * 2 + 0] = clamp16(l);
+     c.raw_scratch[c.scratch_write * 2 + 1] = clamp16(r);
+     c.scratch_write++;
+ }
+-#else
++
++#if GENESIS_FM_BLOCK_SAMPLES
+ void emit_samples(YmChip &c, uint32_t count) {
+     size_t available = FM_SCRATCH_STEREO_SAMPLES - c.scratch_write;
+     if (count > available) count = (uint32_t)available;
+     /* No register write can occur within this advance interval. Keep ymfm's
+-     * exact sample sequence and the serial LPF, amortizing the outer calls. */
+-    if (c.dac_resample) {
+-        /* Reconstruction feeds the DAC register once per output sample, so the
+-         * samples are generated one at a time (the chip's own sequence is
+-         * unchanged otherwise: same clock per sample). */
+-        for (uint32_t i = 0; i < count; ++i) {
+-            ymfm::ym2612::output_data out;
+-            dac_emit_sample(c);
+-            chip_generate(c, &out, 1);
+-            int32_t l = out.data[0] * YM_GAIN_NUM / YM_GAIN_DEN;
+-            int32_t r = out.data[1] * YM_GAIN_NUM / YM_GAIN_DEN;
+-            c.scratch[c.scratch_write * 2] = (int16_t)fm_lpf(c, 0, l);
+-            c.scratch[c.scratch_write * 2 + 1] = (int16_t)fm_lpf(c, 1, r);
+-            c.raw_scratch[c.scratch_write * 2] = clamp16(l);
+-            c.raw_scratch[c.scratch_write * 2 + 1] = clamp16(r);
+-            ++c.scratch_write;
+-        }
++     * exact sample sequence and the serial LPF, amortizing the outer calls.
++     * A DAC reconstruction or a variant crossfade needs the register updated
++     * (or both cores clocked) once per output sample, so those loop. */
++    if (c.dac_resample || c.prev) {
++        for (uint32_t i = 0; i < count; ++i) emit_one_sample(c);
+         return;
+     }
+     ymfm::ym2612::output_data block[64];
+@@ -287,6 +320,8 @@ extern "C" void ym2612_init_chip(int index) {
+         c.variant = 0;
+         c.chip = new ymfm::ym2612(c.iface);
+     }
++    if (c.prev) { delete c.prev; c.prev = nullptr; }
++    c.fade_left = c.fade_total = 0;
+     c.chip->reset();
+     c.scratch_write = c.scratch_read = 0;
+     c.master_accum = 0;
+@@ -302,28 +337,48 @@ extern "C" void ym2612_init_chip(int index) {
+ extern "C" void ym2612_init(void) { ym2612_init_chip(0); }
+ 
+ /* FM core variant: 0 = stock YM2612 (default), 1 = YM3438 (no ladder
+- * discontinuity). Recreating the chip resets its register state, so the next
+- * writes rebuild the current voice; the wrapper's own sample-clock remainder,
+- * LPF history and DAC reconstruction restart with it. */
++ * discontinuity). A live switch must not restart the chip: the cartridge's
++ * driver only re-sends a key-on when it plays a note, so a reset would drop
++ * every sounding note and leave the music broken. The new core therefore
++ * inherits the outgoing core's full state (the ymfm blob covers registers,
++ * envelopes, phases, LFO and timers), and the two cores are crossfaded over
++ * FM_VARIANT_FADE_SAMPLES so only the model difference (the ladder's DC and
++ * crossover step) changes, with no click. */
+ extern "C" void ym2612_set_variant(int index, int variant) {
+     if (index < 0 || index > 1) return;
+     YmChip &c = s_chips[index];
+     int v = variant ? 1 : 0;
+     if (c.variant == v) return;
+-    delete c.chip;
++    if (!c.inited || !c.chip) {
++        ym2612_init_chip(index);        /* creates and resets a YM2612 */
++        if (v) {
++            delete c.chip;
++            c.chip = new ymfm::ym3438(c.iface);
++            c.chip->reset();
++        }
++        c.variant = v;
++        return;
++    }
++
++    std::vector<uint8_t> blob;
++    {
++        ymfm::ymfm_saved_state st(blob, true);
++        c.chip->save_restore(st);
++    }
++    /* A second toggle mid-fade: the current core is authoritative, so drop the
++     * half-faded one and crossfade from the current output instead. */
++    if (c.prev) { delete c.prev; c.prev = nullptr; }
++
++    c.prev = c.chip;
+     c.chip = v ? static_cast<ymfm::ym2612 *>(new ymfm::ym3438(c.iface))
+                : new ymfm::ym2612(c.iface);
++    if (!blob.empty()) {
++        ymfm::ymfm_saved_state st(blob, false);
++        c.chip->save_restore(st);
++    }
+     c.variant = v;
+-    c.chip->reset();
+-    c.scratch_write = c.scratch_read = 0;
+-    c.master_accum = 0;
+-    c.lpf_prev[0] = c.lpf_prev[1] = 0;
+-    c.lpf_out[0]  = c.lpf_out[1]  = 0;
+-    c.addr_lo = c.addr_hi = 0;
+-    c.dac_byte = 0x80;
+-    c.dac_pos = 0;
+-    for (int i = 0; i < DAC_FIR_TAPS; ++i) c.dac_hist[i] = 0.0;
+-    c.inited = 1;
++    c.fade_total = FM_VARIANT_FADE_SAMPLES;
++    c.fade_left  = c.fade_total;
+ }
+ 
+ extern "C" void ym2612_set_dac_resample(int index, int on) {
+@@ -334,7 +389,18 @@ extern "C" void ym2612_set_dac_resample(int index, int on) {
+     if (want) dac_fir_init();
+     c.dac_resample = want;
+     c.dac_pos = 0;
++    /* The history starts at the level the chip is really holding, so the
++     * reconstructed waveform begins exactly where the stock one is. */
+     for (int i = 0; i < DAC_FIR_TAPS; ++i) c.dac_hist[i] = (double)c.dac_byte;
++    if (!want && c.chip) {
++        /* The guest's $2A writes were only buffered while the option was on;
++         * put the last one back so the chip is exactly on the stock stream
++         * again from this sample on. */
++        uint8_t latch = c.addr_lo;
++        if (latch != 0x2A) chip_write(c, 0, 0x2A);
++        chip_write(c, 1, c.dac_byte);
++        if (latch != 0x2A) chip_write(c, 0, latch);
++    }
+ }
+ 
+ extern "C" void ym2612_advance_chip(int index, uint32_t cycles_master) {
+@@ -369,15 +435,16 @@ extern "C" void ym2612_write_chip(int index, uint8_t port, uint8_t value) {
+     if (port > 3) return;
+     if (port == 0) c.addr_lo = value;
+     else if (port == 2) c.addr_hi = value;
++    /* Track the guest's DAC level whether or not the reconstruction is on: it
++     * is what the option seeds its filter from when it is switched on. */
++    if (port == 1 && c.addr_lo == 0x2A) c.dac_byte = value;
+     /* The DAC data register ($2A, low bank) is held, not latched: with the
+      * reconstruction option on, the write only updates the level the
+      * reconstruction filter sees, and the filtered value reaches the chip once
+      * per output sample (dac_emit_sample). Every other write passes through. */
+-    if (c.dac_resample && port == 1 && c.addr_lo == 0x2A) {
+-        c.dac_byte = value;
++    if (c.dac_resample && port == 1 && c.addr_lo == 0x2A)
+         return;
+-    }
+-    c.chip->write(port, value);
++    chip_write(c, port, value);
+ }
+ 
+ extern "C" void ym2612_write(uint8_t port, uint8_t value)
+@@ -457,6 +524,9 @@ static void ym_extra_set(YmChip &c, const YmExtraState *s)
+ {
+     if (c.variant != (s->variant != 0))
+         ym2612_set_variant(c.index, s->variant != 0);
++    /* A restored state is authoritative: no crossfade from the pre-load core. */
++    if (c.prev) { delete c.prev; c.prev = nullptr; }
++    c.fade_left = c.fade_total = 0;
+     c.dac_resample = s->dac_resample != 0;
+     if (c.dac_resample) dac_fir_init();
+     c.addr_lo = (uint8_t)s->addr_lo;
+diff --git a/runner/input_script.c b/runner/input_script.c
+index f3ffb2d..4534ac7 100644
+--- a/runner/input_script.c
++++ b/runner/input_script.c
+@@ -43,6 +43,7 @@ typedef enum {
+     OP_LOAD_STATE,
+     OP_DUMP_RAM,
+     OP_DUMP_VRAM,
++    OP_OPTION,         /* change a player option at this frame (key, value) */
+     OP_EXIT,
+ } OpCode;
+ 
+@@ -182,6 +183,14 @@ static int parse_line(char *line, int line_no) {
+     } else if (!_stricmp(tok, "DUMP_VRAM") && n >= 2) {
+         o->op = OP_DUMP_VRAM;
+         snprintf(o->str, sizeof(o->str), "%s", a1);
++    } else if (!_stricmp(tok, "OPTION") && n >= 3) {
++        /* OPTION <settings-key> <value>: change a player option on this frame
++         * through the same setter the in-game menu uses, so an automated
++         * capture can toggle an option live (frame-exact) and compare against
++         * an uninterrupted run. */
++        o->op     = OP_OPTION;
++        o->arg32b = (uint32_t)strtol(a2, NULL, 0);
++        snprintf(o->str, sizeof(o->str), "%s", a1);
+     } else if (!_stricmp(tok, "EXIT")) {
+         o->op    = OP_EXIT;
+         o->arg32 = (n >= 2) ? (uint32_t)strtoul(a1, NULL, 0) : 0u;
+@@ -386,6 +395,16 @@ void input_script_tick(uint64_t frame,
+                 s_pc++;
+                 break;
+ 
++            case OP_OPTION: {
++                extern int runner_options_set(const char *key, int value);
++                int ok = runner_options_set(o->str, (int)o->arg32b);
++                fprintf(stderr, "[input_script] OPTION %s=%d at frame %llu (%s)\n",
++                        o->str, (int)o->arg32b, (unsigned long long)frame,
++                        ok ? "ok" : "rejected");
++                s_pc++;
++                break;
++            }
++
+             case OP_EXIT:
+                 s_exit_pending = 1;
+                 s_exit_code    = (int)o->arg32;
+diff --git a/runner/input_script.h b/runner/input_script.h
+index cbb4510..df7b876 100644
+--- a/runner/input_script.h
++++ b/runner/input_script.h
+@@ -23,6 +23,11 @@
+  *   LOAD_STATE  <path>   load a native/interpreter state file
+  *   DUMP_RAM    <path>   dump canonical 68K byte-ordered work RAM
+  *   DUMP_VRAM   <path>   dump the VDP's raw 64KB VRAM
++ *   OPTION <key> <value> change a player option on this frame through the same
++ *                        setter the in-game menu uses (e.g.
++ *                        "OPTION mods.cleanfm.enabled 1"); the key is the
++ *                        settings key the runtime rows use, and it is
++ *                        persisted exactly like a menu change
+  *   EXIT [code]          exit cleanly with optional status code
+  *
+  * BUTTON names: UP DOWN LEFT RIGHT A B C START
+diff --git a/runner/main.c b/runner/main.c
+index 299c0c8..02caaf1 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -421,6 +421,20 @@ static void runtime_ui_save(void *p) {
+     if(!runner_save_settings(exe_relative("settings.ini")))
+         fprintf(stderr,"[NOTE] Could not save runtime settings.ini\n");
+ }
++
++/* Same option surface as the in-game rows, without a menu: used by the
++ * input-script OPTION directive so an automated capture can toggle a player
++ * option at an exact frame. Returns 1 when the key was accepted. */
++int runner_options_set(const char *key, int value) {
++    if (!key || !*key) return 0;
++    if (!strcmp(key, RECOMP_RUNTIME_UI_KEY_VOLUME)) {
++        g_app_config.volume = value; audio_set_master_volume(value);
++    } else if (!g_game_spec.runtime_ui_set || !g_game_spec.runtime_ui_set(key, value)) {
++        return 0;
++    }
++    runtime_ui_save(NULL);
++    return 1;
++}
+ static int runtime_ui_action(void *p, const RecompRuntimeUiItem *i) {
+     RuntimeUiContext *c = (RuntimeUiContext *)p;
+     if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_RESUME)) { recomp_runtime_ui_close(c->ui); return 1; }
