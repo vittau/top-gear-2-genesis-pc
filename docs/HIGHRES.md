@@ -1,8 +1,8 @@
 # High-resolution rendering: ground truth, architecture and plan
 
-**Task 29 — research and design only.** Nothing in this document is implemented.
-It is the input for the later implementation task (engine patches 0033–0039,
-reserved for it).
+**Task 29 — research and design.** The design below is unchanged; steps S1 and
+S2 were implemented and verified by task 31 (2026-11-09), see §12. S3 and later
+are not started.
 
 Everything below was measured or read on the stock USA ROM
 (CRC32 `BD3074D2`). Evidence paths are private under `build/highres/`, as the
@@ -749,6 +749,8 @@ Every step ends with the same mandatory gates, recorded as evidence:
 
 ### S1 — Row-state capture and the option skeleton (no visual change)
 
+**Done (task 31):** compact capture + scale skeleton, §12.
+
 - Add `[mods.highres] scale` (1..4, default 1), env override
   `TG2_HIGHRES_SCALE`, and a `tg2_video` status field.
 - Capture `RowState` per race row when scale > 1.
@@ -760,6 +762,8 @@ Every step ends with the same mandatory gates, recorded as evidence:
   the live `rows[]` for 3 frames.
 
 ### S2 — Engine seam for a taller presented picture (patch 0033)
+
+**Done (task 31):** `GameVideo.present_frame`, §12.
 
 - Implement `presented_height` + buffer/texture sizing + the interlace and
   linear-filter corrections; no game behaviour yet.
@@ -952,3 +956,125 @@ ROM checks used while writing this: `~/roms/genesis/tg2.bin` CRC32 `BD3074D2`.
   measured frame, and 2P.
 - The look decisions in §9 are the owner's; screenshots of a prototype are not
   part of this task.
+
+---
+
+## 12. S1 and S2 implemented (task 31)
+
+**Status: S1 and S2 are built and verified on this Mac (macOS arm64, Apple
+Silicon, `build/TG2Recomp` from `tools/build-linux.sh`).** S3 — the actual N×
+road/background builder — is not started, so no race picture is drawn at N×
+yet. Nothing here depends on the §9 decisions: the scale is read through one
+function, there is no user-facing control, and the only thing that presents a
+taller picture is a temporary test provider that a test must switch on.
+
+### 12.1 What was built
+
+| Piece | Where | What |
+|---|---|---|
+| Render scale | `game/tg2_highres.c`, `tg2_highres_scale()` | the single place the port reads the scale from. Default 1; `TG2_HIGHRES_SCALE=1..4` overrides it for captures. S7 replaces the `requested` source with the engine's "Internal resolution" value (decision 4). No `settings.ini` key, no launcher/overlay row. |
+| Compact row capture | `tg2_highres_capture_row()`, `Tg2RowState` | 165 bytes per row: `reg[24]`, `vsram[2]`, `cram[64]`, `hscroll[2]`, `bank[2]`, `width_k`, `flags`. 203 rows per race picture (37 KB). Captured only when the scale is above 1 — the stock path pays nothing. |
+| Row classification | `flags` / `width_k` | `road`, `ground` (atlas Y 432..447), `panorama` (448..511), `window`, `bank1`; `width_k` is the atlas row normalised into its authored pair family (§1.4), `-1` for non-road rows. `bank[0]`/`bank[1]` come from a bounded left/right edge probe of the live name table, so they are the palette bank actually drawn, not a lookup table. |
+| Presented-height seam | engine patch 0033, `GameVideo.present_frame` | called once per completed frame, after every native row and before the presented-window crop; the provider rewrites the runner framebuffer in place and returns the number of complete rows it wrote. The crop, `[FBHASH]`, screenshots, the runtime overlay, the logical canvas and the texture upload all use that height. |
+| Buffer and texture sizing | patch 0033 | `MAX_SCREEN_HEIGHT` 480 → **896** (4 × 224); interlace mode 2 (448) still fits. |
+| Interlace correction | patch 0033 | `display_logical_height()` and the netplay half-view clamp now test `gvdp_interlace_double()` instead of "height > 240", so a tall non-interlaced picture is not squashed to half height. |
+| Canvas | `game/tg2_video.c`, `width()`, `canvas_scale()` | an N× picture presents exactly N× the 1× canvas (356 × 2 = 712 at 16:9, 200 rows → 400). Like the crop, the canvas follows the previous completed picture, so Menus keep the stock canvas even with the scale raised. On the first race frame the provider declines the paint (the wider canvas does not exist yet) and the picture starts at 1×: one transition frame, not a squashed picture. |
+| Crop | `present_window()` | the same overscan bands at N×: `8N` rows at the top and `16N` at the bottom (`native_h` divisible by 224). |
+| Temporary test provider | `TG2_HIGHRES_TEST_PROVIDER=1` | a synthetic 2× native picture (gradient + checkerboard + 32-row rulers + magenta edge columns). **Off unless a test sets it**; it is not a player path and is removed when S3's real builder lands. |
+| Checks | `tools/check_highres.py` | subcommands `g1`, `capture`, `s2`, `route`. Standard library only (its PNG reader needs no Pillow). |
+
+**Deviation from §7.4.** The proposed `presented_height(native_w, native_h)`
+signature has no way to hand the provider the buffer it is supposed to have
+written. The implemented hook passes the framebuffer, its stride and the
+current presented width, and returns the height — one seam instead of a buffer
+handoff plus a separate height report. Everything else follows §7.4.
+
+### 12.2 Measured
+
+Capture cost, in-process timer (`TG2_HIGHRES_TIMING=1`, the clock-pair
+overhead measured once and subtracted), Auckland in-race pictures, three
+samples 40 frames apart:
+
+| Measurement | Value |
+|---|---|
+| Cost per captured picture | **34–42 µs** across two sessions (individual pictures 29–49 µs) |
+| Cost per captured row | **168–209 ns** |
+| Rows captured per picture | 203 (lines 8..210; see below) |
+| Share of the 16.7 ms frame budget | ≈ 0.25 % |
+
+The 165-byte struct copy is only ≈2 µs; the two palette-bank edge probes on the
+51–74 road rows dominate. S3 needs the same silhouette information (and more),
+so this work is not thrown away. At scale 1 the capture is not called and
+allocates nothing.
+
+Lines 0..7 (blanked overscan band) and 211..223 (the bare-backdrop band the
+game renders with a different raster opcode) are not captured because the row
+renderer does not take its race-row branch there; the crop removes both bands
+from the presented picture, so the captured rows cover every presented race
+row exactly. The `capture` checker compares only rows whose capture serial is
+the latest picture, which is exactly the set the live `rows[]` was written for.
+
+### 12.3 Verified gates
+
+| Gate | Result |
+|---|---|
+| **G1** scale 1, all options off (`--widescreen off --frames 360`) | frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` — unchanged |
+| **G1 with scale 2 and the S1 builder stub** | frames 60..360 identical to scale 1, in `off` and in `16:9` |
+| **S1/S2 byte identity across a race**, scale 1 vs scale 2 stub | baseline route replayed by frame-exact input script to frame 5600 (races at 3096+): **every** sampled framebuffer hash identical, `off` and `16:9` |
+| **G1 with the S2 test provider enabled on menus** | identical to stock (the provider declines every non-race picture) |
+| **G2** manifests | `dispatch_misses`, `floor_coverage`, `interior_label_misses`, `floor_unsafe` all 0 entries after every run above |
+| **G3** stock 1× + widescreen | `tools/verify_widescreen.py` (off / 16:9 / 21:9) passes at scale 1 |
+| **G3** 60 fps canonical | a `TG2_RACE_60FPS=1` run keeps both canonical hashes at scale 1 and at scale 2 with the stub |
+| **S1** capture vs live rows, 3 frames | 0 mismatches on 203 fresh rows per frame (51–74 road rows classified) |
+| **S2** test picture, `--widescreen off` | 256 × 400 (1×: 256 × 200), edges/rulers/gradient correct, every sampled row distinct |
+| **S2** test picture, `16:9` | 712 × 400 (1×: 356 × 200), same pattern checks |
+| **S2** menus with the provider on | stock canvas and height, and byte-identical to stock (title digest equal): off 320 × 224, 16:9 398 × 224, password screen 256 × 224 |
+| **S2** one windowed run | cocoa window presents the 2× picture; captured and closed |
+| **S2** 2P split-screen (frame-exact two-pad script, scale 2, provider on vs off) | `$FF189E != 0` sampled on 3,185 frames; presented geometry stays 224 lines × 398 wide (the 16:9 canvas, 4:3 picture); **all 7,901 framebuffer hashes identical** with the provider off and on |
+
+### 12.4 Evidence
+
+Private, as the repo rules require (regenerate with the commands in §12.5):
+
+| Path | What |
+|---|---|
+| `build/highres-check/g1-summary.json` | all seven G1 runs, their hash series and manifest counts |
+| `build/highres-check/capture/samples.json` | the three captured pictures: every row, the live row words, serials, cost |
+| `build/highres-check/capture/summary.json` | mismatch count, cost per picture/row, manifests |
+| `build/highres-check/s2/s2-summary.json` | the six headless S2 runs: PNG sizes, pixel digests, pattern facts |
+| `build/highres-check/s2/*-race.png`, `*-title.png` | the pictures themselves |
+| `build/highres-check/route/route-summary.json` | the baseline-route identity runs: hash series per scale and mode |
+| `build/highres-check/split2p/split-summary.json` | the 2P runs: sampled `$FF189E`, geometry, hash comparison |
+| `build/ws/` | `tools/verify_widescreen.py` evidence at scale 1 |
+
+### 12.5 Reproduction
+
+```sh
+JOBS=3 tools/build-linux.sh                       # applies patches 0001..0033
+
+python3 tools/check_highres.py g1                 # G1/G2 + 60 fps hashes
+python3 tools/check_highres.py capture            # S1 capture vs live rows + cost
+python3 tools/check_highres.py s2                 # S2 headless screenshots
+python3 tools/check_highres.py route              # byte identity across a race
+python3 tools/check_highres.py split              # 2P frames stay native
+python3 tools/check_highres.py s2 --windowed --only 169-scale2-test   # windowed
+python3 tools/verify_widescreen.py                # G3 stock 1x comparisons
+```
+
+All runs are headless (`SDL_VIDEODRIVER=dummy`, `SDL_AUDIODRIVER=dummy`) except
+the single `--windowed` check; one runtime instance at a time.
+
+### 12.6 Not verified
+
+- **No real N× picture yet.** The seam is proven with the synthetic provider
+  only. S3's road/background builder, its cost and its look are untouched.
+- **2P split-screen** is verified to stay native (§12.3), but only as an
+  exclusion: N× per viewport is not implemented and was not attempted.
+- **Interlaced** pictures are declined by the `native_h == 224` guard plus the
+  interlace-aware halves. This game presents no interlaced picture here, so
+  that guard is exercised only by the 448-line path being unreachable (the 2P
+  race itself is H32 non-interlaced and is excluded by `$FF189E`).
+- **Cost of the capture on Ryzen 3500U / Steam Deck** is not measured. The
+  figure above is this Mac; §6.3's ≈3× scaling would put it near 0.13 ms.
+- **The 4096 px canvas clamp at N×** is reasoned (§5.2) but not exercised: the
+  test provider only presents 2×.

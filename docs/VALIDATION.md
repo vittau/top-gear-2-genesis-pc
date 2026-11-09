@@ -1020,3 +1020,30 @@ this machine.
 Not re-checked here: the feedback-replay divergence fix (`tg2_options.c`,
 a recorded BOTH no longer collapses to MUSIC on replay), which needs the
 owner's replay file from the original session.
+
+## Task 31 — high-resolution rendering S1/S2 (branch `vittau/tg2-highres-s1-s2`)
+
+Steps S1 (compact per-row capture + render-scale skeleton) and S2 (engine seam
+for a taller presented picture, patch 0033) from `docs/HIGHRES.md` §8. Scale
+default 1; `TG2_HIGHRES_SCALE` is the capture-only override and the temporary
+S2 test provider needs `TG2_HIGHRES_TEST_PROVIDER=1`. All runs on this Mac
+(macOS arm64, development build from `tools/build-linux.sh`), dummy video and
+audio, one runtime instance at a time; the only windowed run is the last row.
+
+| Check | Command | Result |
+|---|---|---|
+| G1, scale 1 and scale 2 (builder stub), `off` | `python3 tools/check_highres.py g1` | frames 60/300 `2A0B972960C5E325` / `1131D937D70234FD`; the whole 60..360 series identical between scales |
+| G1, `16:9`, scale 1 vs 2 | same | whole hash series identical (the 16:9 boot canvas has its own hashes, as `docs/FRAMERATE.md` already notes) |
+| G1, 60 fps on, scale 1 vs 2 | same | both canonical hashes retained |
+| G1, test provider enabled on menus | same | identical to stock; the provider declines non-race pictures |
+| G2, all four manifests | every run above | 0 / 0 / 0 / 0 |
+| S1 capture vs live rows | `python3 tools/check_highres.py capture` | 3 pictures, 203 fresh rows each, 0 mismatches; 51–74 road rows; 34–42 µs/picture, 168–209 ns/row (two sessions) |
+| S1/S2 byte identity across a race | `python3 tools/check_highres.py route` | scale 1 vs scale 2 (builder stub): identical framebuffer hash on every sampled frame of the 5600-frame baseline route, `off` and `16:9`, manifests empty |
+| S2 test picture, `off` / `16:9` | `python3 tools/check_highres.py s2` | 256×400 and 712×400 (1× is 256×200 / 356×200); scale 2 with no builder is pixel-identical to 1×; menus keep the stock canvas and are byte-identical (title digest; 320×224 off, 398×224 in 16:9) and the password screen stays 256×224 |
+| S2 2P split-screen stays native | `python3 tools/check_highres.py split` | `$FF189E != 0` on 3,185 sampled frames; geometry 224 lines × 398 wide throughout; all 7,901 framebuffer hashes identical with the test provider off and on; manifests empty |
+| S2 windowed | `python3 tools/check_highres.py s2 --windowed --only 169-scale2-test` | cocoa window presents the 2× picture; captured, then closed |
+| G3 stock widescreen | `python3 tools/verify_widescreen.py` | passes in off / 16:9 / 21:9 at scale 1 |
+
+Evidence: `build/highres-check/` (summaries, per-row samples, PNGs) and
+`build/ws/`. Not verified: any real N× geometry (S3), a 2P race at N×, an
+interlaced picture (unreachable in this game), Deck-class cost.
