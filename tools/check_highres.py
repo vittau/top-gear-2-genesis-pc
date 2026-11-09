@@ -16,9 +16,14 @@ Subcommands:
 
   s2        Drive a race with the temporary synthetic test provider and check
             that the taller picture is presented correctly (dimensions and
-            pattern content) in `off` and `16:9`, that the scale above 1 with
-            no builder is pixel-identical, and that menus stay native. Add
+            pattern content) in `off` and `16:9`, that menus keep the stock
+            canvas and height, and that the 1x picture is unchanged. Add
             `--windowed` for the one real-window check.
+
+  route     Replay the committed baseline route (frame-exact input script) at
+            scale 1 and at scale 2 with the builder stub, in `off` and `16:9`,
+            and require the same framebuffer hash on every sampled frame,
+            race frames included. This is the byte-identity gate for S1/S2.
 
 Only read-only TCP queries and controller input are used. All captures stay
 under the ignored build/ directory. Nothing here writes guest state.
@@ -309,6 +314,94 @@ def pattern_report(pixels, width, height, channels):
     }
 
 
+def route_script(route_path: Path, path: Path, end_frame: int):
+    """Frame-exact input script from the committed baseline controller route.
+    Only the key actions are used; the route's captures and commands are not."""
+    names = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'B', 'C', 'A', 'START']
+    actions = {}
+    for action in json.loads(route_path.read_text()):
+        if 'keys' not in action:
+            continue
+        bits = int(action['keys'], 16)
+        lines = ['RELEASE'] + ['HOLD ' + name for bit, name in enumerate(names) if bits & (1 << bit)]
+        actions.setdefault(int(action['frame']), []).extend(lines)
+    lines, previous = [], 1
+    for frame in sorted(actions):
+        if frame > previous:
+            lines.append(f'WAIT {frame - previous}')
+        lines.extend(actions[frame])
+        previous = frame
+    if end_frame > previous:
+        lines.append(f'WAIT {end_frame - previous}')
+    lines.append('EXIT 0')
+    path.write_text('\n'.join(lines) + '\n')
+    return path
+
+
+def check_route(args):
+    """The committed baseline route is frame-exact (input script), so two runs
+    with different render scales must emit the same framebuffer hash on every
+    sampled frame, race included. This is the byte-identity gate for S1/S2."""
+    out_root = args.out / 'route'
+    out_root.mkdir(parents=True, exist_ok=True)
+    plan = [('off', 1, 'off-scale1'), ('off', 2, 'off-scale2-stub'),
+            ('16:9', 1, '169-scale1'), ('16:9', 2, '169-scale2-stub')]
+    results, failures = [], []
+    for mode, scale, tag in plan:
+        out = out_root / tag
+        out.mkdir(parents=True, exist_ok=True)
+        script = route_script(args.route, out / 'route.input', args.end_frame)
+        r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+                   widescreen=mode, max_frames=args.end_frame + 1,
+                   env_extra={'TG2_HIGHRES_SCALE': str(scale),
+                              'TG2_HIGHRES_TEST_PROVIDER': '0'},
+                   extra_args=['--turbo', '--input-script', str(script)])
+        try:
+            r.start()
+            wait_exit(r, timeout=900)
+        finally:
+            code = r.stop()
+        item = {'tag': tag, 'mode': mode, 'scale': scale, 'exit': code,
+                'hashes': hashes(out), 'manifests': empty_manifests(out)}
+        results.append(item)
+        print(tag, 'exit', code, 'hashes', len(item['hashes']))
+    by_mode = {}
+    for item in results:
+        by_mode.setdefault(item['mode'], []).append(item)
+        for name, count in item['manifests'].items():
+            if count:
+                failures.append(f"{item['tag']}: manifest {name} has {count} entries")
+        if item['exit'] != 0:
+            failures.append(f"{item['tag']}: exit {item['exit']}")
+    for mode, items in by_mode.items():
+        reference, stub = items[0], items[1]
+        common = sorted(set(reference['hashes']) & set(stub['hashes']))
+        differing = [f for f in common if reference['hashes'][f] != stub['hashes'][f]]
+        stub['compared_frames'] = len(common)
+        stub['identical_frames'] = len(common) - len(differing)
+        if not common:
+            failures.append(f'{mode}: no framebuffer hashes captured')
+        if differing:
+            failures.append(f"{mode}: scale {stub['scale']} differs from 1x at "
+                            f"{len(differing)}/{len(common)} frames (first {differing[0]})")
+        if mode == 'off':
+            for frame, want in CANON.items():
+                for item in items:
+                    if item['hashes'].get(frame) != want:
+                        failures.append(f"{item['tag']}: frame {frame} hash "
+                                        f"{item['hashes'].get(frame)} != {want}")
+        # The route must actually reach a race: the later frames have to differ
+        # from the boot picture, otherwise this proves nothing about race rows.
+        if len(common) > 80 and len({reference['hashes'][f] for f in common[-20:]}) < 2:
+            failures.append(f'{mode}: route pictures stopped changing')
+    summary = {'check': 'route', 'end_frame': args.end_frame, 'runs': results,
+               'failures': failures, 'ok': not failures}
+    (out_root / 'route-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps({'ok': not failures, 'failures': failures,
+                      'compared': {i['tag']: i.get('compared_frames') for i in results}}, indent=1))
+    return 0 if not failures else 1
+
+
 def check_s2(args):
     plan = [
         ('off', 1, False, 'off-scale1'),
@@ -335,28 +428,28 @@ def check_s2(args):
         item = {'tag': tag, 'mode': mode, 'scale': scale, 'provider': provider}
         try:
             title = r.screenshot(f'{tag}-title.png')
-            tw, th, _, _, _ = png_pixels(Path(title))
+            tw, th, _, _, title_digest = png_pixels(Path(title))
             item['title'] = [tw, th]
+            item['title_digest'] = title_digest
+            # No input after the race starts: the start picture is then a
+            # function of the race state alone, not of when a TCP input
+            # landed. Byte identity across scales is checked by `route`.
             state = enter_race(r, args.port, out)
             r.wait_frame(state.frame + 300)
-            r.set_input(0x10)
-            r.wait_frame(r.frame() + 20)
             shot = r.screenshot(f'{tag}-race.png')
             w, h, channels, pixels, digest = png_pixels(Path(shot))
             item.update({'race': [w, h], 'pixel_digest': digest, 'shot': str(shot)})
             if provider:
                 item['pattern'] = pattern_report(pixels, w, h, channels)
-            r.set_input(0)
         finally:
             item['exit'] = r.stop()
         item['manifests'] = empty_manifests(out)
+        item['hashes'] = hashes(out)
         results.append(item)
         print(tag, item.get('title'), item.get('race'), item.get('exit'))
     by_mode = {}
     for item in results:
         by_mode.setdefault(item['mode'], []).append(item)
-        if item['title'] != [320, 224]:
-            failures.append(f"{item['tag']}: menu picture {item['title']} is not native 320x224")
         for name, count in item['manifests'].items():
             if count:
                 failures.append(f"{item['tag']}: manifest {name} has {count} entries")
@@ -366,9 +459,23 @@ def check_s2(args):
         reference = next((i for i in items if i['scale'] == 1 and not i['provider']), None)
         stub = next((i for i in items if i['scale'] > 1 and not i['provider']), None)
         test = next((i for i in items if i['provider']), None)
+        # Menus keep the stock picture and the stock canvas: the 16:9 boot
+        # canvas is 398 wide, and it must not grow with the test provider.
+        # Compared on the title screenshot, because absolute-frame hashes of
+        # menus depend on when the password-screen taps landed.
+        for item in items:
+            if reference and item['title'] != reference['title']:
+                failures.append(f"{item['tag']}: menu canvas {item['title']} != stock {reference['title']}")
+            if reference and item.get('title_digest') != reference.get('title_digest'):
+                failures.append(f"{item['tag']}: title picture differs from stock")
+        if reference and reference['title'] != [320, 224] and mode == 'off':
+            failures.append(f"{reference['tag']}: menu picture {reference['title']} is not native 320x224")
         if reference and stub:
-            if stub['pixel_digest'] != reference['pixel_digest'] or stub['race'] != reference['race']:
-                failures.append(f"{mode}: scale {stub['scale']} with no builder is not identical to 1x")
+            # Byte identity at scale > 1 with the builder stub is proven by the
+            # deterministic route check; here only the presented size matters,
+            # and the race picture must not have become the synthetic pattern.
+            if stub['race'] != reference['race']:
+                failures.append(f"{mode}: scale {stub['scale']} picture size {stub['race']} != {reference['race']}")
             expected = reference['race']
             if test:
                 want_h = expected[1] * 2
@@ -377,6 +484,10 @@ def check_s2(args):
                     failures.append(f"{mode}: test provider picture {test['race']} != {[want_w, want_h]}")
                 if test['pixel_digest'] == reference['pixel_digest']:
                     failures.append(f"{mode}: test provider picture is identical to 1x")
+                race_frames = [f for f in sorted(set(test['hashes']) & set(reference['hashes']))
+                               if f >= 8300]
+                if race_frames and all(test['hashes'][f] == reference['hashes'][f] for f in race_frames):
+                    failures.append(f"{mode}: test provider never changed a race frame")
                 pattern = test.get('pattern') or {}
                 if pattern.get('left_edge') != (255, 0, 255) or pattern.get('right_edge') != (255, 0, 255):
                     failures.append(f"{mode}: test pattern edge markers missing {pattern.get('left_edge')}")
@@ -395,7 +506,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's2'):
+    for name in ('g1', 'capture', 's2', 'route'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
@@ -406,6 +517,9 @@ def main():
     s = sub.choices['capture']
     s.add_argument('--samples', type=int, default=3)
     s.add_argument('--spacing', type=int, default=40)
+    s = sub.choices['route']
+    s.add_argument('--end-frame', type=int, default=5600)
+    s.add_argument('--route', type=Path, default=ROOT / 'game/baseline-route.json')
     s = sub.choices['s2']
     s.add_argument('--windowed', action='store_true',
                    help='one real-window run (cocoa driver) instead of the dummy driver')
@@ -417,7 +531,8 @@ def main():
     for name in ('exe', 'rom'):
         if not getattr(args, name).exists():
             p.error(f'--{name} not found: {getattr(args, name)}')
-    return {'g1': check_g1, 'capture': check_capture, 's2': check_s2}[args.check](args)
+    return {'g1': check_g1, 'capture': check_capture, 's2': check_s2,
+            'route': check_route}[args.check](args)
 
 
 if __name__ == '__main__':

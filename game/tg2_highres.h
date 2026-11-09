@@ -37,13 +37,14 @@ enum {
     TG2_ROW_GROUND   = 1u << 1, /* atlas Y 432..447: ground/separator    */
     TG2_ROW_PANORAMA = 1u << 2, /* atlas Y 448..511: skyline/sky         */
     TG2_ROW_WINDOW   = 1u << 3, /* the window plane hides plane A here   */
-    TG2_ROW_RACE     = 1u << 4, /* row of a qualified single-player race */
-    TG2_ROW_BANK1    = 1u << 5, /* road palette bank bit (pair second)   */
+    TG2_ROW_BANK1    = 1u << 4, /* road palette bank bit (pair second)   */
 };
 
 /* Compact per-row presentation state (docs/HIGHRES.md §7.2): ~165 bytes per
  * row instead of the 60 fps path's full 64 KiB GVDP copy. Captured only when
- * the render scale is above 1, so the stock 1x path pays nothing. */
+ * the render scale is above 1, so the stock 1x path pays nothing, and only for
+ * rows of a qualified single-player race picture (the row renderer's race-row
+ * branch), which is why there is no separate "race" flag. */
 typedef struct Tg2RowState {
     unsigned char reg[24];      /* VDP registers at this line            */
     unsigned short vsram[2];    /* plane A / plane B vertical scroll     */
