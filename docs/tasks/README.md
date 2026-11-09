@@ -35,5 +35,5 @@ the machine-resource rules, and never trigger CI.
 | [23](23-app-icon.md) | Project and application icon (owner request) | Done (on `main`, in v0.1.0) |
 | [24](24-interior-label-650c.md) | Fix the skipped scene-init call at $00650C (release bug) | Done (on `main`, in v0.1.0) |
 | [25](25-state-load-and-coverage.md) | Cross-session save states, then the 19 unreached races | Done (on `main`, in v0.1.0) |
-| [26](26-owner-playtest-e586c00.md) | Bugs from the owner's e586c00 playtest (release) | Fixed on `origin/vittau/tg2-playtest-fix`, **not merged** ([roadmap](../ROADMAP.md#merge-the-task-26-playtest-fixes)) |
+| [26](26-owner-playtest-e586c00.md) | Bugs from the owner's e586c00 playtest (release) | Done; merged 2026-11-09, after v0.1.0 |
 | [27](27-setup-screen-quickstate.md) | Save states on the car setup screen | Mapped, not started ([roadmap](../ROADMAP.md#save-states-on-the-car-setup-screen)) |

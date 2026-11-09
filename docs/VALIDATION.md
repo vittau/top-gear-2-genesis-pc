@@ -996,3 +996,27 @@ Loading such a file resumes the race and it runs to its end
 parked at `$0065F2` (race loop), and in a fresh process it completes five laps
 and the finish (`build/evidence/resume-countdown/summary.json`,
 `docs/images/state-notice-interrace-resume.png`).
+
+## Task 26 merged after v0.1.0 (2026-11-09)
+
+The task 26 fixes (`origin/vittau/tg2-playtest-fix`, 2026-11-07) were never
+merged, so v0.1.0 shipped without them. Merged into `main` on 2026-11-09 after
+the checks below, on macOS arm64 (dev build `tools/build-linux.sh`, dummy
+video/audio, one runtime at a time). The owner-settings runs use a copy of the
+owner's installed macOS `settings.ini` (RACE SOUND = BOTH, HUD edges, 60 fps,
+Adaptive widescreen), since the original Linux session directory is not on
+this machine.
+
+| Check | `main` before the merge | Merged branch |
+|---|---|---|
+| `tools/verify_sound_page.py` (open, cycle, re-open the RACE SOUND page in every mode; fresh dir and owner settings) | **fail**: with BOTH the first open is black (palette 3 black on all five visit-0 pictures), later BOTH opens differ from each other, and the MUSIC/SFX pages differ from stock | **pass**: every picture has text and palette 3; MUSIC/SFX pixel-identical to stock, every BOTH open identical |
+| Player map at startup, fresh directory | P2 off (`device = 0`) | `p2=keyboard+gamepad` (patch 0020) |
+| Player map with a saved `settings.ini` whose P2 is `device = 0` | P2 off | P2 off (the saved device wins) |
+| `[DUAL-DBG]` string in the binary | present | absent |
+| Off-mode hashes (`tools/probe_run.py --widescreen off --frames 360`) | — | frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` (unchanged) |
+| `tools/tg2_release_smoke.py` (decoy-named ROM, controller-only boot to a 1P race) | — | passed, race pictures captured |
+| Manifests (every run above) | — | 0 / 0 / 0 / 0 |
+
+Not re-checked here: the feedback-replay divergence fix (`tg2_options.c`,
+a recorded BOTH no longer collapses to MUSIC on replay), which needs the
+owner's replay file from the original session.

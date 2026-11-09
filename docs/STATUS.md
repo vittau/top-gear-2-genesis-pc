@@ -36,6 +36,7 @@ Where to look:
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
 | Release packaging | macOS `TG2Recomp.app` (universal2; installed in Applications it imports the picked ROM into Application Support, portable it finds the ROM beside the `.app`), single-file Linux `TG2Recomp-x86_64.AppImage` plus tarball, Windows zip. `v*` tags build a **draft** release with SHA256SUMS. Validated on CI run 42222837085: every platform smoke-ran 600 frames with the ROM auto-detected. | `RELEASING.md` |
 | Save states | Shift+F1–F9 save; F1–F6 and F9 load (F7 is the state browser, F8 rewind); also from the Esc menu. States survive a restart and resume live in races, on the title and on the main menu; after a load the race flow continues to results and the next race. Notices in the picture (`STATE SAVED TO SLOT 1`...). A save between races is written at the next race start; the password and new-game setup screens refuse it. Engine patches 0018, 0021–0024, 0027. | `VALIDATION.md` |
+| Task 26 playtest fixes (after v0.1.0) | RACE SOUND page builds from the session choice (no black first open, no garbling), player 2 live out of the box (patch 0020), recorded BOTH survives a feedback replay, no `[DUAL-DBG]` log noise. Merged 2026-11-09; not in the v0.1.0 binaries. | `VALIDATION.md` |
 | ROM | Auto-detected by CRC next to the executable, whatever the file name. An installed macOS app also searches Application Support, where it imports the ROM picked in the launcher (engine patch 0019). | `BRINGUP.md` |
 
 Engine changes live as patches in `patches/segagenesisrecomp/`. The
@@ -43,10 +44,6 @@ submodule pin is upstream `dd520f1`.
 
 ## Known limitations
 
-- **The task 26 playtest fixes are not on `main`.** RACE SOUND page, P2 Start
-  out of the box and the `[DUAL-DBG]` log noise are fixed on
-  `origin/vittau/tg2-playtest-fix`, which was never merged, so v0.1.0 ships
-  without them. See [ROADMAP.md](ROADMAP.md#merge-the-task-26-playtest-fixes).
 - Windows, Intel macOS and the Steam Deck are unplayed on real hardware.
 - Menus, the shop and the results screens are shown in their original width,
   centred.

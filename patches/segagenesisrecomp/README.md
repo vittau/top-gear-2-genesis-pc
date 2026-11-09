@@ -50,6 +50,8 @@ commit; local fixes remain visible as its applied working-tree diff.
 
 - `0019-macos-installed-app-rom-library.patch`: an app in an Applications folder keeps settings, logs, saves and the cartridge in `~/Library/Application Support/TG2Recomp/` instead of loose files in `/Applications`; the cartridge search covers that folder, and a ROM picked in the launcher is copied there (after its CRC check) so later launches boot straight in.
 
+- `0020-game-default-players.patch`: a `GameSpec.default_players` count enables player 2's default bindings (right-hand keyboard set + second gamepad) before `settings.ini` is read, so a fresh install can start a 2-player race; a saved `[input.pN]` device still wins. The runner logs the effective player map at startup.
+
 - `0021-quickstate-resume-continues-guest-callers.patch`: a load resumed at a game boundary (`state_resume_pc`) keeps the restored A7, and when the resumed loop returns the game fiber continues the return addresses on the guest stack (only longs that follow a JSR/BSR) before the dispatcher fallback. Without it, a Top Gear 2 race loaded from a quickstate ended and fell back to the title loop, skipping the results and the next race.
 
 - `0022-menu-dismissed-button-release.patch`: buttons and pad buttons that are physically held when gameplay input is unblocked (the Enter or pad accept that closed the runtime menu) are latched and suppressed until released, so dismissing the menu cannot also press START/accept in the game. Nothing held means no change. Dev builds also get an input seam for probes, because `SDL_GetKeyboardState` cannot be set from outside the process.

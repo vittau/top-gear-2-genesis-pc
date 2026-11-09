@@ -21,7 +21,6 @@ first, then NTSC + scanlines. The other groups have no set order.
 
 | Group | Item | Summary | Spec |
 |---|---|---|---|
-| Pending from v0.1.0 | [Merge the task 26 playtest fixes](#merge-the-task-26-playtest-fixes) | RACE SOUND page, P2 Start out of the box and `[DUAL-DBG]` log noise are fixed on a branch that never reached `main` or v0.1.0. | [26](tasks/26-owner-playtest-e586c00.md) |
 | Pending from v0.1.0 | [Real-device checks](#real-device-checks) | Play Windows, Intel macOS and the Steam Deck (controller only) on real hardware; finish the Apple Silicon check. | |
 | Pending from v0.1.0 | [Quiver Launcher listing](#quiver-launcher-listing) | The owner submits the project now that v0.1.0 exists. | |
 | Visual | [High-resolution rendering](#high-resolution-rendering) | Races above 224 lines: road re-rasterised from the game's per-line state, most detailed sprite LOD, clean background, sharp HUD. **First in the visual queue.** | |
@@ -42,24 +41,6 @@ first, then NTSC + scanlines. The other groups have no set order.
 Out of scope (owner): save states on the password screen.
 
 ## Pending from v0.1.0
-
-### Merge the task 26 playtest fixes
-
-Task 26 fixed the owner's e586c00 playtest bugs on
-`origin/vittau/tg2-playtest-fix` (last commit 2026-11-07), but the branch
-was never merged, so v0.1.0 ships without them:
-
-- `0ae5b7d`, `f7eff64`: the RACE SOUND page is built from the session choice
-  and keeps a recorded choice (the page was empty, then garbled);
-- `c04a251`: two players are usable out of the box (engine patch
-  `0020-game-default-players.patch`; P2 could not press Start);
-- `a1fa4cb`: drops the `[DUAL-DBG]` telemetry from the release log;
-- `tools/verify_sound_page.py`.
-
-The feedback-replay divergence from the task spec has no commit on the
-branch. Merge `main` into the branch, rebuild, rerun its probes and the
-Off-mode hashes, check that main's RACE SOUND page still has the bug before
-claiming the fix, then merge. Patch number 0020 is still free on `main`.
 
 ### Real-device checks
 
