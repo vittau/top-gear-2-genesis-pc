@@ -332,7 +332,7 @@ typedef struct {
     int32_t measured_left, measured_right;
     uint32_t stripes, stripes_src, flags;
 } NxAuditRow;
-enum { NX_FLAG_ROAD = 1, NX_FLAG_INTERPOLATED = 2 };
+enum { NX_FLAG_ROAD = 1, NX_FLAG_INTERPOLATED = 2, NX_FLAG_FULL = 4 };
 
 static int32_t nx_lane_runs(const GVDP *v, const Tg2RowState *r, int py,
                             int from, int to) {
@@ -474,23 +474,19 @@ static void paint_road_row(const GVDP *v, int src, int j, int scale, int w1,
         audit->measured_right = audit_right;
         audit->stripes = audit_lanes;
         audit->stripes_src = (uint32_t)nx_lane_runs(v, s, py, left_s, right_s);
-        audit->flags = NX_FLAG_ROAD | (interpolate ? NX_FLAG_INTERPOLATED : 0);
+        /* "full": every visible column of the strip was scenery and painted,
+         * so its committed geometry is the whole strip. Sprites, the HUD or
+         * the car can cover part of it; those rows are still audited for the
+         * envelope, but not for geometry/stripes/continuity. */
+        int full = 1;
+        int first = (int)ceil(el - 1e-9), last = (int)floor(er - 1e-9);
+        if (first < 0) first = 0;
+        if (last > w1 - 1) last = w1 - 1;
+        for (int u = first; u <= last; ++u)
+            if (!s_terrain[u]) { full = 0; break; }
+        audit->flags = NX_FLAG_ROAD | (interpolate ? NX_FLAG_INTERPOLATED : 0) |
+                       (full ? NX_FLAG_FULL : 0);
     }
-}
-
-static void dump_ppm(const char *path, const uint32_t *pixels, int stride,
-                     int width, int height) {
-    FILE *f = fopen(path, "wb");
-    if (!f) return;
-    fprintf(f, "P6\n%d %d\n255\n", width, height);
-    for (int y = 0; y < height; ++y) {
-        const uint32_t *row = pixels + (size_t)y * stride;
-        for (int x = 0; x < width; ++x) {
-            unsigned char rgb[3] = {row[x] >> 16, row[x] >> 8, row[x]};
-            fwrite(rgb, 1, 3, f);
-        }
-    }
-    fclose(f);
 }
 
 int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int stride,
@@ -510,23 +506,6 @@ int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int str
      * horizontally by N; each becomes N presented rows. Walk bottom-up so
      * reading native row `src` is never overwritten by the rows above it. */
     static uint32_t s_src_row[4096];
-    char dump[2][512];
-    int dumping = 0;
-    {
-        /* TG2_HIGHRES_DUMP=<n>: dump the framebuffer before and after the
-         * builder on the nth built picture (debug evidence only). */
-        const char *want = getenv("TG2_HIGHRES_DUMP");
-        const char *dir = getenv("TG2_HIGHRES_DUMP_DIR");
-        if (want && *want && (unsigned)strtoul(want, NULL, 10) == s_build_frames + 1) {
-            const char *base = dir && *dir ? dir : ".";
-            snprintf(dump[0], sizeof dump[0], "%s/before-%06llu.ppm", base,
-                     (unsigned long long)frame);
-            snprintf(dump[1], sizeof dump[1], "%s/after-%06llu.ppm", base,
-                     (unsigned long long)frame);
-            dump_ppm(dump[0], pixels, stride, width, native_h);
-            dumping = 1;
-        }
-    }
     NxAuditRow audit[NX_AUDIT_ROWS];
     memset(audit, 0, sizeof audit);
     for (int src = native_h - 1; src >= 0; --src) {
@@ -553,16 +532,7 @@ int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int str
             paint_road_row(vdp, src, j, scale, w1, native_w, row, s_src_row, entry);
         }
     }
-    if (dumping)
-        dump_ppm(dump[1], pixels, stride, width, native_h * scale);
     nx_audit_write(vdp, frame, scale, pixels, stride, w1, native_w, audit);
-    if (getenv("TG2_HIGHRES_DEBUG") && (s_build_frames % 120) == 0) {
-        fprintf(stderr, "[hires-dbg] frame=%llu scale=%d width=%d stride=%d native=%dx%d w1=%d "
-                        "row0=%08x row223=%08x row447=%08x\n",
-                (unsigned long long)frame, scale, width, stride, native_w, native_h, w1,
-                pixels[0], pixels[(size_t)223 * stride],
-                native_h * scale > 224 ? pixels[(size_t)(native_h * scale - 1) * stride] : 0);
-    }
     ++s_build_frames;
     if (timing) {
         double elapsed = highres_now_us() - started - s_clock_overhead;

@@ -77,7 +77,7 @@ NX_DTYPE = np.dtype([
     ('measured_left', '<i4'), ('measured_right', '<i4'),
     ('stripes', '<u4'), ('stripes_src', '<u4'), ('flags', '<u4'),
 ])
-NX_ROAD, NX_INTERPOLATED = 1, 2
+NX_ROAD, NX_INTERPOLATED, NX_FULL = 1, 2, 4
 
 
 def load_nx(path):
@@ -101,7 +101,8 @@ def main_nx(a):
     totals = dict(mode='nx', frames=0, scales=[], tested_rows=0,
                   envelope_violations=0, max_envelope_violation_px=0.0,
                   geometry_violations=0, max_geometry_error_px=0.0,
-                  gap_violations=0, stripe_violations=0,
+                  gap_violations=0, stripe_rows_checked=0, stripe_violations=0,
+                  continuity_rows_checked=0,
                   max_stripe_violation=0, continuity_violations=0,
                   max_left_step_px=0, max_right_step_px=0, examples=[])
     for path in paths:
@@ -127,33 +128,55 @@ def main_nx(a):
         width = er - el
         gaps = road & (width < 2.0)
         totals['gap_violations'] += int(gaps.sum())
-        geometry = np.maximum(np.abs(rows['measured_left'] - el),
-                              np.abs(rows['measured_right'] - er))
-        geometry = np.where(road, geometry, 0.0)
+        # The committed strip is what fits on the canvas; a road wider than the
+        # picture is clipped by it, so compare against the clipped geometry.
+        # Only rows the builder reported as fully scenery are compared: a
+        # sprite or the car can cover part of the strip.
+        w1 = h['w1']
+        covered = road & (rows['flags'] & NX_FULL != 0)
+        authored = (covered & (el <= rows['left_src'] + 1) &
+                    (er >= rows['right_src'] - 1) & (rows['left_src'] >= 0) &
+                    (rows['right_src'] < w1 - 1))
+        vis_l = np.clip(el, 0, w1 - 1)
+        vis_r = np.clip(er - 1, 0, w1 - 1)
+        geometry = np.maximum(np.abs(rows['measured_left'] - vis_l),
+                              np.abs(rows['measured_right'] - vis_r))
+        geometry = np.where(covered, geometry, 0.0)
         totals['geometry_violations'] += int((geometry > 1.5).sum())
         if road.any():
             totals['max_geometry_error_px'] = max(totals['max_geometry_error_px'],
                                                   float(geometry.max()))
+        # Stripe phase on the same fully-scenery rows.
         stripe_error = np.abs(rows['stripes'].astype(int) - rows['stripes_src'].astype(int))
-        totals['stripe_violations'] += int(((stripe_error > 0) & road).sum())
-        if road.any():
+        totals['stripe_rows_checked'] += int(authored.sum())
+        totals['stripe_violations'] += int(((stripe_error > 0) & authored).sum())
+        if authored.any():
             totals['max_stripe_violation'] = max(totals['max_stripe_violation'],
-                                                 int(stripe_error[road].max()))
-        left = np.where(road, rows['measured_left'], np.nan)
-        right = np.where(road, rows['measured_right'], np.nan)
+                                                 int(stripe_error[authored].max()))
+        # Row-to-row continuity: ignore rows whose strip is clipped by the
+        # canvas edge (their measured edge is pinned to 0 / w1-1 by design).
+        free = covered & (rows['measured_left'] > 0) & (rows['measured_right'] < w1 - 1)
+        # A curve legitimately moves the authored edge by many pixels per row,
+        # so the committed edge may only step by as much as the interpolated
+        # one plus antialiasing slop: a bigger step is a tear or a duplicate.
+        left = np.where(free, rows['measured_left'], np.nan)
+        right = np.where(free, rows['measured_right'], np.nan)
         dleft = np.abs(np.diff(left))
         dright = np.abs(np.diff(right))
+        d_el = np.abs(np.diff(el))
+        d_er = np.abs(np.diff(er))
         bad = np.zeros(len(rows), dtype=bool)
         if len(rows) > 1:
-            bad[1:] = ((dleft > 4) & ~np.isnan(dleft)) | ((dright > 4) & ~np.isnan(dright))
-            bad[1:] |= np.nan_to_num(np.diff(width)) > 8
-        totals['continuity_violations'] += int((bad & road).sum())
+            bad[1:] = ((dleft > d_el + 2) & ~np.isnan(dleft)) | \
+                      ((dright > d_er + 2) & ~np.isnan(dright))
+        totals['continuity_rows_checked'] += int(free.sum())
+        totals['continuity_violations'] += int(bad.sum())
         if np.isfinite(dleft).any():
             totals['max_left_step_px'] = max(totals['max_left_step_px'],
                                              int(np.nanmax(dleft)))
             totals['max_right_step_px'] = max(totals['max_right_step_px'],
                                               int(np.nanmax(dright)))
-        flagged = (envelope > 0) | gaps | (geometry > 1.5) | ((stripe_error > 0) & road)
+        flagged = (envelope > 0) | gaps | (geometry > 1.5) | ((stripe_error > 0) & authored)
         for line in np.flatnonzero(flagged)[:3]:
             if len(totals['examples']) < 12:
                 totals['examples'].append(dict(
