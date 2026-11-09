@@ -580,6 +580,9 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
     if (line == 223) fflush(margin_audit);
 }
 static int synthesizing, audit_race_frame;
+/* The frame's live VDP, remembered for the end-of-frame builder (VRAM is the
+ * only per-frame input it needs; per-row state comes from the capture). */
+static const GVDP *frame_vdp;
 /* The last picture was a qualified single-player race (set on its first row).
  * The presented-height builder and the test provider use it, not a re-check
  * of live RAM at frame end, so 2P split-screen frames stay native. */
@@ -590,10 +593,30 @@ static int last_frame_race;
 static void note_crop_row(int line, const uint32_t *out, int w);
 static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                             uint32_t *out, int w);
+static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
+                               uint32_t *out, int w);
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     render_scanline(v, line, native, nw, out, w);
     note_crop_row(line, out, w);
+}
+/* S3: a render scale above 1 presents an N x canvas whose content is the 1x
+ * picture scaled by nearest in both axes. The road rows are then repainted at
+ * output resolution by tg2_highres_build() once the frame is complete; every
+ * other row keeps this nearest expansion (sprites, HUD and plane-A effects
+ * stay native content until S4/S5). */
+static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
+                            uint32_t *out, int w) {
+    int scale = tg2_highres_present_scale();
+    if (scale <= 1 || w % scale || w / scale < nw) {
+        render_scanline_1x(v, line, native, nw, out, w);
+        return;
+    }
+    static uint32_t row1[4096];
+    int w1 = w / scale;
+    render_scanline_1x(v, line, native, nw, row1, w1);
+    for (int x = 0; x < w; ++x)
+        out[x] = row1[x / scale];
 }
 static void note_crop_row(int line, const uint32_t *out, int w) {
     if (line < CROP_TOP) return;              /* counted when the band is blanked */
@@ -602,8 +625,12 @@ static void note_crop_row(int line, const uint32_t *out, int w) {
     for (int x = 0; x < w; ++x)
         if (out[x] & 0xFFFFFF) { crop_bottom_ok = 0; return; }
 }
-static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
-                     int w) {
+/* The 1x canvas picture. At a render scale above 1 this draws into a scratch
+ * row of the 1x canvas width and render_scanline() expands it by N; every
+ * placement rule (origin, margins, HUD, crop note, margin audit) stays the
+ * stock 1x logic. */
+static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
+                               uint32_t *out, int w) {
     int origin = (w - nw) / 2;
     pa_extend_mask = 0;
     if (!line) {
@@ -939,6 +966,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                      uint32_t *out, int w) {
     if (!line) {
         capture_picture = 0;
+        frame_vdp = v;
         from_picture = to_picture = NULL;
         /* An overdue frame is not presented: skip the whole synthesis so the
          * guest tick can be repaid sooner. Guest rendering is unaffected. */
@@ -1050,7 +1078,7 @@ static int compose_presented(uint32_t *pixels, int stride, int width,
      * canvas (widescreen off) is always wide enough. */
     if (width > native_w && width < native_w * scale)
         return 0;
-    return tg2_highres_build(pixels, stride, width, native_w, native_h);
+    return tg2_highres_build(frame_vdp, pixels, stride, width, native_w, native_h);
 }
 /* Called by the runner once per completed picture, after every native row was
  * produced. Cropping is presentation-only: the bands are dropped from what is
@@ -1096,11 +1124,13 @@ void tg2_video_command(int id, const char *json) {
                   (unsigned long long)(to_picture ? to_picture->frame : 0), phase_num, phase_den);
     n += snprintf(out + n, sizeof out - n,
                   ",\"highres_scale\":%d,\"highres_present_scale\":%d,"
-                  "\"highres_test_provider\":%d,\"highres_capture_frames\":%u,"
-                  "\"highres_capture_us\":%.3f,\"highres_capture_rows\":%u",
+                  "\"highres_capture_frames\":%u,"
+                  "\"highres_capture_us\":%.3f,\"highres_capture_rows\":%u,"
+                  "\"highres_build_frames\":%u,\"highres_build_us\":%.3f",
                   tg2_highres_scale(), tg2_highres_present_scale(),
-                  tg2_highres_test_provider(), tg2_highres_capture_frames(),
-                  tg2_highres_capture_us(), tg2_highres_capture_rows_done());
+                  tg2_highres_capture_frames(),
+                  tg2_highres_capture_us(), tg2_highres_capture_rows_done(),
+                  tg2_highres_build_frames(), tg2_highres_build_us());
     if (json && strstr(json, "\"rows\"")) {
         n += snprintf(out + n, sizeof out - n, ",\"rows\":[");
         for (int i = 0; i < 224; ++i)
@@ -1142,12 +1172,14 @@ void tg2_video_highres_command(int id, const char *json) {
     unsigned serial = tg2_highres_serial();
     int n = snprintf(out, CAPACITY,
                      "{\"id\":%d,\"ok\":true,\"scale\":%d,\"present_scale\":%d,"
-                     "\"test_provider\":%d,\"capture_frames\":%u,\"serial\":%u,"
-                     "\"capture_us\":%.3f,\"capture_rows\":%u",
+                     "\"capture_frames\":%u,\"serial\":%u,"
+                     "\"capture_us\":%.3f,\"capture_rows\":%u,"
+                     "\"build_frames\":%u,\"build_us\":%.3f",
                      id, tg2_highres_scale(), tg2_highres_present_scale(),
-                     tg2_highres_test_provider(), tg2_highres_capture_frames(),
+                     tg2_highres_capture_frames(),
                      serial, tg2_highres_capture_us(),
-                     tg2_highres_capture_rows_done());
+                     tg2_highres_capture_rows_done(),
+                     tg2_highres_build_frames(), tg2_highres_build_us());
     if (json && strstr(json, "\"rows\"") && n > 0 && n < CAPACITY) {
         n += snprintf(out + n, CAPACITY - n, ",\"rows\":[");
         for (int line = 0; line < TG2_HIGHRES_ROWS && n > 0 && n < CAPACITY; ++line) {

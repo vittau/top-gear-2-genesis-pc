@@ -154,6 +154,22 @@ static int tg2_state_load(const void *data, size_t size, int apply)
     return 1;
 }
 static uint32_t tg2_state_resume_pc(void) { return s_state_resume_site; }
+/* Experimental render scale (owner decisions 4, 5 and 6). `values` are the
+ * settings.ini internal_scale numbers tg2_highres_scale() understands, in row
+ * order; 1 keeps the stock picture. S7 extends this surface (NTSC exclusion,
+ * live switching, launcher text); S3 only needs the row to exist and drive the
+ * scale. */
+static const int tg2_internal_scales[] = {1, 2, 3, 4};
+static const char *const tg2_internal_scale_labels[] = {
+    "1x (off)", "2x", "3x", "4x"};
+static const GameInternalScale tg2_internal_scale = {
+    tg2_internal_scales, tg2_internal_scale_labels, 4,
+    "Experimental: redraws the road at N times the internal resolution from "
+    "the game's own per-line road data. Sprites, HUD and sky keep native "
+    "detail. Applies next launch. 1x (off) restores the stock picture.",
+    "Experimental: the road is redrawn at 2x-4x from the game's per-line road "
+    "data. Applies next launch."};
+
 static void tg2_vblank(void) { recomp_call_addr(0xFF01EAu); }
 static void tg2_hblank(void) { recomp_call_addr(0xFFF9FEu); }
 const GameSpec g_game_spec = {
@@ -193,8 +209,11 @@ const GameSpec g_game_spec = {
     .expected_rom_crc32 = 0xBD3074D2u,
     .expected_rom_size = 0x100000u,
     .tier3_floor_default = 1,
-    /* tg2_video draws every frame itself; the supersampling scale is unused. */
-    .hide_internal_resolution = 1,
+    /* tg2_video draws every frame itself. The engine's "Internal resolution"
+     * row is the owner's control for the experimental high-resolution road
+     * rendering (decision 4): same settings.ini value (internal_scale), the
+     * port's own 1x-4x vocabulary. */
+    .internal_scale = &tg2_internal_scale,
     .call_entry_point = tg2_entry,
     .call_vblank = tg2_vblank,
     .call_hblank = tg2_hblank,
