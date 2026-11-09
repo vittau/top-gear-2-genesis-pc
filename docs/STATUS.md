@@ -269,6 +269,10 @@ to be fitted from the stock ramps rather than invented.
   part is only a drone. So the owner's "better version of the same asset" fits here: band-limited
   resampling of the original PCM instead of the DAC's sample-and-hold. That is post-0.1.0 too. Rejected: replacing the engine sound with samples from other games or versions. The
   engine sound is a 68k FM effect, not a PCM sample.
+- **Mapped for later (owner, 2026-11-09):** save states on the car setup screen. Today a save there is
+  refused on a new game and deferred to the next race start between races, because the screen is
+  reached by a jump-table dispatch the resume path can't follow. The password screen doesn't need it.
+  Plan: `docs/tasks/27-setup-screen-quickstate.md`.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
   Intel macOS. Apple Silicon macOS (27.2) starts and plays into the menus
   after the quarantine step; the launcher ROM pick and a full race still need
