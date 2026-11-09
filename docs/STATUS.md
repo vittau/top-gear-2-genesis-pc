@@ -24,8 +24,8 @@ The owner has played two short sessions (Linux, Ryzen 5 3500U).
 | Quit from the menu (owner request) | The in-game menu (Esc / Back+RB) has a **Quit game** row (two presses) that exits through the normal window-close path, so settings are saved. Meant for controller-only play on Steam Deck. Engine patch 0013. Compiles; needs a hands-on check in the next play build. | |
 | Options | Widescreen / 60 fps / HUD / Hide overscan in the launcher and the in-game overlay (gamepad: Back+RB), persisted in `settings.ini [mods.*]`. | `RELEASING.md` |
 | CI | `build.yml`: Linux (glibc ≤ 2.35, Deck), Windows x64, macOS universal2. The ROM comes from the private repo via deploy key; artifacts are gated against ROM or generated C. | `RELEASING.md` |
-| Release packaging | macOS `TG2Recomp.app` (universal2; finds the ROM beside the `.app`), single-file Linux `TG2Recomp-x86_64.AppImage` plus tarball, Windows zip. `v*` tags build a **draft** release with SHA256SUMS. Validated on CI run 42222837085: every platform smoke-ran 600 frames with the ROM auto-detected. | `RELEASING.md` |
-| ROM | Auto-detected by CRC next to the executable, whatever the file name. | `BRINGUP.md` |
+| Release packaging | macOS `TG2Recomp.app` (universal2; installed in Applications it imports the picked ROM into Application Support, portable it finds the ROM beside the `.app`), single-file Linux `TG2Recomp-x86_64.AppImage` plus tarball, Windows zip. `v*` tags build a **draft** release with SHA256SUMS. Validated on CI run 42222837085: every platform smoke-ran 600 frames with the ROM auto-detected. | `RELEASING.md` |
+| ROM | Auto-detected by CRC next to the executable, whatever the file name. An installed macOS app also searches Application Support, where it imports the ROM picked in the launcher (engine patch 0019). | `BRINGUP.md` |
 
 Engine changes live as patches in `patches/segagenesisrecomp/`. The
 submodule pin is upstream `dd520f1`.
@@ -270,7 +270,10 @@ to be fitted from the stock ramps rather than invented.
   resampling of the original PCM instead of the DAC's sample-and-hold. That is post-0.1.0 too. Rejected: replacing the engine sound with samples from other games or versions. The
   engine sound is a 68k FM effect, not a PCM sample.
 - Real-device checks: Steam Deck (Gamescope, controller only), Windows,
-  macOS (unsigned `.app`; Gatekeeper first-run steps are in RELEASING.md).
+  Intel macOS. Apple Silicon macOS (27.2) starts and plays into the menus
+  after the quarantine step; the launcher ROM pick and a full race still need
+  a playtest there (unsigned `.app`; Gatekeeper first-run steps are in
+  RELEASING.md).
 - Task 22 found that the password `stage` field is the **difficulty**, not a race selector. The game has 64 races (16 countries × 4); task 25 qualified the last 19 by selecting the race index on the game-setup screen, so **all 64 races are driven to the finish**.
 - Quiver Launcher listing: the owner submits the project after the first real release (v0.1.0) exists, so
   Quiver can review it. Window screenshot for the form: `~/Pictures/tg2-quiver-screenshot.png` (outside git).
