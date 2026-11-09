@@ -1,7 +1,5 @@
 # Task 30: clean FM, separate volumes, better engine/nitro PCM
 
-Status: specified, waits for a worker slot (after tasks 28/29).
-
 Read `AGENTS.md` first. Follow the "Machine resources" rules: at most 3 build
 jobs (`JOBS=3 tools/build-linux.sh`, which also works on macOS), and run every
 build and heavy analysis under `flock ~/.cache/tg2-heavy.lock`. Never load

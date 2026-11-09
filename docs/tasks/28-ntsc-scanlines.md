@@ -1,5 +1,8 @@
 # Task 28: Blargg NTSC filter and scanlines
 
+Status: paused by the owner on 2026-11-09, before any code was written.
+The licence question below is still open.
+
 Read `AGENTS.md` first. Follow the "Machine resources" rules: at most 3 build
 jobs (`JOBS=3 tools/build-linux.sh`, which also works on macOS), and run every
 build and heavy analysis under `flock ~/.cache/tg2-heavy.lock`. Never trigger

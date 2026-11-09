@@ -19,25 +19,26 @@ Rules that apply to every item:
 The owner picked the first items to work on, in this order:
 
 1. **NTSC filter and scanlines** — [task 28](tasks/28-ntsc-scanlines.md).
+   **Paused by the owner on 2026-11-09** before any code was written (the
+   Blargg LGPL question is open too). Branch `vittau/tg2-ntsc-scanlines` has
+   no commits.
 2. **High-resolution rendering** — research and design first
-   ([task 29](tasks/29-highres-design.md)), then implementation from that
-   design (a later task).
+   ([task 29](tasks/29-highres-design.md), in progress), then implementation
+   from that design (a later task).
 3. **Clean FM, separate volumes and better engine/nitro PCM** —
-   [task 30](tasks/30-clean-fm-and-pcm.md).
+   [task 30](tasks/30-clean-fm-and-pcm.md), in progress.
 
-How they run, to avoid rework (at most two workers at once):
+How they run, to avoid rework (at most two workers at once): task 29 and
+task 30 run in parallel now, since audio shares no code with the video work.
+The high-resolution implementation starts once the task 29 design is
+accepted and a worker slot is free.
 
-- **Wave 1:** task 28 (implementation) and task 29 (read-only research and
-  design) in parallel. Task 29 must not touch the presentation code task 28
-  is changing; its design builds on task 28's stage layout.
-- **Wave 2:** the high-resolution implementation once task 28 is merged and
-  the task 29 design is accepted, alongside task 30 (audio, which shares no
-  code with the video work).
-- Shared rules fixed up front: NTSC runs at native source resolution and is
-  mutually exclusive with a render scale above 1×; scanlines run at output
-  resolution and also apply to a high-resolution frame; both stages accept
-  any RGB colour. Engine patch numbers are reserved per task (28: 0028–0032,
-  high-res: 0033–0039, 30: 0040–0044).
+Shared rules fixed up front, kept while NTSC is paused so it can resume
+without rework: NTSC runs at native source resolution and is mutually
+exclusive with a render scale above 1×; scanlines run at output resolution
+and also apply to a high-resolution frame; both stages accept any RGB colour.
+Engine patch numbers are reserved per task (28: 0028–0032, high-res:
+0033–0039, 30: 0040–0044).
 
 The other groups have no set order.
 
@@ -48,7 +49,7 @@ The other groups have no set order.
 | Pending from v0.1.0 | [Real-device checks](#real-device-checks) | Play Windows, Intel macOS and the Steam Deck (controller only) on real hardware; finish the Apple Silicon check. | |
 | Pending from v0.1.0 | [Quiver Launcher listing](#quiver-launcher-listing) | Submitted by the owner on 2026-11-08; waiting for a Quiver maintainer to verify it. | |
 | Visual | [High-resolution rendering](#high-resolution-rendering) | Races above 224 lines: road re-rasterised from the game's per-line state, most detailed sprite LOD, clean background, sharp HUD. **Priority 2.** | [29](tasks/29-highres-design.md) |
-| Visual | [NTSC filter and scanlines](#ntsc-filter-and-scanlines) | Blargg composite filter (`md_ntsc`) and *Animal Well*-style scanlines, with presets. **Priority 1.** | [28](tasks/28-ntsc-scanlines.md) |
+| Visual | [NTSC filter and scanlines](#ntsc-filter-and-scanlines) | Blargg composite filter (`md_ntsc`) and *Animal Well*-style scanlines, with presets. **Paused (owner, 2026-11-09).** | [28](tasks/28-ntsc-scanlines.md) |
 | Visual | [HD menus, fonts and HUD pack](#hd-menus-fonts-and-hud-pack) | Optional replacement pack of faithful HD redraws, keyed by the original tiles. | |
 | Visual | [Gradient skies](#gradient-skies) | SNES-like vertical sky gradients derived from each track's own sky colour, weather and time of day. | |
 | Visual | [Widescreen on the other screens](#widescreen-on-the-other-screens) | Track intro, menus, shop and results extended to widescreen. Deferred by the owner to the final phase. | [17](tasks/17-widescreen-menu-screens.md) |
