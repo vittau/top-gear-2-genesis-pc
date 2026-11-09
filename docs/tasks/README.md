@@ -41,5 +41,5 @@ the machine-resource rules, and never trigger CI.
 | [29](29-highres-design.md) | High-resolution rendering — ground truth and design | Done: `docs/HIGHRES.md`; owner decisions recorded in §9 |
 | [30](30-clean-fm-and-pcm.md) | Clean FM, separate volumes, better engine/nitro PCM | Merged 2026-11-09; owner found bugs when switching options live (music doubled, then silent) — fix in progress |
 | [31](31-highres-s1-s2.md) | High-resolution rendering, steps S1 and S2 (capture + engine seam) | Done (merged 2026-11-09) |
-| [32](32-deck-aspect-and-quiet-logs.md) | Steam Deck feedback: device aspect, no logs in normal use | In progress |
+| [32](32-deck-aspect-and-quiet-logs.md) | Steam Deck feedback: device aspect, no logs in normal use | Done (merged 2026-11-09); needs a real Deck run |
 | [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | Paused 2026-11-09 for the task 30 audio bug fix (work in progress kept in `refs/keep/tg2-highres-s3-pause` and the `tg2-highres-s1-s2` worktree) |

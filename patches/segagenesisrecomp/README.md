@@ -71,3 +71,13 @@ commit; local fixes remain visible as its applied working-tree diff.
 - `0040-separate-music-sfx-volumes.patch`: tag every frame's applied writes as music or sound effects by *writer* (the resident Z80 music driver is music; the 68K FM/PSG engine and the race SFX PCM image are sound effects, including the first core once the 68K has uploaded that image over the driver) and apply player Music/SFX faders to the generated mix (`audio_mixer_set_source_volumes`). A frame that carries one source is the one chip's stock stream scaled exactly; only a frame that really carries both is rendered on two chips, like BOTH mode. 100%/100% runs nothing extra, so every stock WAV stays byte-identical.
 
 - `0041-fm3438-and-dac-reconstruction.patch`: two host options on the ymfm chip model - `ym2612_set_variant(i, 1)` renders with ymfm's YM3438 core (same notes, no YM2612 ladder discontinuity) and `ym2612_set_dac_resample(i, 1)` replays the DAC ($2A) stream through a 95-tap Kaiser-windowed-sinc reconstruction at 3.3 kHz instead of the chip's sample-and-hold, feeding the filtered level back into the register once per output sample. Both default off (stock YM2612, stock DAC) and both are covered by the save-state/rollback format.
+
+- `0045-device-aspect-window-and-gamescope.patch`: the first window follows the desktop's aspect instead of a fixed 16:9 for an adaptive custom renderer, a gamescope/Steam Deck session starts borderless fullscreen at the panel size (so Adaptive fills a 16:10 Deck instead of a 16:9 letterbox), and `[VIDEO] display/window/output/picture` lines report the geometry on change (task 32).
+
+- `0046-diagnostics-opt-in-and-settings-migration.patch`: the feedback replay is off by default and recorded only when the saved Diagnostics option or the process-scoped `--debug` flag asks for it, with a `[meta] settings_version` migration that turns a pre-version-2 file's old default (`[mods.diagnostics] enabled = 1`) off and rewrites settings.ini once.
+
+- `0047-runtime-evidence-behind-trace-or-debug.patch`: the dispatch/floor/interior-label evidence manifests are written only by a `GEN_ENABLE_TRACE` build or when `--debug` enables them, so a release session leaves no TOML files next to the executable.
+
+- `0048-debug-flag-enables-diagnostics.patch`: `--debug` enables the feedback replay and the runtime evidence for that launch (never persisted), and rewrites a migrated settings.ini once after the launcher has settled the effective options.
+
+- `0049-diagnostics-row-in-runtime-menu.patch`: a Diagnostics (bug report) row in the in-game recomp-ui menu sets the same `[mods.diagnostics]` option the launcher's Mods page owns, so a controller-only Deck player can turn the replay on for the next launch without a terminal.

@@ -1,0 +1,163 @@
+diff --git a/runner/app_config.c b/runner/app_config.c
+--- a/runner/app_config.c
++++ b/runner/app_config.c
+@@ -45,9 +45,24 @@
+     g_app_config.rewind_enabled   = 1;
+     g_app_config.rewind_depth     = 60;
+     g_app_config.rewind_interval  = 6;
+-    g_app_config.replay_diagnostics = 1;
++    g_app_config.replay_diagnostics = 0;
+ }
+ 
++/* ---- settings version / migration --------------------------------------- */
++
++static int s_settings_version;   /* [meta] settings_version; 0 = pre-task-32 */
++static int s_migrated;           /* the file just read needs a rewrite        */
++
++int app_config_migrated(void) { return s_migrated; }
++
++/* --debug: diagnostics for this process only, never persisted. */
++static int s_debug_diagnostics;
++void app_config_set_debug_diagnostics(int on) { s_debug_diagnostics = on != 0; }
++int app_config_diagnostics_active(void)
++{
++    return g_app_config.replay_diagnostics || s_debug_diagnostics;
++}
++
+ /* ---- tiny ini helpers ---------------------------------------------------- */
+ 
+ static char *trim(char *s)
+@@ -96,6 +111,8 @@
+ 
+ int app_config_load(const char *path)
+ {
++    s_migrated = 0;
++    s_settings_version = 0;
+     FILE *f = fopen(path, "rb");
+     if (!f) return 0;
+ 
+@@ -117,6 +134,7 @@
+             else if (!strcmp(name, "mods.widescreen")) section = 3;
+             else if (!strcmp(name, "rewind"))   section = 4;
+             else if (!strcmp(name, "mods.diagnostics")) section = 5;
++            else if (!strcmp(name, "meta"))       section = 6;
+             else if (!strcmp(name, "input.p1")) section = 10;
+             else if (!strcmp(name, "input.p2")) section = 11;
+             else if (!strcmp(name, "input.p3")) section = 12;
+@@ -172,6 +190,8 @@
+             else if (!strcmp(key, "interval")) g_app_config.rewind_interval = atoi(val);
+         } else if (section == 5) {
+             if (!strcmp(key,"enabled")) g_app_config.replay_diagnostics=atoi(val)!=0;
++        } else if (section == 6) {
++            if (!strcmp(key,"settings_version")) s_settings_version=atoi(val);
+         } else if (section >= 10 && section < 10 + INPUT_MAX_PLAYERS) {
+             PlayerInput *pi = &g_input_map.p[section - 10];
+             if      (!strcmp(key, "device"))   pi->device       = atoi(val);
+@@ -187,6 +207,18 @@
+         }
+     }
+     fclose(f);
++    /* Task 32 migration. A version-1 settings.ini wrote
++     * `[mods.diagnostics] enabled = 1` because that was the DEFAULT (the
++     * Diagnostics mod was on for everybody), not because the player chose it.
++     * Diagnostics are opt-in from version 2 on: force them off here and let
++     * the caller rewrite the file once (app_config_migrated()). A version-2
++     * file keeps exactly what it saved, so a deliberate enable survives. */
++    if (s_settings_version < APP_CONFIG_SETTINGS_VERSION) {
++        s_migrated = 1;
++        if (g_app_config.replay_diagnostics)
++            fprintf(stderr, "[config] migrating settings.ini: diagnostics are now opt-in\n");
++        g_app_config.replay_diagnostics = 0;
++    }
+     return 1;
+ }
+ 
+@@ -225,6 +257,7 @@
+ 
+     fprintf(f, "# segagenesisrecomp launcher settings. Edited by the launcher;\n"
+                "# hand-editable. SDL scancodes are numeric (see SDL_scancode.h).\n\n");
++    fprintf(f, "[meta]\nsettings_version = %d\n\n", APP_CONFIG_SETTINGS_VERSION);
+     fprintf(f, "[video]\n");
+     fprintf(f, "window_scale = %d\n",     g_app_config.window_scale);
+     fprintf(f, "fullscreen = %d\n",       g_app_config.fullscreen);
+@@ -315,7 +348,7 @@
+     if(i==s_mod_video_available) {
+         MOD_COPY(out->id,"playtest-diagnostics");MOD_COPY(out->name,"Playtest Diagnostics");MOD_COPY(out->version,"1");
+         MOD_COPY(out->author,"GenesisRecomp contributors");MOD_COPY(out->license,"PolyForm Noncommercial 1.0.0");
+-        MOD_COPY(out->description,"Automatically record replayable bug reports in logs. Attach the replay and its sidecars when reporting a problem.");
++        MOD_COPY(out->description,"Off for normal play. When enabled, records a replayable bug report in logs; attach the replay and its sidecars when reporting a problem.");
+         out->enabled=g_app_config.replay_diagnostics;return 1;
+     }
+     MOD_COPY(out->id,"custom-widescreen");MOD_COPY(out->name,"Widescreen");MOD_COPY(out->version,"1");
+@@ -345,7 +378,7 @@
+         MOD_COPY(out->package_name,"Playtest Diagnostics");MOD_COPY(out->package_version,"1");
+         MOD_COPY(out->name,"Replayable feedback");MOD_COPY(out->group,"Diagnostics");
+         MOD_COPY(out->author,"GenesisRecomp contributors");
+-        MOD_COPY(out->description,"Default on. Records controller inputs, settings, mods and state checks for offline reproduction. Zip the game's feedback replay and all sidecars from logs after a problem.");
++        MOD_COPY(out->description,"Off by default (or with --debug). Records controller inputs, settings, mods and state checks for offline reproduction. Zip the game's feedback replay and all sidecars from logs after a problem.");
+         MOD_COPY(out->status,g_app_config.replay_diagnostics?"Recording on next launch":"Disabled");
+         out->enabled=g_app_config.replay_diagnostics;return 1;
+     }
+diff --git a/runner/app_config.h b/runner/app_config.h
+--- a/runner/app_config.h
++++ b/runner/app_config.h
+@@ -38,11 +38,22 @@
+     int rewind_enabled;     /* local rewind; never available in netplay */
+     int rewind_depth;       /* snapshot slots */
+     int rewind_interval;    /* guest frames between snapshots */
+-    int replay_diagnostics; /* default-on replayable player feedback */
++    int replay_diagnostics; /* opt-in replayable player feedback (--debug) */
+ } AppConfig;
+ 
++/* settings.ini schema version, stamped as [meta] settings_version. Version 2
++ * (task 32) made the feedback replay/diagnostics opt-in; a version-1 file
++ * saved `[mods.diagnostics] enabled = 1` as the old default, so it must load
++ * with diagnostics off and be rewritten once. */
++#define APP_CONFIG_SETTINGS_VERSION 2
++
+ extern AppConfig g_app_config;
+ 
++/* 1 when the settings.ini just read predates APP_CONFIG_SETTINGS_VERSION and
++ * still has to be rewritten (diagnostics already forced off). Cleared by the
++ * next app_config_load(); 0 when the file is missing or current. */
++int  app_config_migrated(void);
++
+ /* Reset g_app_config to defaults (does NOT touch g_input_map). */
+ void app_config_defaults(void);
+ 
+@@ -62,6 +73,13 @@
+  * success. */
+ int  app_config_save(const char *path);
+ 
++/* Process-scoped diagnostics (`--debug`). The feedback replay records when
++ * either the saved Diagnostics option or this flag is set; the flag is never
++ * written back to settings.ini, so a debug launch cannot leave a normal
++ * install recording replays. */
++void app_config_set_debug_diagnostics(int on);
++int  app_config_diagnostics_active(void);
++
+ struct GameVideo;
+ struct RecompLauncherCModProvider;
+ const char *app_config_aspect_mode(int aspect);
+diff --git a/runner/diagnostic_replay.c b/runner/diagnostic_replay.c
+--- a/runner/diagnostic_replay.c
++++ b/runner/diagnostic_replay.c
+@@ -385,7 +385,8 @@
+     return 1;
+   }
+   const char *record = getenv("GENESIS_REPLAY_RECORD");
+-  if (!g_app_config.replay_diagnostics || (record && !strcmp(record, "0")))
++  /* Off for normal play; the Diagnostics option or `--debug` records. */
++  if (!app_config_diagnostics_active() || (record && !strcmp(record, "0")))
+     return 1;
+   char logs[1200];
+   snprintf(logs, sizeof logs, "%s/logs", folder);
+@@ -435,7 +436,7 @@
+     free(context);
+   }
+   fprintf(stderr,
+-          "[feedback-replay] %s (default on; attach replay and all sidecars)\n",
++          "[feedback-replay] %s (diagnostics on; attach the replay and all sidecars)\n",
+           path);
+   return 1;
+ }
