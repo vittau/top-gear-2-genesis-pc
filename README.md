@@ -53,8 +53,8 @@ With every option off, the picture is byte-identical to the original game.
 It has been played on Linux (x86_64) and macOS (Apple Silicon). Windows, macOS
 on Intel and the Steam Deck are built in CI and pass headless smoke tests, but
 they still need play on real hardware; treat those builds as release
-candidates until they are. See [docs/STATUS.md](docs/STATUS.md) and
-[docs/RELEASING.md](docs/RELEASING.md) for the current state and open items.
+candidates until they are. See [docs/STATUS.md](docs/STATUS.md) for the current state and
+[docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
 
 ### Widescreen
 
@@ -331,7 +331,8 @@ Packaging, CI and the release process are described in
 
 | Doc | Content |
 | --- | --- |
-| [docs/STATUS.md](docs/STATUS.md) | Current state and open items |
+| [docs/STATUS.md](docs/STATUS.md) | Current state and known limitations |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after v0.1.0 |
 | [docs/BRINGUP.md](docs/BRINGUP.md) | How the recompilation was brought up |
 | [docs/WIDESCREEN.md](docs/WIDESCREEN.md) | Widescreen renderer design |
 | [docs/FRAMERATE.md](docs/FRAMERATE.md) | 60 fps design and the physics parity proof |
