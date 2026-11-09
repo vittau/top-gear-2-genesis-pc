@@ -855,6 +855,23 @@ evidence-backed, and it validates the capture + seam with the least new code.
 
 ## 9. Decisions needed from the owner
 
+**Decided by the owner on 2026-11-09** (coordinator's recommendations,
+approved as a set). Where they differ from this section's original
+recommendations, the decision wins:
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Road/silhouette look | **Smooth** analytic edges at N×. |
+| 2 | HUD size at N× | **Integer N×** (nearest, crisp, same relative size) — *not* native 1×, which would make the HUD N times smaller on screen. Applies to the player car and map markers too. |
+| 3 | Detailed sprite variants | **Always promote** to the most detailed variant, guarded by the downscale check. |
+| 4 | Which control drives the scale | **The engine's "Internal resolution" row** (un-hidden for TG2 and driving the provider), as the owner asked on 2026-11-07 — not a separate `[mods.highres]` option. |
+| 5 | Default | **1×** until the cost is measured on the Steam Deck. |
+| 6 | First implementation scope | **S1–S3 (road + background) as an experimental option**, then S4/S5. |
+| 7 | 2P split-screen at N× | **Later.** |
+
+The original analysis follows.
+
+
 1. **Look of the road/silhouettes.** Smooth (analytic edges at N×, sub-pixel
    steps) vs exact staircase reproduction (nearest, only more pixels). My
    recommendation: smooth, because it is the only way N× is visibly better than

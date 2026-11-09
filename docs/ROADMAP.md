@@ -110,8 +110,10 @@ thresholds), and find which per-line road state is enough to re-rasterise.
 Design and ground truth: [docs/HIGHRES.md](HIGHRES.md) (task 29). It maps the
 per-line road state, the atlas geometry and palette banks, and the sprite LOD
 tables, then proposes the architecture, the engine seam (patch 0033) and the
-step-by-step plan with per-step acceptance. Owner decisions it needs are listed
-in its §9.
+step-by-step plan with per-step acceptance. The owner decided its §9 questions
+on 2026-11-09 (smooth road edges, integer-N× HUD, always the most detailed
+sprite variant, the engine's "Internal resolution" row as the control, 1×
+default, road + background first as an experimental option, 2P later).
 
 ### NTSC filter and scanlines
 
