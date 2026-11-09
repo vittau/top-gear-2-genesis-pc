@@ -135,9 +135,11 @@ Release payloads contain `BUILD-INFO.txt` with the game and engine revisions
 and `README.txt` with end-user instructions. The `build` run URL identifies the
 exact commit each payload came from.
 
-The artifacts are release candidates until the owner validates on real
-hardware (Steam Deck/SteamOS with a controller, Windows, and both macOS
-architectures). CI proves the Linux glibc floor and a headless boot on all
+The artifacts are release candidates for platforms not yet validated by play
+on real hardware. The owner has played the macOS (Apple Silicon) build;
+Windows, Linux (including Steam Deck/SteamOS with a controller) and macOS on
+Intel are built in CI and pass headless smoke tests but still need validation
+on real devices. CI proves the Linux glibc floor and a headless boot on all
 three platforms; it does not prove audio, input or rendering on a device.
 
 ## End-user instructions (English)
@@ -235,6 +237,8 @@ where the end-user instructions above describe.
 | Widescreen | Off / Adaptive (fit) / 16:9 / 21:9 (32:9 also available) | Adaptive | `[mods.widescreen] enabled`, `aspect` |
 | 60 fps races | Off / On | On | `[mods.race60] enabled` |
 | HUD | Centered / Edges | Centered | `[mods.hud] placement` |
+| Hide overscan | On (crops the empty top/bottom race bands) / Off | On | `[mods.overscan] hidden` |
+| Race sound | Sound effects / Music / Both | Sound effects | `[mods.racesound] mode` |
 
 - **Launcher:** run `TG2Recomp --launcher` to open it even when the ROM is
   already beside the executable (a plain double-click still boots straight
@@ -247,6 +251,10 @@ where the end-user instructions above describe.
   never changes that race's physics.
 - **HUD: Edges** only affects widescreen races; **Centered** is the stock
   centered HUD and has no effect when widescreen is Off.
+- **Race sound** is also available in the game's own *Sound* menu; both change
+  the same setting.
+- **Linear filter** (Graphics) is off by default and avoids edge artifacts at
+  the picture boundary (see [docs/LINEAR_FILTER.md](LINEAR_FILTER.md) in the source repository).
 - `settings.ini` is hand-editable. Delete it to return every option to its
   default. `TG2_RACE_60FPS=0|1` and `TG2_HUD_MODE=centered|edges` are
   probe-only overrides and are never saved.
@@ -263,6 +271,8 @@ onde as instruções para o usuário acima indicam.
 | Widescreen | Desligado / Adaptativo (fit) / 16:9 / 21:9 (32:9 também disponível) | Adaptativo | `[mods.widescreen] enabled`, `aspect` |
 | 60 fps nas corridas | Desligado / Ligado | Ligado | `[mods.race60] enabled` |
 | HUD | Centralizado / Nas bordas | Centralizado | `[mods.hud] placement` |
+| Ocultar overscan | Ligado (corta as faixas vazias em cima/embaixo nas corridas) / Desligado | Ligado | `[mods.overscan] hidden` |
+| Som da corrida | Efeitos sonoros / Música / Ambos | Efeitos sonoros | `[mods.racesound] mode` |
 
 - **Launcher:** execute `TG2Recomp --launcher` para abri-lo mesmo com a ROM já
   ao lado do executável (um duplo clique normal continua indo direto ao jogo).
@@ -275,6 +285,10 @@ onde as instruções para o usuário acima indicam.
   corrida não altera a física daquela corrida.
 - **HUD: Nas bordas** só vale em corridas widescreen; **Centralizado** é o HUD
   original, centralizado, e não tem efeito com widescreen desligado.
+- **Som da corrida** também está no menu *Sound* do próprio jogo; os dois
+  alteram a mesma configuração.
+- **Filtro linear** (Gráficos) vem desligado por padrão e evita artefatos nas
+  bordas da imagem (veja [docs/LINEAR_FILTER.md](LINEAR_FILTER.md) no repositório-fonte).
 - `settings.ini` pode ser editado à mão. Apague o arquivo para voltar todas as
   opções ao padrão. `TG2_RACE_60FPS=0|1` e `TG2_HUD_MODE=centered|edges` são
   apenas para testes automatizados e nunca são salvos.
