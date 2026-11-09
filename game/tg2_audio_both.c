@@ -50,6 +50,9 @@ enum {
 };
 typedef int (*AudioZ80RouteFn)(int access, uint16_t off, uint8_t value);
 void audio_set_z80_route_fn(AudioZ80RouteFn fn);
+/* Which program the first Z80 core runs, for the Music/SFX volume split
+ * (engine/runner/audio/event_queue.h). */
+void audio_set_first_z80_is_sfx(int is_sfx);
 
 /* Work-RAM addresses (see docs/RAM_MAP.md / docs/AUDIO.md). */
 #define RAM_SOUND_MODE   0x240Eu   /* word: 0 = SFX, 1 = MUSIC            */
@@ -133,6 +136,25 @@ static int z80_route(int access, uint16_t off, uint8_t value)
     if (access != AUDIO_Z80_ACCESS_RAM) return 0;
     /* The SFX engine's sample-command ports. */
     return off >= 0x25Eu && off <= 0x261u;
+}
+
+/* ---- Which image is resident on the FIRST Z80 core -----------------------
+ * The first core runs the cartridge's music driver in MUSIC and BOTH, but in
+ * stock SOUND EFFECTS the race init uploads the small SFX PCM image (ROM
+ * $0701F6) over it. That image's writes are sound effects, the driver's are
+ * music, so the volume split needs to know which one is resident. Both images
+ * have a distinct entry stub at $A00000: the driver starts `DI; LD SP,$1FF0`
+ * and the SFX image starts `JP $0410` (docs/AUDIO.md §4), so the resident
+ * image is readable straight from the core's RAM. No guest state is written. */
+static int first_z80_runs_sfx_image(void)
+{
+    const uint8_t *ram = g_machine.bus.z80_ram;
+    return ram[0] == 0xC3u && ram[1] == 0x10u && ram[2] == 0x04u;
+}
+
+static void update_z80_role(void)
+{
+    audio_set_first_z80_is_sfx(first_z80_runs_sfx_image());
 }
 
 /* ---- Value presentation hooks -------------------------------------------
@@ -262,6 +284,7 @@ int tg2_audio_hook(uint32_t pc)
 
     case 0x070188u:                    /* upload routine's RTS */
         s_sfx_upload = 0;
+        update_z80_role();
         return 0;
 
     case 0x0701DAu:                    /* SFX engine writes command $025E */
@@ -551,6 +574,7 @@ void tg2_audio_frame_pre(void)
     audio_set_chip_routing(both_active());
     audio_second_z80_set_enabled(both_active());
     audio_set_z80_route_fn(z80_route);
+    update_z80_role();
 }
 
 /* Guest reset or state load: the cartridge reloads its boot value; the
@@ -564,6 +588,10 @@ void tg2_audio_reset(void)
     audio_set_chip_routing(both_active());
     audio_second_z80_set_enabled(both_active());
     audio_set_z80_route_fn(z80_route);
+    /* A guest reset reboots the cartridge, whose init re-uploads the music
+     * driver; a state load restores the Z80 RAM and the per-frame check
+     * corrects the role on the next frame either way. */
+    audio_set_first_z80_is_sfx(first_z80_runs_sfx_image());
 }
 
 static int race_sound_page_open(void)
