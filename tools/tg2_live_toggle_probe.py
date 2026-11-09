@@ -63,7 +63,9 @@ def expected_band(mode, oid, window):
         # scene starts at the track intro (its own SFX content, no music), while
         # MUSIC and BOTH keep the music driver playing through it.
         if oid == 'musicvol':
-            return {'music': (0.35, 0.65), 'both': (0.35, 0.65)}.get(mode)
+            # BOTH keeps the SFX layer running through the pre-race screens, so
+            # halving the music only moves the total part of the way.
+            return {'music': (0.35, 0.65), 'both': (0.55, 0.90)}.get(mode)
         return (0.35, 0.65) if mode == 'sfx' else None
     if oid == 'musicvol':
         return {'music': (0.35, 0.65), 'both': (0.55, 0.90)}.get(mode)

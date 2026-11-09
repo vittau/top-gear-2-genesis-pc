@@ -1274,16 +1274,19 @@ reference level), and a mid-race **RACE SOUND** switch, which must be
 audio-neutral because its routing layer is adopted at the next race.
 
 Result on the shipped build (3 modes x 2 faders + cold start + mid-race RACE
-SOUND):
+SOUND; "diff" is how much of the 120 s capture differs while the fader is on,
+i.e. its own documented effect):
 
 | Mode | Music volume | SFX volume | Cold start (both 50 %) | RACE SOUND mid-race |
 |---|---|---|---|---|
-| MUSIC | PASS 0.500 | PASS 1.000, 0 s differ | PASS 0.500 | PASS (0 s differ) |
-| SOUND EFFECTS | PASS 1.000 (music spans 0.500) | PASS 0.634 | PASS 0.500 | PASS (0 s differ) |
-| BOTH | PASS 0.781 | PASS 0.907 | PASS 0.500 | PASS (0 s differ) |
+| MUSIC | PASS, menu 0.500, 46 s diff | PASS, 0 s diff | PASS, 0.500 | PASS, 0 s diff |
+| SOUND EFFECTS | PASS, menu 0.500, 25 s diff | PASS, 22 s diff | PASS, 0.500 | PASS, 0 s diff |
+| BOTH | PASS, menu 0.500, pre-race/race 0.73-0.83, 46 s diff | PASS, 42 s diff | PASS, 0.500 | PASS, 0 s diff |
 
-Every run is byte-identical again once the fader is back at stock, and 0 pops
-were added anywhere. The pre-fix build failed this probe: the faders engaged a
+Every run is byte-identical again once the fader is back at stock (including
+both "off" stretches between toggles), and 0 pops were added anywhere. The BOTH
+rows read 0.73-0.83 rather than 0.50 because only the music layer is halved
+while the SFX layer keeps its level - that is the expected partial mix. The pre-fix build failed this probe: the faders engaged a
 second chip mid-stream (a chip that had never received the current voices) and
 the stream did not return to stock; a live Clean FM switch reset the chip and
 silenced a SOUND EFFECTS race (0.29 x the reference = idle DC only). Both
