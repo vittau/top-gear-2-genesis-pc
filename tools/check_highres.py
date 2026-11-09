@@ -25,6 +25,11 @@ Subcommands:
             and require the same framebuffer hash on every sampled frame,
             race frames included. This is the byte-identity gate for S1/S2.
 
+  split     Run the committed two-pad split-screen script at scale 2 with the
+            test provider off and on: the 2P flag must be observed, no picture
+            may grow, and every framebuffer hash must match. 2P is excluded
+            from the N x path by design.
+
 Only read-only TCP queries and controller input are used. All captures stay
 under the ignored build/ directory. Nothing here writes guest state.
 """
@@ -402,6 +407,88 @@ def check_route(args):
     return 0 if not failures else 1
 
 
+def geometry_hashes(out: Path):
+    """framebuffer hash lines with the geometry the runner reported."""
+    found = {}
+    for line in (out / 'stderr.log').read_text(errors='replace').splitlines():
+        if line.startswith('[FBHASH]'):
+            fields = dict(part.split('=', 1) for part in line.split()[1:])
+            found[int(fields['frame'])] = (int(fields['w']), int(fields['h']),
+                                           fields['hash'][2:].upper())
+    return found
+
+
+def check_split(args):
+    """2P split-screen is excluded from the N x path: `race()` fails while
+    `$FF189E != 0`, so the builder must decline. The committed 2P script is
+    frame-exact, so the framebuffer series with and without the test provider
+    must be identical, and no picture may grow."""
+    from tg2_split_screen import build_script
+    out_root = args.out / 'split2p'
+    out_root.mkdir(parents=True, exist_ok=True)
+    script, race_start = build_script(12, 280, [])
+    results, failures = [], []
+    for provider in (False, True):
+        tag = 'split2p-provider' if provider else 'split2p-stock'
+        out = out_root / tag
+        out.mkdir(parents=True, exist_ok=True)
+        path = out / 'split2p.input'
+        path.write_text(script.text())
+        r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+                   widescreen='16:9', max_frames=script.frame + 300,
+                   env_extra={'TG2_HIGHRES_SCALE': '2',
+                              'TG2_HIGHRES_TEST_PROVIDER': '1' if provider else '0'},
+                   extra_args=['--turbo', '--hash-frames', '1',
+                               '--input-script', str(path)],
+                   video_driver='dummy')
+        two_p, last_frame = 0, 0
+        try:
+            r.start()
+            while r.proc.poll() is None:
+                state = r.state_and_frame()
+                last_frame = state.frame
+                if state.two_p:
+                    two_p += 1
+                if state.frame > script.frame:
+                    break
+                import time as _time
+                _time.sleep(0.01)
+        finally:
+            code = r.stop()
+        item = {'tag': tag, 'exit': code, 'two_p_samples': two_p,
+                'race_start_estimate': race_start, 'last_frame': last_frame,
+                'frames': geometry_hashes(out), 'manifests': empty_manifests(out)}
+        results.append(item)
+        print(tag, 'exit', code, 'two_p samples', two_p, 'hash frames', len(item['frames']))
+    stock, test = results
+    if not stock['two_p_samples']:
+        failures.append('never observed $FF189E != 0 (no 2P frame sampled)')
+    heights = {h for (_, h, _) in stock['frames'].values()}
+    widths = {w for (w, _, _) in stock['frames'].values()}
+    if heights - {224, 448}:
+        failures.append(f'2P presented height changed: {sorted(heights)}')
+    if any(w > 398 for w in widths):
+        failures.append(f'2P presented width changed: {sorted(widths)}')
+    common = sorted(set(stock['frames']) & set(test['frames']))
+    differing = [f for f in common if stock['frames'][f] != test['frames'][f]]
+    if not common:
+        failures.append('no 2P framebuffer hashes captured')
+    if differing:
+        failures.append(f'test provider changed {len(differing)}/{len(common)} 2P frames')
+    for item in results:
+        for name, count in item['manifests'].items():
+            if count:
+                failures.append(f"{item['tag']}: manifest {name} has {count} entries")
+    summary = {'check': 'split', 'runs': results, 'widths': sorted(widths),
+               'heights': sorted(heights), 'compared_frames': len(common),
+               'failures': failures, 'ok': not failures}
+    (out_root / 'split-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps({'ok': not failures, 'failures': failures,
+                      'widths': sorted(widths), 'heights': sorted(heights),
+                      'compared': len(common)}, indent=1))
+    return 0 if not failures else 1
+
+
 def check_s2(args):
     plan = [
         ('off', 1, False, 'off-scale1'),
@@ -506,7 +593,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's2', 'route'):
+    for name in ('g1', 'capture', 's2', 'route', 'split'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
@@ -532,7 +619,7 @@ def main():
         if not getattr(args, name).exists():
             p.error(f'--{name} not found: {getattr(args, name)}')
     return {'g1': check_g1, 'capture': check_capture, 's2': check_s2,
-            'route': check_route}[args.check](args)
+            'route': check_route, 'split': check_split}[args.check](args)
 
 
 if __name__ == '__main__':

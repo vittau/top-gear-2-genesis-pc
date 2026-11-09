@@ -1040,6 +1040,7 @@ audio, one runtime instance at a time; the only windowed run is the last row.
 | S1 capture vs live rows | `python3 tools/check_highres.py capture` | 3 pictures, 203 fresh rows each, 0 mismatches; 51–74 road rows; 34–42 µs/picture, 168–209 ns/row (two sessions) |
 | S1/S2 byte identity across a race | `python3 tools/check_highres.py route` | scale 1 vs scale 2 (builder stub): identical framebuffer hash on every sampled frame of the 5600-frame baseline route, `off` and `16:9`, manifests empty |
 | S2 test picture, `off` / `16:9` | `python3 tools/check_highres.py s2` | 256×400 and 712×400 (1× is 256×200 / 356×200); scale 2 with no builder is pixel-identical to 1×; menus keep the stock canvas and are byte-identical (title digest; 320×224 off, 398×224 in 16:9) and the password screen stays 256×224 |
+| S2 2P split-screen stays native | `python3 tools/check_highres.py split` | `$FF189E != 0` on 3,185 sampled frames; geometry 224 lines × 398 wide throughout; all 7,901 framebuffer hashes identical with the test provider off and on; manifests empty |
 | S2 windowed | `python3 tools/check_highres.py s2 --windowed --only 169-scale2-test` | cocoa window presents the 2× picture; captured, then closed |
 | G3 stock widescreen | `python3 tools/verify_widescreen.py` | passes in off / 16:9 / 21:9 at scale 1 |
 

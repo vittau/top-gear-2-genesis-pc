@@ -1013,6 +1013,7 @@ the latest picture, which is exactly the set the live `rows[]` was written for.
 | **S2** test picture, `16:9` | 712 × 400 (1×: 356 × 200), same pattern checks |
 | **S2** menus with the provider on | stock canvas and height, and byte-identical to stock (title digest equal): off 320 × 224, 16:9 398 × 224, password screen 256 × 224 |
 | **S2** one windowed run | cocoa window presents the 2× picture; captured and closed |
+| **S2** 2P split-screen (frame-exact two-pad script, scale 2, provider on vs off) | `$FF189E != 0` sampled on 3,185 frames; presented geometry stays 224 lines × 398 wide (the 16:9 canvas, 4:3 picture); **all 7,901 framebuffer hashes identical** with the provider off and on |
 
 ### 12.4 Evidence
 
@@ -1026,6 +1027,7 @@ Private, as the repo rules require (regenerate with the commands in §12.5):
 | `build/highres-check/s2/s2-summary.json` | the six headless S2 runs: PNG sizes, pixel digests, pattern facts |
 | `build/highres-check/s2/*-race.png`, `*-title.png` | the pictures themselves |
 | `build/highres-check/route/route-summary.json` | the baseline-route identity runs: hash series per scale and mode |
+| `build/highres-check/split2p/split-summary.json` | the 2P runs: sampled `$FF189E`, geometry, hash comparison |
 | `build/ws/` | `tools/verify_widescreen.py` evidence at scale 1 |
 
 ### 12.5 Reproduction
@@ -1037,6 +1039,7 @@ python3 tools/check_highres.py g1                 # G1/G2 + 60 fps hashes
 python3 tools/check_highres.py capture            # S1 capture vs live rows + cost
 python3 tools/check_highres.py s2                 # S2 headless screenshots
 python3 tools/check_highres.py route              # byte identity across a race
+python3 tools/check_highres.py split              # 2P frames stay native
 python3 tools/check_highres.py s2 --windowed --only 169-scale2-test   # windowed
 python3 tools/verify_widescreen.py                # G3 stock 1x comparisons
 ```
@@ -1048,12 +1051,12 @@ the single `--windowed` check; one runtime instance at a time.
 
 - **No real N× picture yet.** The seam is proven with the synthetic provider
   only. S3's road/background builder, its cost and its look are untouched.
-- **2P split-screen** is declined by construction (`last_frame_race` is false
-  for any picture where `race()` fails, which includes `$FF189E != 0`), and
-  **interlaced** pictures are declined by the `native_h == 224` guard plus the
-  interlace-aware halves. This game has no reachable interlaced picture here,
-  so only the guard is exercised (menus stay native); a 2P race at N× was not
-  driven.
+- **2P split-screen** is verified to stay native (§12.3), but only as an
+  exclusion: N× per viewport is not implemented and was not attempted.
+- **Interlaced** pictures are declined by the `native_h == 224` guard plus the
+  interlace-aware halves. This game presents no interlaced picture here, so
+  that guard is exercised only by the 448-line path being unreachable (the 2P
+  race itself is H32 non-interlaced and is excluded by `$FF189E`).
 - **Cost of the capture on Ryzen 3500U / Steam Deck** is not measured. The
   figure above is this Mac; §6.3's ≈3× scaling would put it near 0.13 ms.
 - **The 4096 px canvas clamp at N×** is reasoned (§5.2) but not exercised: the
