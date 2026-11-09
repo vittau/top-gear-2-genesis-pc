@@ -61,3 +61,5 @@ commit; local fixes remain visible as its applied working-tree diff.
 - `0025-linear-filter-picture-bounds.patch`: linear presentation uses an exactly-sized picture texture, preserving nearest output and the saved/default Off preference; opt-in SDL-output captures verify scaled edges.
 
 - `0026-preserve-macos-bundle-icon.patch`: on macOS keep the bundle ICNS for Dock/Cmd+Tab instead of assigning the embedded 32px SDL window icon; the host passes no launcher icon override.
+
+- `0027-menu-esc-only-f1-loads-slot1.patch`: open the runtime menu on Esc only (gamepad Back+RB unchanged) so plain F1 reaches the engine's slot 1 load and Shift+F1 saves slot 1, with the state notices and menu-dismiss latch unchanged.
