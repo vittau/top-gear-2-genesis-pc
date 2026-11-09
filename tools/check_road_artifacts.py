@@ -63,12 +63,128 @@ def strip(out, audit, start):
     return str(target)
 
 
+# ── N x mode (docs/HIGHRES.md §8 S3) ──────────────────────────────────────
+# The S3 builder writes one frame-NNNNNN.nxroad per presented picture: the
+# native-row-granular road geometry it actually drew, measured back from the
+# built picture, next to the two authored neighbours it interpolated between.
+NX_MAGIC = b'TG2NXR01'
+NX_DTYPE = np.dtype([
+    ('line', '<u4'), ('py_src', '<u4'), ('py_next', '<u4'),
+    ('centre_src', '<i4'), ('centre_next', '<i4'),
+    ('left_src', '<i4'), ('right_src', '<i4'),
+    ('left_next', '<i4'), ('right_next', '<i4'),
+    ('el_x256', '<i4'), ('er_x256', '<i4'),
+    ('measured_left', '<i4'), ('measured_right', '<i4'),
+    ('stripes', '<u4'), ('stripes_src', '<u4'), ('flags', '<u4'),
+])
+NX_ROAD, NX_INTERPOLATED = 1, 2
+
+
+def load_nx(path):
+    data = path.read_bytes()
+    if data[:8] != NX_MAGIC:
+        raise ValueError(f'invalid N x road capture: {path}')
+    header = struct.unpack_from('<7I', data, 8)
+    rows = np.frombuffer(data, dtype=NX_DTYPE, offset=8 + 28)
+    if len(rows) != header[6]:
+        raise ValueError(f'incomplete N x road capture: {path}')
+    return dict(frame=header[1], scale=header[2], stride=header[3],
+                w1=header[4], native_w=header[5], height=header[6]), rows
+
+
+def main_nx(a):
+    audit = a.capture / 'audit'
+    paths = sorted(audit.glob('frame-*.nxroad'))
+    if not paths:
+        a.capture.joinpath('audit').mkdir(parents=True, exist_ok=True)
+        p.error('no N x road audit files; run with TG2_ROAD_AUDIT_DIR')
+    totals = dict(mode='nx', frames=0, scales=[], tested_rows=0,
+                  envelope_violations=0, max_envelope_violation_px=0.0,
+                  geometry_violations=0, max_geometry_error_px=0.0,
+                  gap_violations=0, stripe_violations=0,
+                  max_stripe_violation=0, continuity_violations=0,
+                  max_left_step_px=0, max_right_step_px=0, examples=[])
+    for path in paths:
+        h, rows = load_nx(path)
+        totals['frames'] += 1
+        if h['scale'] not in totals['scales']:
+            totals['scales'].append(h['scale'])
+        road = rows['flags'] & NX_ROAD != 0
+        totals['tested_rows'] += int(road.sum())
+        el = rows['el_x256'] / 256.0
+        er = rows['er_x256'] / 256.0
+        interp = rows['flags'] & NX_INTERPOLATED != 0
+        env_l = np.minimum(rows['left_src'], np.where(interp, rows['left_next'], 1 << 20))
+        env_r = np.maximum(rows['right_src'], np.where(interp, rows['right_next'], -(1 << 20)))
+        envelope = np.maximum.reduce([env_l - 1.0 - el, el - (env_r + 1.0),
+                                      env_l - 1.0 - er, er - (env_r + 1.0),
+                                      np.zeros_like(el)])
+        envelope = np.where(road, envelope, 0.0)
+        totals['envelope_violations'] += int((envelope > 0).sum())
+        if road.any():
+            totals['max_envelope_violation_px'] = max(
+                totals['max_envelope_violation_px'], float(envelope.max()))
+        width = er - el
+        gaps = road & (width < 2.0)
+        totals['gap_violations'] += int(gaps.sum())
+        geometry = np.maximum(np.abs(rows['measured_left'] - el),
+                              np.abs(rows['measured_right'] - er))
+        geometry = np.where(road, geometry, 0.0)
+        totals['geometry_violations'] += int((geometry > 1.5).sum())
+        if road.any():
+            totals['max_geometry_error_px'] = max(totals['max_geometry_error_px'],
+                                                  float(geometry.max()))
+        stripe_error = np.abs(rows['stripes'].astype(int) - rows['stripes_src'].astype(int))
+        totals['stripe_violations'] += int(((stripe_error > 0) & road).sum())
+        if road.any():
+            totals['max_stripe_violation'] = max(totals['max_stripe_violation'],
+                                                 int(stripe_error[road].max()))
+        left = np.where(road, rows['measured_left'], np.nan)
+        right = np.where(road, rows['measured_right'], np.nan)
+        dleft = np.abs(np.diff(left))
+        dright = np.abs(np.diff(right))
+        bad = np.zeros(len(rows), dtype=bool)
+        if len(rows) > 1:
+            bad[1:] = ((dleft > 4) & ~np.isnan(dleft)) | ((dright > 4) & ~np.isnan(dright))
+            bad[1:] |= np.nan_to_num(np.diff(width)) > 8
+        totals['continuity_violations'] += int((bad & road).sum())
+        if np.isfinite(dleft).any():
+            totals['max_left_step_px'] = max(totals['max_left_step_px'],
+                                             int(np.nanmax(dleft)))
+            totals['max_right_step_px'] = max(totals['max_right_step_px'],
+                                              int(np.nanmax(dright)))
+        flagged = (envelope > 0) | gaps | (geometry > 1.5) | ((stripe_error > 0) & road)
+        for line in np.flatnonzero(flagged)[:3]:
+            if len(totals['examples']) < 12:
+                totals['examples'].append(dict(
+                    frame=int(h['frame']) + 1, line=int(rows['line'][line]),
+                    py=int(rows['py_src'][line]), edges=[float(el[line]), float(er[line])],
+                    envelope=[float(env_l[line] - 1), float(env_r[line] + 1)],
+                    measured=[int(rows['measured_left'][line]), int(rows['measured_right'][line])],
+                    stripes=[int(rows['stripes'][line]), int(rows['stripes_src'][line])]))
+    violations = ['envelope_violations', 'geometry_violations', 'gap_violations',
+                  'stripe_violations', 'continuity_violations']
+    totals['passed'] = (totals['frames'] >= a.min_frames and
+                        totals['tested_rows'] > 0 and
+                        not any(totals[k] for k in violations))
+    target = a.out or (a.capture / 'road-artifacts-nx.json')
+    target.write_text(json.dumps(totals, indent=2) + '\n')
+    print(json.dumps(totals, indent=2))
+    raise SystemExit(0 if totals['passed'] else 1)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('capture', type=Path, help='probe output with audit/ and screenshots')
     p.add_argument('--out', type=Path)
     p.add_argument('--strip-start', type=int, action='append', default=[])
+    p.add_argument('--nx', action='store_true',
+                   help='check the S3 N x road records instead of the 60 fps strips')
+    p.add_argument('--min-frames', type=int, default=3000,
+                   help='N x mode: minimum presented pictures the audit must cover')
     a = p.parse_args()
+    if a.nx:
+        return main_nx(a)
     audit = a.capture / 'audit'
     paths = sorted(audit.glob('frame-*.road'))
     if not paths:

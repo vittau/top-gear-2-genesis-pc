@@ -39,6 +39,7 @@ import argparse
 import hashlib
 import json
 import struct
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -489,102 +490,407 @@ def check_split(args):
     return 0 if not failures else 1
 
 
-def check_s2(args):
-    plan = [
-        ('off', 1, False, 'off-scale1'),
-        ('off', 2, False, 'off-scale2-stub'),
-        ('off', 2, True, 'off-scale2-test'),
-        ('16:9', 1, False, '169-scale1'),
-        ('16:9', 2, False, '169-scale2-stub'),
-        ('16:9', 2, True, '169-scale2-test'),
-    ]
-    if args.only:
-        wanted = set(args.only.split(','))
-        plan = [p for p in plan if p[3] in wanted]
-    results, failures = [], []
-    for mode, scale, provider, tag in plan:
-        out = args.out / tag
-        out.mkdir(parents=True, exist_ok=True)
-        extra = {'TG2_HIGHRES_SCALE': str(scale),
-                 'TG2_HIGHRES_TEST_PROVIDER': '1' if provider else '0'}
-        r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
-                   widescreen=mode, max_frames=200000, env_extra=extra,
-                   extra_args=['--turbo'],
-                   video_driver='cocoa' if args.windowed else 'dummy')
+SHOTS = (3400, 3500, 3600, 4501)
+
+
+def route_script_shots(route_path: Path, path: Path, end_frame: int, shots):
+    """Frame-exact route script with SCREENSHOT directives at exact frames."""
+    names = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'B', 'C', 'A', 'START']
+    actions = {}
+    for action in json.loads(route_path.read_text()):
+        if 'keys' not in action:
+            continue
+        bits = int(action['keys'], 16)
+        lines = ['RELEASE'] + ['HOLD ' + name for bit, name in enumerate(names) if bits & (1 << bit)]
+        actions.setdefault(int(action['frame']), []).extend(lines)
+    for frame in shots:
+        actions.setdefault(int(frame), []).append(f'SCREENSHOT {path.parent}/frame-{frame}.png')
+    lines, previous = [], 1
+    for frame in sorted(actions):
+        if frame > previous:
+            lines.append(f'WAIT {frame - previous}')
+        lines.extend(actions[frame])
+        previous = frame
+    if end_frame > previous:
+        lines.append(f'WAIT {end_frame - previous}')
+    lines.append('EXIT 0')
+    path.write_text('\n'.join(lines) + '\n')
+    return path
+
+
+def run_route_scale(args, mode, scale, tag, out_root, shots, audit=False, margin=False,
+                    end_frame=None):
+    out = out_root / tag
+    out.mkdir(parents=True, exist_ok=True)
+    end = end_frame or args.end_frame
+    script = route_script_shots(args.route, out / 'route.input', end, shots)
+    env = {'TG2_HIGHRES_SCALE': str(scale), 'TG2_RACE_60FPS': '0'}
+    if audit:
+        (out / 'audit').mkdir(exist_ok=True)
+        env['TG2_ROAD_AUDIT_DIR'] = str((out / 'audit').resolve())
+    if margin:
+        env['TG2_MARGIN_AUDIT'] = str((out / 'margins.csv').resolve())
+    r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+               widescreen=mode, max_frames=end + 1, env_extra=env,
+               extra_args=['--turbo', '--input-script', str(script)])
+    try:
         r.start()
-        item = {'tag': tag, 'mode': mode, 'scale': scale, 'provider': provider}
-        try:
-            title = r.screenshot(f'{tag}-title.png')
-            tw, th, _, _, title_digest = png_pixels(Path(title))
-            item['title'] = [tw, th]
-            item['title_digest'] = title_digest
-            # No input after the race starts: the start picture is then a
-            # function of the race state alone, not of when a TCP input
-            # landed. Byte identity across scales is checked by `route`.
-            state = enter_race(r, args.port, out)
-            r.wait_frame(state.frame + 300)
-            shot = r.screenshot(f'{tag}-race.png')
-            w, h, channels, pixels, digest = png_pixels(Path(shot))
-            item.update({'race': [w, h], 'pixel_digest': digest, 'shot': str(shot)})
-            if provider:
-                item['pattern'] = pattern_report(pixels, w, h, channels)
-        finally:
-            item['exit'] = r.stop()
-        item['manifests'] = empty_manifests(out)
-        item['hashes'] = hashes(out)
+        wait_exit(r, timeout=1800)
+    finally:
+        code = r.stop()
+    item = {'tag': tag, 'mode': mode, 'scale': scale, 'exit': code,
+            'manifests': empty_manifests(out), 'out': str(out)}
+    return item
+
+
+def downsample(pixels, w, h, channels, n):
+    """Box-downsample an RGB picture by an integer factor."""
+    out = bytearray()
+    for y in range(0, h, n):
+        for x in range(0, w, n):
+            acc = [0, 0, 0]
+            for dy in range(n):
+                base = ((y + dy) * w + x) * channels
+                for dx in range(n):
+                    off = base + dx * channels
+                    acc[0] += pixels[off]
+                    acc[1] += pixels[off + 1]
+                    acc[2] += pixels[off + 2]
+            count = n * n
+            out.extend(v // count for v in acc)
+    return bytes(out)
+
+
+def compare_downscaled(reference, candidate):
+    """Structural comparison of two RGB pictures of the same size."""
+    if len(reference) != len(candidate):
+        return None
+    total = len(reference) // 3
+    mean = 0
+    big = edge = worst = 0
+    for i in range(0, len(reference), 3):
+        d = max(abs(reference[i] - candidate[i]),
+                abs(reference[i + 1] - candidate[i + 1]),
+                abs(reference[i + 2] - candidate[i + 2]))
+        mean += d
+        if d > worst:
+            worst = d
+        if d > 64:
+            big += 1
+        elif d > 16:
+            edge += 1
+    return {'pixels': total, 'mean_abs_diff': round(mean / total, 3),
+            'max_diff': worst, 'big_diff_pixels': big,
+            'edge_diff_pixels': edge,
+            'big_diff_ratio': round(big / total, 5),
+            'edge_diff_ratio': round(edge / total, 5)}
+
+
+def check_s3(args):
+    """S3: real N x pictures on the deterministic route, byte-compared with the
+    1x reference after a box downsample. Road edges may differ by antialiasing;
+    a fan, gap or torn row breaks the structural budget."""
+    out_root = args.out / 's3'
+    out_root.mkdir(parents=True, exist_ok=True)
+    scales = [int(x) for x in args.scales.split(',') if x.strip()]
+    shots = tuple(args.shots)
+    results, failures = [], []
+    for scale in scales:
+        tag = f'{args.mode.replace(":", "-")}-scale{scale}'
+        item = run_route_scale(args, args.mode, scale, tag, out_root, shots)
         results.append(item)
-        print(tag, item.get('title'), item.get('race'), item.get('exit'))
-    by_mode = {}
-    for item in results:
-        by_mode.setdefault(item['mode'], []).append(item)
+        print(tag, 'exit', item['exit'])
         for name, count in item['manifests'].items():
             if count:
-                failures.append(f"{item['tag']}: manifest {name} has {count} entries")
+                failures.append(f"{tag}: manifest {name} has {count} entries")
         if item['exit'] != 0:
-            failures.append(f"{item['tag']}: exit {item['exit']}")
-    for mode, items in by_mode.items():
-        reference = next((i for i in items if i['scale'] == 1 and not i['provider']), None)
-        stub = next((i for i in items if i['scale'] > 1 and not i['provider']), None)
-        test = next((i for i in items if i['provider']), None)
-        # Menus keep the stock picture and the stock canvas: the 16:9 boot
-        # canvas is 398 wide, and it must not grow with the test provider.
-        # Compared on the title screenshot, because absolute-frame hashes of
-        # menus depend on when the password-screen taps landed.
-        for item in items:
-            if reference and item['title'] != reference['title']:
-                failures.append(f"{item['tag']}: menu canvas {item['title']} != stock {reference['title']}")
-            if reference and item.get('title_digest') != reference.get('title_digest'):
-                failures.append(f"{item['tag']}: title picture differs from stock")
-        if reference and reference['title'] != [320, 224] and mode == 'off':
-            failures.append(f"{reference['tag']}: menu picture {reference['title']} is not native 320x224")
-        if reference and stub:
-            # Byte identity at scale > 1 with the builder stub is proven by the
-            # deterministic route check; here only the presented size matters,
-            # and the race picture must not have become the synthetic pattern.
-            if stub['race'] != reference['race']:
-                failures.append(f"{mode}: scale {stub['scale']} picture size {stub['race']} != {reference['race']}")
-            expected = reference['race']
-            if test:
-                want_h = expected[1] * 2
-                want_w = expected[0] * 2 if mode != 'off' else expected[0]
-                if test['race'] != [want_w, want_h]:
-                    failures.append(f"{mode}: test provider picture {test['race']} != {[want_w, want_h]}")
-                if test['pixel_digest'] == reference['pixel_digest']:
-                    failures.append(f"{mode}: test provider picture is identical to 1x")
-                race_frames = [f for f in sorted(set(test['hashes']) & set(reference['hashes']))
-                               if f >= 8300]
-                if race_frames and all(test['hashes'][f] == reference['hashes'][f] for f in race_frames):
-                    failures.append(f"{mode}: test provider never changed a race frame")
-                pattern = test.get('pattern') or {}
-                if pattern.get('left_edge') != (255, 0, 255) or pattern.get('right_edge') != (255, 0, 255):
-                    failures.append(f"{mode}: test pattern edge markers missing {pattern.get('left_edge')}")
-                if not pattern.get('ruler_rows'):
-                    failures.append(f"{mode}: test pattern row rulers missing")
-                if pattern.get('distinct_rows', 0) < pattern.get('sampled_rows', 1):
-                    failures.append(f"{mode}: test pattern has repeated rows")
-    summary = {'check': 's2', 'windowed': args.windowed, 'runs': results,
+            failures.append(f"{tag}: exit {item['exit']}")
+    reference = results[0]
+    for item in results[1:]:
+        n = item['scale']
+        for frame in shots:
+            ref_path = Path(reference['out']) / f'frame-{frame}.png'
+            cand_path = Path(item['out']) / f'frame-{frame}.png'
+            if not ref_path.exists() or not cand_path.exists():
+                failures.append(f"{item['tag']}: missing frame {frame} screenshot")
+                continue
+            rw, rh, rc, rpix, _ = png_pixels(ref_path)
+            cw, ch, cc, cpix, _ = png_pixels(cand_path)
+            if (cw, ch) != (rw * n, rh * n):
+                failures.append(f"{item['tag']}: frame {frame} is {cw}x{ch}, "
+                                f"expected {rw * n}x{rh * n}")
+                continue
+            small = downsample(cpix, cw, ch, cc, n)
+            metrics = compare_downscaled(rpix, small)
+            item.setdefault('downscale', {})[frame] = metrics
+            if not metrics:
+                failures.append(f"{item['tag']}: frame {frame} size mismatch")
+                continue
+            if metrics['mean_abs_diff'] > args.max_mean_diff:
+                failures.append(f"{item['tag']}: frame {frame} mean diff "
+                                f"{metrics['mean_abs_diff']} > {args.max_mean_diff}")
+            if metrics['big_diff_ratio'] > args.max_big_ratio:
+                failures.append(f"{item['tag']}: frame {frame} big-diff ratio "
+                                f"{metrics['big_diff_ratio']} > {args.max_big_ratio}")
+    summary = {'check': 's3', 'mode': args.mode, 'end_frame': args.end_frame,
+               'shots': list(shots), 'runs': results,
                'failures': failures, 'ok': not failures}
-    (args.out / 's2-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    (out_root / 's3-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps({'ok': not failures, 'failures': failures,
+                      'downscale': {i['tag']: i.get('downscale') for i in results[1:]}},
+                     indent=1))
+    return 0 if not failures else 1
+
+
+TRACKS = {
+    'auckland': dict(country=0, stage=0, note='straight, curve and hill frames; the tunnel is here'),
+    'bavaria-rain': dict(country=20, stage=0, note='rain from the start (docs/PASSWORDS.md)'),
+    'new-york-snow': dict(country=62, stage=0, note='snow at slot 3; the entry race is dry but the atlas/weather path is exercised'),
+}
+
+
+def enter_race_password(r, port, out, country, stage):
+    args = SimpleNamespace(country=country, stage=stage, mode='off', port=port,
+                           out=out, kp=1.0, kd=4.0, kc=0.0, deadband=9.0,
+                           target_lat=0.0, nitro=False, nitro_at=10 ** 9,
+                           nitro_for=0, shot_every=600)
+    coverage = Coverage(r, args)
+    coverage.ui.to_password_screen()
+    coverage.ui.type_symbols(tg2_password.encode(country=country, stage=stage)['symbols'])
+    coverage.ui.submit()
+    state = coverage.press_until_race()
+    if state is None:
+        raise RuntimeError('never reached a race')
+    return state
+
+
+def settings_write(settings: Path, key: str, value: int):
+    """Set one key in settings.ini, preserving everything else."""
+    lines = settings.read_text().splitlines() if settings.exists() else []
+    out, done = [], False
+    for line in lines:
+        if line.strip().startswith(key) and '=' in line:
+            out.append(f'{key} = {value}')
+            done = True
+        else:
+            out.append(line)
+    if not done:
+        out.insert(0, f'{key} = {value}')
+    settings.write_text('\n'.join(out) + '\n')
+
+
+def settings_read(settings: Path, key: str):
+    if not settings.exists():
+        return None
+    for line in settings.read_text().splitlines():
+        line = line.strip()
+        if line.startswith(key) and '=' in line:
+            try:
+                return int(line.split('=', 1)[1].strip())
+            except ValueError:
+                return None
+    return None
+
+
+def check_option(args):
+    """The experimental render scale round-trips through settings.ini and the
+    in-game (Esc) menu, and 1x stays a no-op."""
+    out_root = args.out / 'option'
+    out_root.mkdir(parents=True, exist_ok=True)
+    settings = args.exe.parent / 'settings.ini'
+    backup = settings.read_text() if settings.exists() else None
+    results, failures = [], []
+    try:
+        for value, expect in [(1, 1), (2, 2), (3, 3), (4, 4), (8, 1)]:
+            settings_write(settings, 'internal_scale', value)
+            out = out_root / f'settings-{value}'
+            out.mkdir(parents=True, exist_ok=True)
+            r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+                       widescreen='off', max_frames=90,
+                       env_extra={'TG2_RACE_60FPS': '0'}, extra_args=['--turbo'])
+            try:
+                r.start()
+                data = r.command('tg2_video')
+                got = data.get('highres_scale')
+                r.wait_frame(60)
+            finally:
+                code = r.stop()
+            item = {'settings_value': value, 'expected_scale': expect,
+                    'reported_scale': got, 'exit': code,
+                    'manifests': empty_manifests(out)}
+            results.append(item)
+            print(f'internal_scale={value} -> render scale {got} (expect {expect})')
+            if got != expect:
+                failures.append(f'settings {value}: reported scale {got}, expected {expect}')
+            if code != 0:
+                failures.append(f'settings {value}: exit {code}')
+        # In-game (Esc) menu: find the row, change it, read settings.ini back.
+        settings_write(settings, 'internal_scale', 1)
+        out = out_root / 'esc-menu'
+        out.mkdir(parents=True, exist_ok=True)
+        r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+                   widescreen='off', max_frames=1200,
+                   env_extra={'TG2_RACE_60FPS': '0'}, extra_args=['--turbo'])
+        menu = {}
+        try:
+            r.start()
+            r.wait_frame(120)
+            r.command('ui_open')
+            rows = r.command('ui_rows')['rows']
+            index = next(i for i, row in enumerate(rows)
+                         if 'Internal resolution' in row['label'])
+            menu['row_index'] = index
+            menu['labels'] = []
+            menu['before'] = rows[index]['value']
+            for _ in range(index):
+                for edge in ('down', 'up-unused'):
+                    if edge == 'down':
+                        r.command('key', name='down', down=1)
+                        r.command('key', name='down', down=0)
+            r.command('key', name='right', down=1)
+            r.command('key', name='right', down=0)
+            rows = r.command('ui_rows')['rows']
+            menu['after'] = rows[index]['value']
+            # Walk the whole choice list once to record the labels.
+            for _ in range(4):
+                r.command('key', name='right', down=1)
+                r.command('key', name='right', down=0)
+                rows = r.command('ui_rows')['rows']
+                label = rows[index]['value']
+                if label not in menu['labels']:
+                    menu['labels'].append(label)
+            r.command('key', name='escape', down=1)
+            r.command('key', name='escape', down=0)
+            r.wait_frame(r.frame() + 30)
+        finally:
+            menu['exit'] = r.stop()
+        menu['settings_after'] = settings_read(settings, 'internal_scale')
+        results.append({'tag': 'esc-menu', **menu})
+        print('esc menu', menu)
+        if '4x' not in menu['labels']:
+            failures.append(f"menu choices do not reach 4x: {menu['labels']}")
+        if menu['before'] == menu['after']:
+            failures.append('menu right did not change the value')
+        if menu['settings_after'] == 1:
+            failures.append('menu change was not written to settings.ini')
+    finally:
+        if backup is None:
+            if settings.exists():
+                settings.unlink()
+        else:
+            settings.write_text(backup)
+    summary = {'check': 'option', 'runs': results, 'failures': failures,
+               'ok': not failures}
+    (out_root / 'option-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps({'ok': not failures, 'failures': failures}, indent=1))
+    return 0 if not failures else 1
+
+
+def check_captures(args):
+    """S3 captures: real N x race pictures on several tracks and scales."""
+    out_root = args.out / 'captures'
+    out_root.mkdir(parents=True, exist_ok=True)
+    plan = []
+    for spec in args.plan.split(';'):
+        track, scales = spec.split(':')
+        for scale in [int(x) for x in scales.split(',')]:
+            plan.append((track, scale))
+    results, failures = [], []
+    for track, scale in plan:
+        info = TRACKS[track]
+        tag = f'{track}-scale{scale}'
+        out = out_root / tag
+        out.mkdir(parents=True, exist_ok=True)
+        env = {'TG2_HIGHRES_SCALE': str(scale), 'TG2_RACE_60FPS': '0',
+               'TG2_HIGHRES_TIMING': '1'}
+        r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+                   widescreen=args.mode, max_frames=200000, env_extra=env,
+                   extra_args=['--turbo'], timeout=120)
+        shots, item = [], {'tag': tag, 'track': track, 'scale': scale,
+                           'country': info['country'], 'note': info['note']}
+        r.start()
+        try:
+            state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            r.set_input(0x10)
+            for offset in args.offsets:
+                r.wait_frame(state.frame + offset)
+                path = r.screenshot(f'{tag}-{offset}.png')
+                w, h, channels, pixels, digest = png_pixels(Path(path))
+                shots.append({'frame_offset': offset, 'path': str(path),
+                              'size': [w, h], 'digest': digest})
+            video = r.command('tg2_video')
+            item['video'] = {k: video.get(k) for k in
+                             ('highres_scale', 'highres_present_scale',
+                              'highres_capture_us', 'highres_build_us',
+                              'highres_build_frames', 'crop', 'crop_frames')}
+            r.set_input(0)
+        finally:
+            item['exit'] = r.stop()
+        item.update({'shots': shots, 'manifests': empty_manifests(out)})
+        results.append(item)
+        print(tag, item['exit'], [s['size'] for s in shots], item['video'])
+        for name, count in item['manifests'].items():
+            if count:
+                failures.append(f"{tag}: manifest {name} has {count} entries")
+        if item['exit'] != 0:
+            failures.append(f"{tag}: exit {item['exit']}")
+        expect_w = None
+        for shot in shots:
+            w, h = shot['size']
+            if h % 200 and h % 224:
+                failures.append(f"{tag}: unexpected height {h}")
+            if scale > 1 and h <= 224:
+                failures.append(f"{tag}: scale {scale} picture is only {h} rows")
+    summary = {'check': 'captures', 'mode': args.mode, 'offsets': args.offsets,
+               'plan': args.plan, 'runs': results, 'failures': failures,
+               'ok': not failures}
+    (out_root / 'captures-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps({'ok': not failures, 'failures': failures}, indent=1))
+    return 0 if not failures else 1
+
+
+def check_nx(args):
+    """S3 audit: run the route with the N x road records and the margin audit,
+    then check both."""
+    sys.path.insert(0, str(ROOT / 'tools'))
+    out_root = args.out / 'nx'
+    out_root.mkdir(parents=True, exist_ok=True)
+    results, failures = [], []
+    for scale in [int(x) for x in args.scales.split(',') if x.strip()]:
+        tag = f'{args.mode.replace(":", "-")}-scale{scale}'
+        item = run_route_scale(args, args.mode, scale, tag, out_root, (),
+                               audit=True, margin=args.margin)
+        results.append(item)
+        print(tag, 'exit', item['exit'], 'audit files',
+              len(list((Path(item['out']) / 'audit').glob('*.nxroad'))))
+        for name, count in item['manifests'].items():
+            if count:
+                failures.append(f"{tag}: manifest {name} has {count} entries")
+        if item['exit'] != 0:
+            failures.append(f"{tag}: exit {item['exit']}")
+    for item in results:
+        out = Path(item['out'])
+        report = out / 'road-artifacts-nx.json'
+        cmd = [sys.executable, str(ROOT / 'tools' / 'check_road_artifacts.py'),
+               str(out), '--nx', '--out', str(report),
+               '--min-frames', str(args.min_frames)]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        item['road_artifacts'] = json.loads(report.read_text()) if report.exists() else None
+        print(item['tag'], 'road artifacts exit', proc.returncode)
+        if proc.returncode != 0:
+            failures.append(f"{item['tag']}: road artefacts failed: {proc.stdout[-400:]}")
+        if args.margin:
+            audit_csv = out / 'margins.csv'
+            cmd = [sys.executable, str(ROOT / 'tools' / 'check_margin_artifacts.py'),
+                   str(audit_csv)]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            item['margins'] = {'exit': proc.returncode, 'stdout': proc.stdout[-2000:]}
+            print(item['tag'], 'margin audit exit', proc.returncode)
+            if proc.returncode != 0:
+                failures.append(f"{item['tag']}: margin audit failed: {proc.stdout[-400:]}")
+    summary = {'check': 'nx', 'mode': args.mode, 'end_frame': args.end_frame,
+               'runs': results, 'failures': failures, 'ok': not failures}
+    (out_root / 'nx-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps({'ok': not failures, 'failures': failures}, indent=1))
     return 0 if not failures else 1
 
@@ -593,7 +899,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's2', 'route', 'split'):
+    for name in ('g1', 'capture', 's3', 'nx', 'captures', 'option', 'route', 'split'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
@@ -607,10 +913,25 @@ def main():
     s = sub.choices['route']
     s.add_argument('--end-frame', type=int, default=5600)
     s.add_argument('--route', type=Path, default=ROOT / 'game/baseline-route.json')
-    s = sub.choices['s2']
-    s.add_argument('--windowed', action='store_true',
-                   help='one real-window run (cocoa driver) instead of the dummy driver')
-    s.add_argument('--only', default='', help='comma list of run tags (see the plan)')
+    s = sub.choices['s3']
+    s.add_argument('--route', type=Path, default=ROOT / 'game/baseline-route.json')
+    s.add_argument('--mode', default='16:9')
+    s.add_argument('--scales', default='1,2,3,4')
+    s.add_argument('--shots', type=int, nargs='+', default=list(SHOTS))
+    s.add_argument('--end-frame', type=int, default=4700)
+    s.add_argument('--max-mean-diff', type=float, default=2.5)
+    s.add_argument('--max-big-ratio', type=float, default=0.02)
+    s = sub.choices['captures']
+    s.add_argument('--mode', default='16:9')
+    s.add_argument('--offsets', type=int, nargs='+', default=[500, 650, 800])
+    s.add_argument('--plan', default='auckland:2,3,4;bavaria-rain:2;new-york-snow:2')
+    s = sub.choices['nx']
+    s.add_argument('--route', type=Path, default=ROOT / 'game/baseline-route.json')
+    s.add_argument('--mode', default='16:9')
+    s.add_argument('--scales', default='2')
+    s.add_argument('--end-frame', type=int, default=5600)
+    s.add_argument('--min-frames', type=int, default=3000)
+    s.add_argument('--margin', action='store_true', default=True)
     args = p.parse_args()
     args.exe = args.exe.resolve()
     args.out = args.out.resolve()
@@ -618,7 +939,8 @@ def main():
     for name in ('exe', 'rom'):
         if not getattr(args, name).exists():
             p.error(f'--{name} not found: {getattr(args, name)}')
-    return {'g1': check_g1, 'capture': check_capture, 's2': check_s2,
+    return {'g1': check_g1, 'capture': check_capture, 's3': check_s3,
+            'nx': check_nx, 'captures': check_captures, 'option': check_option,
             'route': check_route, 'split': check_split}[args.check](args)
 
 

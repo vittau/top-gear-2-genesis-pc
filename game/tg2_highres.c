@@ -347,31 +347,6 @@ static int32_t nx_lane_runs(const GVDP *v, const Tg2RowState *r, int py,
     return runs;
 }
 
-/* Measure the painted row at native sampling: road-colour extent and lane-mark
- * runs. Colours come from the row's own palette, so interior texels match
- * exactly; an antialiased edge column can miss by one native pixel. */
-static void nx_measure(const uint32_t *row, int scale, int w1,
-                       const uint32_t *pal, unsigned char bank,
-                       int *left, int *right, unsigned *stripes) {
-    uint32_t border = pal[(bank << 4) | 6];
-    uint32_t lane = pal[(bank << 4) | 13];
-    uint32_t asphalt = pal[(bank << 4) | 14];
-    int l = -1, r = -1, prev = 0;
-    unsigned runs = 0;
-    for (int u = 0; u < w1; ++u) {
-        uint32_t c = row[u * scale];
-        if (c == border || c == lane || c == asphalt) {
-            if (l < 0) l = u;
-            r = u;
-        }
-        if (c == lane && !prev) ++runs;
-        prev = c == lane;
-    }
-    *left = l;
-    *right = r;
-    *stripes = runs;
-}
-
 static void nx_audit_write(const GVDP *v, uint64_t frame, int scale,
                            const uint32_t *pixels, int stride, int w1,
                            int native_w, const NxAuditRow *rows) {
@@ -434,6 +409,8 @@ static void paint_road_row(const GVDP *v, int src, int j, int scale, int w1,
     for (int i = 0; i < 64; ++i)
         pal[i] = genesis_dac_cram_to_argb(s->cram[i], 0);
     uint32_t backdrop = pal[s->reg[7] & 63];
+    int audit_left = -1, audit_right = -1;
+    unsigned audit_lanes = 0, audit_prev_lane = 0;
 
     for (int u = 0; u < w1; ++u) {
         if (!s_terrain[u])
@@ -468,29 +445,52 @@ static void paint_road_row(const GVDP *v, int src, int j, int scale, int w1,
             unsigned c = row_plane_pixel(v, s, ax, y, &attr);
             uint32_t road = c ? pal[c] : backdrop;
             row[x] = coverage >= 1.0 ? road : blend(native, road, coverage);
+            if (k == 0) {
+                /* Audit: the strip this output row actually committed, and the
+                 * lane-mark runs among the sampled texels. */
+                if (audit_left < 0) audit_left = u;
+                audit_right = u;
+                unsigned lane = (c & 15) == 13;
+                if (lane && !audit_prev_lane) ++audit_lanes;
+                audit_prev_lane = lane;
+            }
         }
     }
     if (audit) {
-        int left = -1, right = -1;
-        unsigned stripes = 0;
-        nx_measure(row, scale, w1, pal, s->bank[0], &left, &right, &stripes);
+        /* Canvas-space edges and geometry, so the checker compares like with
+         * like (the source rows' own edges carry the same origin). */
         audit->line = (uint32_t)src;
         audit->py_src = (uint32_t)py;
         audit->py_next = (uint32_t)py;
-        audit->centre_src = centre_s;
-        audit->centre_next = centre_n;
-        audit->left_src = left_s;
-        audit->right_src = right_s;
-        audit->left_next = left_n;
-        audit->right_next = right_n;
+        audit->centre_src = origin + centre_s;
+        audit->centre_next = origin + centre_n;
+        audit->left_src = origin + centre_s + left_s;
+        audit->right_src = origin + centre_s + right_s;
+        audit->left_next = origin + centre_n + left_n;
+        audit->right_next = origin + centre_n + right_n;
         audit->el_x256 = (int32_t)(el * 256.0 + (el >= 0 ? 0.5 : -0.5));
         audit->er_x256 = (int32_t)(er * 256.0 + (er >= 0 ? 0.5 : -0.5));
-        audit->measured_left = left;
-        audit->measured_right = right;
-        audit->stripes = stripes;
+        audit->measured_left = audit_left;
+        audit->measured_right = audit_right;
+        audit->stripes = audit_lanes;
         audit->stripes_src = (uint32_t)nx_lane_runs(v, s, py, left_s, right_s);
         audit->flags = NX_FLAG_ROAD | (interpolate ? NX_FLAG_INTERPOLATED : 0);
     }
+}
+
+static void dump_ppm(const char *path, const uint32_t *pixels, int stride,
+                     int width, int height) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", width, height);
+    for (int y = 0; y < height; ++y) {
+        const uint32_t *row = pixels + (size_t)y * stride;
+        for (int x = 0; x < width; ++x) {
+            unsigned char rgb[3] = {row[x] >> 16, row[x] >> 8, row[x]};
+            fwrite(rgb, 1, 3, f);
+        }
+    }
+    fclose(f);
 }
 
 int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int stride,
@@ -510,6 +510,23 @@ int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int str
      * horizontally by N; each becomes N presented rows. Walk bottom-up so
      * reading native row `src` is never overwritten by the rows above it. */
     static uint32_t s_src_row[4096];
+    char dump[2][512];
+    int dumping = 0;
+    {
+        /* TG2_HIGHRES_DUMP=<n>: dump the framebuffer before and after the
+         * builder on the nth built picture (debug evidence only). */
+        const char *want = getenv("TG2_HIGHRES_DUMP");
+        const char *dir = getenv("TG2_HIGHRES_DUMP_DIR");
+        if (want && *want && (unsigned)strtoul(want, NULL, 10) == s_build_frames + 1) {
+            const char *base = dir && *dir ? dir : ".";
+            snprintf(dump[0], sizeof dump[0], "%s/before-%06llu.ppm", base,
+                     (unsigned long long)frame);
+            snprintf(dump[1], sizeof dump[1], "%s/after-%06llu.ppm", base,
+                     (unsigned long long)frame);
+            dump_ppm(dump[0], pixels, stride, width, native_h);
+            dumping = 1;
+        }
+    }
     NxAuditRow audit[NX_AUDIT_ROWS];
     memset(audit, 0, sizeof audit);
     for (int src = native_h - 1; src >= 0; --src) {
@@ -523,17 +540,29 @@ int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int str
                           w1, scale, s_src_row);
         for (int j = 0; j < scale; ++j) {
             uint32_t *row = pixels + (size_t)(src * scale + j) * stride;
-            if (!road) {
-                memcpy(row, s_src_row, (size_t)width * sizeof *row);
+            /* Vertical nearest expansion first. The road pass then repaints
+             * only scenery pixels; sprites, the HUD, the car and plane-A
+             * effects keep this native row's pixels instead of whatever the
+             * framebuffer held from an earlier frame. */
+            memcpy(row, s_src_row, (size_t)width * sizeof *row);
+            if (!road)
                 continue;
-            }
             NxAuditRow *entry = NULL;
             if (j == scale - 1 && src >= NX_AUDIT_FIRST && src < NX_AUDIT_FIRST + NX_AUDIT_ROWS)
                 entry = &audit[src - NX_AUDIT_FIRST];
             paint_road_row(vdp, src, j, scale, w1, native_w, row, s_src_row, entry);
         }
     }
+    if (dumping)
+        dump_ppm(dump[1], pixels, stride, width, native_h * scale);
     nx_audit_write(vdp, frame, scale, pixels, stride, w1, native_w, audit);
+    if (getenv("TG2_HIGHRES_DEBUG") && (s_build_frames % 120) == 0) {
+        fprintf(stderr, "[hires-dbg] frame=%llu scale=%d width=%d stride=%d native=%dx%d w1=%d "
+                        "row0=%08x row223=%08x row447=%08x\n",
+                (unsigned long long)frame, scale, width, stride, native_w, native_h, w1,
+                pixels[0], pixels[(size_t)223 * stride],
+                native_h * scale > 224 ? pixels[(size_t)(native_h * scale - 1) * stride] : 0);
+    }
     ++s_build_frames;
     if (timing) {
         double elapsed = highres_now_us() - started - s_clock_overhead;
