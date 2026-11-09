@@ -1222,21 +1222,28 @@ The fader is a fixed-point gain (`256 = 100 %`) on the *generated* stream, i.e.
 before the WAV tap and before the speaker master Volume, so a capture measures
 exactly what a player hears at the same master setting.
 
-* **A frame that carries one source** (all of a stock MUSIC-mode race, all of a
-  stock SOUND EFFECTS race, either menu, the boot) is the one chip's stock
-  stream, so the fader is a plain scale of it: `out = stock * g / 256`. The
-  source's own idle DAC offset scales with it, like a real fader. No second
-  chip exists and nothing else changes.
-* **A frame that really carries both sources** in one chip is rendered on two
-  chips exactly as BOTH mode is (chip A music, chip B sound effects, the stock
-  merged-stamp order for chip B), and the two streams are summed at their own
-  gains. Once both sources have coexisted, the mixer stays on two chips so a
-  note's tail is never dropped when a later frame happens to carry no writes.
+* **The fader never changes routing.** Chip routing is the game's: one chip in
+  MUSIC and SOUND EFFECTS, two chips in BOTH. (The first version engaged a
+  second chip whenever a fader left 100 % and both sources had been seen; that
+  path mixed a chip which had never received the current voices and is gone -
+  see 13.7.)
+* **A frame with writes** whose writes are all one source - every stock
+  MUSIC-mode frame, every stock SOUND EFFECTS race frame, the menus, the boot -
+  is that source's gain applied to the one chip's stock stream. A frame that
+  carries both sources belongs to the source that wrote most of it (only the
+  race-start transition ever mixes them in one chip).
 * **A frame with no writes at all** keeps sounding with the previous frame's
-  source(s): the chip's voices keep playing, so the fader must follow the
-  sounding source, not the empty frame.
+  source: the chip's voices keep playing, so the fader follows the sounding
+  source, not the empty frame.
+* **A change ramps.** The new gain is reached linearly across the next frame
+  (16.7 ms, last sample already at the new value), so a live move cannot click
+  and the frame after a switch back to 100 % is byte-identical to an
+  uninterrupted capture. A fader moved while nothing is sounding snaps (there
+  is no old gain to fade from).
+* **In BOTH mode** each chip has its own ramp (music gain on chip A, SFX gain on
+  chip B), summed as before.
 
-At 100 %/100 % `s_vol_split` is off and none of this runs.
+At 100 %/100 % every ramp is identity and none of this arithmetic runs.
 
 ### 13.3 Slider measurements
 
@@ -1269,7 +1276,9 @@ options engaged logged `underruns=0 overflows=0 conceals=0` from the DRC bridge
 ### 13.4 Clean FM
 
 `Clean FM` renders both virtual chips with ymfm's **YM3438** (`ymfm::ym3438`)
-instead of the stock YM2612 model. The YM3438 is the same FM engine without the
+instead of the stock YM2612 model. Switching it while sound plays carries the
+running chip's state into the other core and crossfades the two models (13.7),
+so no note restarts and the switch cannot break the music. The YM3438 is the same FM engine without the
 YM2612's 9-bit ladder: no per-channel `dac_discontinuity` (the +4/-3 crossover
 step) and the CMOS DAC path for channel 6. Notes, patches, timing, register
 behaviour and the hardware output LPF are unchanged.
@@ -1312,7 +1321,10 @@ with a band-limited reconstruction inside the chip model:
 * only the DAC register is touched — every FM channel, the ladder behaviour and
   the chip's own bit depth are rendered exactly as before;
 * group delay is 47 output samples = **0.88 ms**, inside the existing audio
-  budget; the save state carries the filter's phase.
+  budget; the save state carries the filter's phase;
+* switching it live is a seam, not a restart: enabling seeds the history from
+  the level the chip is holding, disabling writes the guest's last `$2A` byte
+  back, so the stock sample-and-hold stream resumes exactly.
 
 Measured on the model (440 Hz tone fed to the DAC at exactly 6.6 kHz, the same
 register path the game uses):
@@ -1374,7 +1386,82 @@ existing wrapper fields in both `ym2612_save_state` and `ym2612_rb_save`
 keep their defaults), so an older quickstate still loads; a state saved with an
 option on resumes with the same filter phase and the same core.
 
-### 13.7 What is not verified
+### 13.7 Live switching: the bugs the owner heard, and the fix
+
+Owner report on a release `app` of `main aa9ff20` (arm64, macOS): while toggling
+the new audio options the music first sounded *"as if two songs were mixed"*,
+and later in a race turning an effect option off **stopped the music**. His
+session ended with `RACE SOUND = SOUND EFFECTS`, Clean FM on and Clean engine
+samples on; the feedback replay does not record option changes, so the order he
+toggled in cannot be replayed. Both symptoms are nevertheless explained by two
+defects that the frame-exact probe reproduces on the pre-fix build:
+
+| Toggle (pre-fix behaviour, measured) | What went wrong |
+|---|---|
+| **RACE SOUND switched off BOTH mid-race** | the mix drops to **0.71-0.81 x** the reference RMS for the rest of the race (measured over 94-118 s of a BOTH race): the music layer disappears. Re-routing mid-race hands the running music's voices to a chip that was never fed them, and switching BOTH off lets the 68K engine write over the music. This is the *"the music stopped"* symptom. |
+| **Clean FM switched off during a SOUND EFFECTS race** | the race sound collapses to **0.29 x** the reference from the switch to the end of the capture - exactly the chip's idle DC (+380) with nothing else. The switch destroyed the chip and rebuilt it from reset, and the cartridge only writes the DAC enable (`$2B`), channel-6 pan (`$B6`) and note key-ons when it starts them, so they were never re-sent. (In MUSIC mode the driver re-sends its whole register state every tick, which is why the same defect healed there - measured: recovers within a tick.) |
+| **Music/SFX volume moved live** | the fader engaged a **second chip** mid-stream whenever a frame carried both sources, and kept using it. In the routes measured here the stale chip had nothing to add (its content equalled the live one), so the audio stayed close to correct, but the split path mixed a chip that never received the current voices - the mechanism that can sound like two performances at once - and switching back to 100 % returned to one chip while the other's voices were dropped. The path is removed outright. |
+| **RACE SOUND switched to BOTH mid-race** | adds the second chip's layer immediately (level +4-9 % over the same span) instead of being neutral, because the second core has no race image to run (the upload happened for the old mode). |
+| **Clean engine samples** | already safe (PASS on the pre-fix build): enabling seeds the reconstruction from the held DAC level, disabling re-applies the guest's last `$2A` byte. |
+
+Fixes, engine patch `0042-live-audio-option-toggles.patch` plus the game's mode
+handling:
+
+* **Faders never touch routing.** The gain is a one-frame linear ramp on the
+  live stream (13.2). No second chip, no state to lose, and the frame after a
+  return to 100 % is byte-identical to an uninterrupted capture.
+* **Clean FM carries the chip's state across.** The new core inherits the
+  running core's whole ymfm state - register file, envelopes, phases, LFO and
+  timers (`save_restore`) - and the two cores are crossfaded over 256 output
+  samples (4.8 ms) with the same register writes mirrored into both, so only
+  the model difference (the ladder's DC and crossover step) changes and no note
+  restarts. A second toggle mid-fade drops the half-faded core.
+* **Clean engine samples seam.** The guest's last `$2A` byte is tracked even
+  while the option is off, so enabling starts at the level the chip is holding;
+  disabling writes that byte back, so the stock sample-and-hold stream resumes
+  exactly.
+* **RACE SOUND selection vs applied mode.** The player's choice (option, page,
+  persistence, menu text) changes at once; its routing/policy layer is adopted
+  at the next race, which is what this document already promised for BOTH. A
+  mid-race switch can therefore not kill the music - it applies to the next
+  race. A state loaded mid-race keeps the routing that race was running.
+
+**Regression probe.** `tools/tg2_live_toggle_probe.py` drives the standard
+route, rewrites its script to insert `OPTION <key> <value>` directives (a new
+input-script directive that calls the same setter the in-game menu uses) at four
+frames - menu music, countdown, race start, mid-race - toggling on, off, on,
+off, and compares each capture with an uninterrupted run of the same route. It
+requires: byte-identical output before the first toggle; byte-identical output
+after the last switch back (one frame of ramp allowed); the option's own effect
+only while it is on, with a per-mode/per-source level band; no new pops; and
+nothing collapsing to silence. The RACE SOUND scenario toggles mid-race and
+requires the *whole* capture to be byte-identical, because the selection must be
+audio-neutral while a race runs.
+
+Result on the fixed build (3 modes x 4 options + a mid-race RACE SOUND switch,
+15 runs against 3 uninterrupted references; each run is the same 2-minute route,
+so 15/15 is a whole-capture comparison, not a spot check):
+
+| Mode | Clean FM | Clean engine samples | Music volume | SFX volume | RACE SOUND (mid-race) |
+|---|---|---|---|---|---|
+| MUSIC | PASS 0.977 | PASS 1.000 | PASS 0.500, 86 s differ | PASS 1.000, 0 s differ | PASS (0 s differ) |
+| SOUND EFFECTS | PASS 0.966 | PASS 1.000 | PASS 1.000, 25 s differ | PASS 0.634, 61 s differ | PASS (0 s differ) |
+| BOTH | PASS 0.956 | PASS 1.000 | PASS 0.781, 87 s differ | PASS 0.907, 83 s differ | PASS (0 s differ) |
+
+Read the columns: *ratio* is the whole-run RMS ratio against the reference
+(1.000 where the option does not act on that mode's content, e.g. the SFX fader
+in a MUSIC-mode run - exactly 0 seconds differ there, which is the per-source
+independence check), *N s differ* is how much of the 120 s capture differs
+while the option is on (its own documented effect), and every run is
+byte-identical again from the settle frame after the last switch back. Pops: 0
+in all 15 runs (and in the references). The same switch through the *real*
+in-game overlay (open the Audio section over TCP, move to Clean FM, Right then
+Left, close) keeps the menu music continuous: no gap, level 1010-1555 throughout
+while it is on and off, 0 pops. The same sweep on the pre-fix build
+fails: Clean FM is not restored (14 s differ, silence after the switch-off) and
+the faders' split path leaves the stream changed after the last switch back.
+
+### 13.8 What is not verified
 
 * The launcher rows: the game offers the four options as launcher mod features
   (integer sliders / checkboxes in the `Sound` group). The launcher itself needs
@@ -1392,8 +1479,21 @@ option on resumes with the same filter phase and the same core.
   (0 underruns, 0 overflows, 0 conceals, callback peak 166 µs).
 * Nitro in the captures comes from scripted `C` presses; the routes are the
   same in every pair, so the comparison is like for like.
+* The live-toggle probe runs on a `SDL_VIDEODRIVER=dummy` build with the real
+  option setters (the same ones the menu calls) and a frame-exact script. It
+  covers the menu, the countdown, the race start and mid-race; it does not
+  drive a physical gamepad through the menu, and the owner's own session used
+  key presses at unknown frames, so the *order* he toggled in cannot be
+  replayed from his log: each toggle's pre-fix effect was measured separately
+  (13.7) instead. The literal "two songs at once" moment is not in any capture
+  I could make - the pre-fix mechanisms that can produce it (a stale second
+  chip in the mix, and a mid-race routing switch) are removed, and the probe now
+  requires byte-identity after every switch back.
+* Visual refresh of the in-game rows while an option changes live (the row
+  value redraw) is the runtime UI's own behaviour and is not part of this
+  audio probe.
 
-### 13.8 Reproduce
+### 13.9 Reproduce
 
 ```sh
 JOBS=3 tools/build-linux.sh ~/roms/genesis/tg2.bin build
@@ -1410,6 +1510,10 @@ for v in "" "TG2_MUSIC_VOL=50" "TG2_SFX_VOL=50" "TG2_CLEAN_FM=1" "TG2_DAC_RESAMP
       --turbo --wav build/t/run.wav --input-script build/base/sfx.input
   md5sum build/t/run.wav
 done
+
+# live option switching: menu music, countdown, race start, mid-race, in all
+# three sound modes, each option on/off/on/off against an uninterrupted run
+python3 tools/tg2_live_toggle_probe.py --exe build/TG2Recomp --out build/livetoggle
 
 # measurements
 python3 tools/audio_glitch_detect.py --device build/t/run.wav
