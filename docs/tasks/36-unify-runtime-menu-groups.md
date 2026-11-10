@@ -1,6 +1,7 @@
 # Task 36: unify the Esc menu's video and audio groups
 
-**Status: implemented on the task-35 worker branch; local UI qualification passed; owner playtest remains.**
+**Status: implemented, locally qualified and merged in `87e926b`; included in
+the `deck-filter-menu-20261110` Linux draft. Owner playtest remains.**
 
 Implementation and row inventory: [runtime menu](../RUNTIME_MENU.md).
 

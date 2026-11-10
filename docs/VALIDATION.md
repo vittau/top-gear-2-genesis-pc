@@ -1262,3 +1262,33 @@ pacer waits are all zero, both probes exit 0, all manifests empty. A final stock
 smoke retains the two canonical hashes. Method, auxiliary builder wall timing,
 startup/polling limitations and device-performance boundaries are documented
 in [LINEAR_FILTER.md](LINEAR_FILTER.md#follow-up-portable-patch-application-and-isolated-local-cost).
+
+
+## Deck follow-up merge and draft: Linear Filter + menu (2026-11-10)
+
+Coordinator reviewed the worker's presentation/menu evidence and requested
+portable patch-application and no-pacing CPU-cost follow-ups; both passed
+(185660b/8a6936e). Actual Windows execution is not claimed. Filter/menu work
+was merged in `87e926b12db46a6f4aec7326d14ab470b1a4875f`.
+
+Manual Linux-only [CI 42898689826](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/42898689826)
+passed build and independent downloaded-artifact verification. Tarball and
+AppImage content gates passed, required glibc is 2.34 (≤2.35), and each ran
+600 frames with ROM discovery and exit 0. Windows/macOS were skipped.
+`gh run download`, streamed checksum comparison and local verify_artifact.py
+also exited 0; BUILD-INFO identifies version `0.1.0-g87e926b` and exact game
+revision, unchanged engine pin, Release profile, TCP/reverse-debug disabled.
+
+[Draft deck-filter-menu-20261110](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-250db4e89d9b27e23c8f)
+was created with tar.gz, AppImage and SHA256SUMS; metadata confirms draft +
+prerelease, exact source target and all three assets uploaded. Tarball SHA-256:
+`5fe2a14e2f952fd1d50990f353734c1a2a0dcf92f595be65b117a5172954ee56`;
+AppImage: `91bc3f3f4dde4bfd73bb2453494b79ece822df57a22e22390af36373b0339bae`.
+The previous draft remains unchanged; no v* tag or published release was made.
+
+This is a new source-labelled candidate for the owner's extracted-folder Deck
+installation. Local Off/On CPU means at 4×1280×800 were 1.882/6.392 ms
+(+4.511 ms, short controlled dev-build sample); no Deck performance or new
+owner visual acceptance is claimed. The target retest covers filter effect
+in races, frame pacing/audio, menu VIDEO/AUDIO/SYSTEM/MODS/SAVE STATES, and
+saved preferences. S4 remains unstarted.

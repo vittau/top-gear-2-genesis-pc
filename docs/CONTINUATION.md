@@ -2,13 +2,14 @@
 
 Current feedback: the owner tested the Deck tar.gz and said it worked well,
 but **Linear Filter no longer has an effect during gameplay while still
-working in the main menu**. Investigate [task 35](tasks/35-linear-filter-highres.md)
-before S4. Internal scale/toggle details are not yet known; reproduce first.
+working in the main menu**. [Task 35](tasks/35-linear-filter-highres.md) is now
+implemented and awaiting his Deck retest before S4. His exact original
+scale/toggle sequence was not supplied; controlled local reproduction is documented.
 The owner also requested [task 36](tasks/36-unify-runtime-menu-groups.md):
 unify Esc Display/Graphics/Video into **Video**, and Sound/Audio into **Audio**.
 Category order must be **VIDEO → AUDIO → SYSTEM → MODS → SAVE STATES**.
-Worker follow-up on `vittau/tg2-linear-filter-s3` is locally qualified (not
-merged here and not in the existing draft): menu unification `d8f822c`,
+Worker follow-up on `vittau/tg2-linear-filter-s3` is locally qualified and
+merged into main as `87e926b`: menu unification `d8f822c`,
 probe-path follow-up `fbeaedf`, and sampler diagnosis `9534ac8`, followed by a
 separate native-art filter fix. Pinned SDL2/Metal proves a 4× 1280×800 source
 can equal the output and legitimately make a final sampler invisible. The
@@ -19,9 +20,23 @@ also fixes the Windows Python applicator's UI routing/idempotence and validates
 the 43-patch stack by actual application. A no-audit/no-pacing 4× cost pair adds
 4.511 ms of CPU locally (1.882→6.392 ms); account for this before the next Deck
 candidate, without extrapolating it to device performance.
-Next coordinator: review the worker commits and arrange the new Deck candidate
-and owner playtest before treating the report as accepted; do not start S4 or
-relabel the old draft as containing this fix.
+The coordinator reviewed the source/evidence and fixed a review gap in the
+portable Windows applicator through the worker follow-up (`185660b`), then
+qualified the no-pacing cost harness (`8a6936e`). Windows itself was not built.
+Both tasks are in the new Linux-only draft
+[deck-filter-menu-20261110](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-250db4e89d9b27e23c8f),
+target `87e926b12db46a6f4aec7326d14ab470b1a4875f`, packaged version
+`0.1.0-g87e926b`. [CI 42898689826](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/42898689826)
+passed Linux build and independent content/glibc/smoke verification: glibc
+2.34, 600-frame tarball and AppImage boots, exit 0. Attached assets are
+tar.gz, AppImage and SHA256SUMS, but the release itself remains a draft.
+Tarball SHA-256: `5fe2a14e2f952fd1d50990f353734c1a2a0dcf92f595be65b117a5172954ee56`;
+AppImage: `91bc3f3f4dde4bfd73bb2453494b79ece822df57a22e22390af36373b0339bae`.
+The owner should update the existing tar.gz folder, keeping ROM/settings/saves
+and Steam shortcut, and compare Linear On/Off in a race at his chosen scale.
+Next coordinator: collect owner feedback before treating these fixes as
+accepted or starting S4. The original `deck-s3-20261110` draft/asset identity
+below remains unchanged. No worker assignment is active after the follow-up.
 The checkpoint below retains the source/build history of that tested draft.
 
 Session checkpoint: 2026-11-10. The owner is ending the session. Do not launch

@@ -44,5 +44,5 @@ the machine-resource rules, and never trigger CI.
 | [32](32-deck-aspect-and-quiet-logs.md) | Steam Deck feedback: device aspect, no logs in normal use | Done (merged 2026-11-09); needs a real Deck run |
 | [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | Complete; owner visually approved 2026-11-10, merged in `a205759`; Deck draft delivered, playtest pending (S4–S7 limitations remain) |
 | [34](34-highres-s4.md) | High-resolution rendering, step S4 (detailed sprites at N×) | Brief prepared; not started. Handle new S3/Deck feedback first; Opus/Fable/Sol only. |
-| [35](35-linear-filter-highres.md) | Linear Filter has no visible effect in races after S3 (Deck playtest) | Local fix qualified: existing toggle filters native art at N×; coordinator/Deck acceptance before S4. |
-| [36](36-unify-runtime-menu-groups.md) | Unify Esc menu groups: Display/Graphics/Video → Video; Sound/Audio → Audio | Implemented and locally qualified; exact category order and all 20 rows/persistence verified. |
+| [35](35-linear-filter-highres.md) | Linear Filter has no visible effect in races after S3 (Deck playtest) | Reviewed/merged `87e926b`; new Linux draft delivered, owner/Deck retest pending before S4. |
+| [36](36-unify-runtime-menu-groups.md) | Unify Esc menu groups: Display/Graphics/Video → Video; Sound/Audio → Audio | Reviewed/merged `87e926b`; all 20 rows/order/persistence verified locally, Deck retest pending. |
