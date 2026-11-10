@@ -1126,10 +1126,22 @@ def check_cap(args):
         sizes = {'capped': [w, h]}
         if w != 4095 or h not in (600, 672):
             failures.append(f'capped 3x picture is {w}x{h}, expected 4095x600/672')
+        off_downscale = None
         for mode, expected in [('off', 768), ('16:9', 1068)]:
             r.command('video_configure', mode=mode)
             r.wait_frame(r.frame() + 20)
-            shot = r.screenshot(mode.replace(':', '-') + '-3x.png')
+            if mode == 'off':
+                native = out / 'off-1x.ppm'
+                r.command('tg2_highres', dump=str(native))
+                r.wait_frame(r.frame() + 3)
+                shot = out / 'off-3x.png'
+                r.command_many([('screenshot', dict(path=str(shot))),
+                                ('tg2_highres', dict(dump=''))])
+                off_downscale = downscale_against(native, shot, 3)
+                if not off_downscale or off_downscale['mean_abs_diff'] > 2.5 or off_downscale['big_diff_ratio'] > .02:
+                    failures.append(f'Off 3x downscale mismatch: {off_downscale}')
+            else:
+                shot = r.screenshot(mode.replace(':', '-') + '-3x.png')
             mw, mh, *_ = png_pixels(Path(shot))
             sizes[mode] = [mw, mh]
             if (mw, mh) != (expected, 600):
@@ -1139,7 +1151,8 @@ def check_cap(args):
     counts = empty_manifests(out)
     if code != 0 or any(n != 0 for n in counts.values()):
         failures.append(f'exit {code}, manifests {counts}')
-    summary = dict(check='cap', sizes=sizes, exit=code, manifests=counts,
+    summary = dict(check='cap', sizes=sizes, off_downscale=off_downscale,
+                   exit=code, manifests=counts,
                    failures=failures, ok=not failures)
     (out / 'cap-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2))

@@ -103,8 +103,12 @@ static int width(int dw, int dh, int nw, int nh) {
      * A render scale above 1 multiplies the whole 1x canvas by N, so the
      * presented picture keeps the exact N:1 relationship in both axes. */
     int scale = canvas_scale();
-    if (mode == 0)                       /* stock canvas = native width */
-        return nw * scale;
+    if (mode == 0) {
+        /* Planning runs before the raster IRQ switches to H32, so `nw` can
+         * still be the nominal H40 width (320). A qualified 1P race is H32
+         * (256); keep Off exactly N times that actual native picture. */
+        return (highres_wanted ? 256 : nw) * scale;
+    }
     int h = cropped_height(nh);
     double w = h * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
