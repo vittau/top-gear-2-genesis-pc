@@ -5,6 +5,17 @@ Latest owner decision: he tested the local macOS filter/menu build and said
 again. He separately reported occasional missing instruments in race-menu
 music, then explicitly deferred it to another session after saving the
 filter/menu work. See [task 37](tasks/37-intermittent-race-menu-instruments.md).
+At his subsequent request, the filter/menu agent and its
+`tg2-linear-filter-s3` worktree were closed/removed through Orca. Branch
+`vittau/tg2-linear-filter-s3` is retained at `8a6936e` (already merged/pushed).
+Before removal, source snapshots including dirty nested submodules and
+untracked source were exported to verified Git bundles, and the local
+reports/summaries/probe scripts/captures were archived under
+`~/.cache/tg2-worktree-backups/20261110-linear-filter-s3/`.
+`manifest.json` maps source commits/bundles; `evidence/linear-s3/worker-report.md`
+and `evidence/linear-s3-followup/report.md` replace the now-removed worker
+build paths cited below. Its saved settings and any build saves/states were
+also preserved there. The historical S3 checkout is separate and remains.
 No audio investigation or S4 implementation is active. The manual game has closed.
 For a visible manual launch, unset both LNG_SCRIPT and LNG_TEST_HIDDEN:
 setting them to the string 0 still hides the window because the code checks
