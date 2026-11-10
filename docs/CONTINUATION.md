@@ -14,7 +14,11 @@ separate native-art filter fix. Pinned SDL2/Metal proves a 4× 1280×800 source
 can equal the output and legitimately make a final sampler invisible. The
 coordinator approved filtering native RGB inside S3 with the existing On
 choice; Off retains the accepted image and the analytic road stays independent.
-See LINEAR_FILTER.md and RUNTIME_MENU.md for focused evidence and limitations.
+See LINEAR_FILTER.md and RUNTIME_MENU.md for focused evidence and limitations. The follow-up
+also fixes the Windows Python applicator's UI routing/idempotence and validates
+the 43-patch stack by actual application. A no-audit/no-pacing 4× cost pair adds
+4.511 ms of CPU locally (1.882→6.392 ms); account for this before the next Deck
+candidate, without extrapolating it to device performance.
 Next coordinator: review the worker commits and arrange the new Deck candidate
 and owner playtest before treating the report as accepted; do not start S4 or
 relabel the old draft as containing this fix.

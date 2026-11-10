@@ -1241,6 +1241,13 @@ RAM/VRAM/native-centre identity at all five frames in Off/16:9/21:9. The 60 fps
 comparison has 360/360 changed pictures versus stock 186/360, no scalar RAM
 mismatches, identical WAV SHA-256, and four empty manifests in both runs.
 
+A later no-audit native-art Linear On/Off cost pair uses the same 360 baseline
+route frames at 4× / 1280×800, with VSync and deadline pacing disabled. On adds
+4.511 ms of whole-frame thread CPU on this Mac (Off 1.882 / On 6.392 ms); the
+composition+crop CPU phase accounts for 4.367 ms. This short local sample is
+not a Deck or worst-case-track measurement; see LINEAR_FILTER.md's follow-up
+for the method and builder wall-counter limits.
+
 ### 13.3 Evidence
 
 | Path | What |

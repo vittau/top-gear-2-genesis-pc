@@ -14,6 +14,12 @@
   capture   S1 row-state capture versus the live renderer.
   route     Historical S1/S2 identity check, only for a stubbed Nx builder.
 
+Cost example (set saved Linear Filter Off/On separately and keep distinct outputs):
+  drive --no-audit --uncapped --cost-route --output-size 1280x800 --scale 4 --frames 360
+uses the committed input script and CPU sample interval [3000,3360), with no
+screenshots/native dumps or road/margin audits. --uncapped retains full audio
+and presentation work, using the engine's finite runtime-measurement mode.
+
 All guest-state access is read-only; controller/UI input drives the real game.
 Captures remain under ignored build/. Launcher qualification restores settings.
 """
@@ -904,21 +910,50 @@ def check_drive(args):
     if not args.no_audit:
         env['TG2_ROAD_AUDIT_DIR'] = str(audit)
         env['TG2_MARGIN_AUDIT'] = str(out / 'margins.csv')
+    extra_args = [] if args.no_audit else ['--turbo']
+    if args.uncapped:
+        if not args.no_audit or not args.cost_route:
+            raise ValueError('--uncapped requires --no-audit --cost-route')
+        extra_args = ['--measure-runtime', str(3000 + args.frames + 60), '--runtime-uncapped']
+    if args.cost_route:
+        if not args.no_audit or not args.uncapped:
+            raise ValueError('--cost-route requires --no-audit --uncapped')
+        if args.track != 'auckland':
+            raise ValueError('--cost-route uses the committed Auckland baseline route')
+        script = route_script(ROOT / 'game/baseline-route.json', out / 'cost.input',
+                              3000 + args.frames + 120)
+        extra_args += ['--input-script', str(script)]
     r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
-               widescreen=args.mode, max_frames=400000, env_extra=env,
-               extra_args=[] if args.no_audit else ['--turbo'], timeout=120)
+               widescreen=args.mode, max_frames=0 if args.uncapped else 400000,
+               env_extra=env, extra_args=extra_args, timeout=120)
     item = {'tag': tag, 'track': args.track, 'scale': args.scale, 'mode': args.mode,
             'race60': bool(args.race60), 'frames': args.frames}
     trace, shots, failures = [], [], []
     r.start()
     try:
-        state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+        if args.output_size:
+            width, height = (int(v) for v in args.output_size.split('x'))
+            r.command('video_configure', mode=args.mode, window_width=width, window_height=height)
+        if args.cost_route:
+            r.wait_frame(2980)
+            state = r.state_and_frame()
+            start = 3000
+        else:
+            state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            start = r.frame()
         item['race_start_frame'] = state.frame
         item['native_filter'] = bool(r.command('tg2_highres')['native_filter'])
+        if args.cost_route:
+            r.wait_frame(start)
+        builder_start, builder_start_frame = r.command_many([('tg2_highres', {}), ('frame_info', {})])
+        item['builder_start_frame'] = builder_start_frame['current_frame']
         pad, previous, last_shot = 0, None, 0
-        start = r.frame()
         while r.frame() - start < args.frames:
-            due = args.scale > 1 and last_shot and r.frame() - last_shot >= args.shot_every
+            if args.cost_route:
+                import time
+                time.sleep(.02)
+                continue
+            due = not args.no_audit and args.scale > 1 and last_shot and r.frame() - last_shot >= args.shot_every
             if due:
                 # The pictures this step builds also leave their 1x canvas.
                 r.command('tg2_highres', dump=str(out / 'native.ppm'))
@@ -929,7 +964,7 @@ def check_drive(args):
             pad = 0x10 | (0x08 if u > 9.0 else 0x04 if u < -9.0 else 0)
             previous = lat
             trace.append([st.frame, st.speed, round(lat, 2), st.curv, st.slope, st.lap])
-            if due or not last_shot:
+            if not args.no_audit and (due or not last_shot):
                 last_shot = st.frame
                 # One batch is served in one per-frame poll, so the screenshot
                 # and the end of the 1x dump see the same completed picture.
@@ -947,7 +982,15 @@ def check_drive(args):
                     shot['native'] = str(reference)
                     shot['downscale'] = downscale_against(reference, Path(path), args.scale, item['native_filter'])
                 shots.append(shot)
-        item['highres_filter'] = r.command('tg2_highres')
+        builder_end, builder_end_frame = r.command_many([('tg2_highres', {}), ('frame_info', {})])
+        item['highres_filter'] = builder_end
+        item['builder_end_frame'] = builder_end_frame['current_frame']
+        built = builder_end['build_frames'] - builder_start['build_frames']
+        item['builder_interval'] = dict(frames=built,
+            wall_us_per_frame=(builder_end['build_us'] - builder_start['build_us']) / built if built else None)
+        item['sample_frames'] = [start, start + args.frames]
+        item['uncapped'] = bool(args.uncapped)
+        item['cost_route'] = bool(args.cost_route)
         video = r.command('tg2_video')
         item['video'] = {k: video.get(k) for k in
                          ('highres_scale', 'highres_capture_us', 'highres_build_us',
@@ -961,13 +1004,15 @@ def check_drive(args):
             item['build_us_per_frame'] = round(
                 video['highres_build_us'] / video['highres_build_frames'], 1)
         r.set_input(0)
+        if args.cost_route:
+            wait_exit(r)  # finite runtime measurement must finish its requested frame count
     finally:
         item['exit'] = r.stop()
     if args.no_audit:
         import csv
         import statistics
         with (out / 'frame-stats.csv').open() as stream:
-            rows = [row for row in csv.DictReader(stream) if int(row['frame']) >= start]
+            rows = [row for row in csv.DictReader(stream) if start <= int(row['frame']) < start + args.frames]
         cpu_work = sorted(max(0, sum(int(v) for k, v in row.items()
                                     if k.startswith('cpu') and k != 'cpu_wait_us') -
                               int(row['cpu_wait_us'])) for row in rows)
@@ -978,6 +1023,16 @@ def check_drive(args):
                                       p50=statistics.median(cpu_work),
                                       p95=cpu_work[int(.95 * (len(cpu_work) - 1))],
                                       mean=round(statistics.mean(cpu_work), 1))
+            # Phase 7 covers game composition plus the presented-window crop.
+            # Unlike the wall-time builder counter, these CPU samples use the
+            # exact same fixed frame interval as the whole-frame cost.
+            layout = sorted(int(row['cpu7_layout']) for row in rows)
+            item['layout_cpu_us'] = dict(frames=len(layout),
+                p50=statistics.median(layout), p95=layout[int(.95 * (len(layout) - 1))],
+                mean=round(statistics.mean(layout), 1))
+            item['pacing'] = dict(wait_max_us=max(int(row['wait_us']) for row in rows),
+                wait_cpu_max_us=max(int(row['cpu_wait_us']) for row in rows),
+                present_p50_us=statistics.median(int(row['present_us']) for row in rows))
     (out / 'trace.json').write_text(json.dumps(trace) + '\n')
     item.update({'shots': shots, 'manifests': empty_manifests(out),
                  'steps': len(trace),
@@ -1218,7 +1273,10 @@ def main():
     s.add_argument('--shot-every', type=int, default=120)
     s.add_argument('--min-frames', type=int, default=3000)
     s.add_argument('--race60', action='store_true')
-    s.add_argument('--no-audit', action='store_true')
+    s.add_argument('--no-audit', action='store_true', help='CPU timing with no road/margin audits, screenshots or native dumps')
+    s.add_argument('--uncapped', action='store_true', help='Cost mode: full rendering/audio work without host pacing')
+    s.add_argument('--cost-route', action='store_true', help='Cost mode: committed baseline input route; sample [3000,3000+frames)')
+    s.add_argument('--output-size', help='Directed SDL drawable dimensions, e.g. 1280x800')
     s.add_argument('--keep-audit', action='store_true')
     s.add_argument('--max-mean-diff', type=float, default=2.5)
     s.add_argument('--max-big-ratio', type=float, default=0.02)

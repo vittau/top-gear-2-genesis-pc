@@ -1246,3 +1246,19 @@ Filter/scale/Music/SFX changes save and reopen correctly. Details and captures:
 [RUNTIME_MENU.md](RUNTIME_MENU.md), `build/linear-s3/menu-after/`. Local evidence
 is qualified; new Deck candidate and owner acceptance remain coordinator work.
 No workflow, tag, release or old draft source identity was changed.
+
+### Portable applicator and no-pacing cost follow-up
+
+The Python Windows path now routes `ui-*` correctly and shares the idempotence
+stamp with the shell twin. Real sequential application of 43 patches on pristine
+pinned fixture clones, second application, relative `--repo`, and shell/Python
+stamp interoperability all pass (exit 0); pins unchanged, no Windows CI run.
+
+One 4× / 1280×800 paired no-audit/no-dump run samples the same baseline route
+and 360 CPU frames (3000–3359). Mean CPU is Off 1.882 ms / On 6.392 ms
+(**+4.511 ms**); composition+crop CPU adds 4.367 ms. Patch 0053 prevents the
+profiling-only uncapped mode from restoring simulated software VSync. Sampled
+pacer waits are all zero, both probes exit 0, all manifests empty. A final stock
+smoke retains the two canonical hashes. Method, auxiliary builder wall timing,
+startup/polling limitations and device-performance boundaries are documented
+in [LINEAR_FILTER.md](LINEAR_FILTER.md#follow-up-portable-patch-application-and-isolated-local-cost).

@@ -100,3 +100,4 @@ then repeat to verify idempotence; preserve existing edits before any reset.
 - `0051-game-runtime-menu-layout.patch`: let the game opt into a shared runtime menu layout without changing settings keys, defaults or callbacks.
 - `ui-0001-runtime-menu-layout.patch`: apply an optional host policy to all effective standard/extra descriptors and order section rows explicitly for display and controller navigation (applies to `recomp-ui/`; NULL preserves the existing layout).
 - `0052-window-capture-sampler-metadata.patch`: write structured renderer, texture, sampler, source/stride and output geometry beside opt-in exact-frame SDL captures, so filter diagnosis can distinguish a lost toggle from a 1:1 output.
+- `0053-runtime-measure-no-vsync.patch`: keep `--runtime-uncapped` measurements free of SDL software's advertised/simulated VSync, without changing the normal gameplay clock policy.

@@ -313,3 +313,64 @@ presentation probe is `tools/check_linear_filter.py`. No CI, new draft/tag,
 release, ROM-derived git artifact, or submodule pin update was made. Windows,
 Linux/Deck GPU drivers, owner visual acceptance and device performance remain
 unverified for this fix.
+
+## Follow-up: portable patch application and isolated local cost
+
+The Windows Python applicator now routes `ui-*` to `recomp-ui/` and shares the
+shell applicator's stack/pins stamp, so later patches rewriting earlier hunks
+do not break idempotence. Engine, core and UI pins remain unchanged.
+The shell stamp path is now absolute, including when the script is launched
+from another directory. A pristine local fixture of the pinned engine/core/UI
+received all **43 patches by real sequential Python application**, then passed
+second application, relative `--repo`, and shell-after-Python idempotence.
+`--check` was not used as sequential-stack proof. This exercises the portable
+Python path locally, not a Windows build or CI matrix.
+
+The earlier 8.29 ms figure included audits and cannot establish incremental
+cost. A short paired test now reuses `check_highres.py drive --no-audit` with
+the committed baseline input script, 4× / 1280×800, SDL2 2.28.5 dummy/software,
+and full rendering/audio work, with 60-fps race interpolation Off in both cases.
+The Release development build has trace/reverse
+debug enabled and IPO disabled. Both cases sample exactly **frames 3000–3359**
+(360 CPU samples), with identical route-script SHA-256
+`ca8b5ef38bca094581eed6c1a640b34bdc4153f85ef7c2c0b58510951719abfb`.
+Six framebuffer hashes within that interval match the corresponding qualified
+c3eada7 On/Off run, confirming the measured scene. No PNG/native/RAM dumps,
+road/margin audits or pacer waits occur in the measured runs.
+
+| Local cost per frame | Linear Off | Linear On | Increment |
+|---|---:|---:|---:|
+| Whole-frame thread CPU, mean | 1.882 ms | 6.392 ms | **+4.511 ms** |
+| Composition + crop phase thread CPU, mean | 0.310 ms | 4.677 ms | **+4.367 ms** |
+| Builder's wall-time counter, normalized | 0.245 ms | 4.625 ms | +4.379 ms |
+
+Whole-frame CPU median/p95 is 1.788/2.003 ms Off and 6.274/6.844 ms On.
+The composition phase includes the builder and presented-picture crop; it
+uses the exact same 360 samples as the whole-frame CPU statistic. The separate
+builder wall counters bracket frames 3003→3369 (366 builds) Off and 3003→3363
+(360 builds), and are normalized by each actual build count. They are auxiliary
+wall timing, rather than an exact per-frame CPU counter.
+
+Both final processes and probes exited 0 with manifests 0/0/0/0, and On reports
+zero incomplete coverage. Every sampled `wait_us` and `cpu_wait_us` is zero;
+median present time is zero microseconds. An initial attempt revealed that the
+runner restored VSync from SDL software's capability flags even in uncapped
+measurement mode. Patch 0053 explicitly keeps that mode's VSync off; ordinary
+gameplay is unchanged. The harness now lets the finite measurement complete
+normally rather than quitting it early (which correctly returns status 2).
+The preliminary paced/interrupted attempts are excluded from this table.
+
+Reproduce each case with its saved `linear_filter=0` or `1`, preserving/restoring
+the scratch build's preferences, under the shared lock:
+
+```sh
+flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py drive --no-audit --uncapped --cost-route --output-size 1280x800 --scale 4 --frames 360 --mode fit --port 4640 --out build/cost-off
+```
+
+Repeat with saved On and a distinct output path. This is a single short local
+straight-race sample, not a worst-case track or Steam Deck measurement. On costs
+about 3.40× the total CPU in this sample; those numbers do not establish Deck
+performance or GPU headroom. Logs, raw CPU CSVs, applicator fixture provenance
+and exact commands are in `build/linear-s3-followup/`, especially
+`cost-comparison.json`, `patch-validation.json`, and `report.md`. The post-patch
+stock smoke also exits 0 with both canonical hashes and four empty manifests.
