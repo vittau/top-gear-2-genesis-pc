@@ -7,8 +7,17 @@ before S4. Internal scale/toggle details are not yet known; reproduce first.
 The owner also requested [task 36](tasks/36-unify-runtime-menu-groups.md):
 unify Esc Display/Graphics/Video into **Video**, and Sound/Audio into **Audio**.
 Category order must be **VIDEO → AUDIO → SYSTEM → MODS → SAVE STATES**.
-The same worker should handle this UI change in a separate commit, preserving
-all setting keys/values and controller access.
+Worker follow-up on `vittau/tg2-linear-filter-s3` is locally qualified (not
+merged here and not in the existing draft): menu unification `d8f822c`,
+probe-path follow-up `fbeaedf`, and sampler diagnosis `9534ac8`, followed by a
+separate native-art filter fix. Pinned SDL2/Metal proves a 4× 1280×800 source
+can equal the output and legitimately make a final sampler invisible. The
+coordinator approved filtering native RGB inside S3 with the existing On
+choice; Off retains the accepted image and the analytic road stays independent.
+See LINEAR_FILTER.md and RUNTIME_MENU.md for focused evidence and limitations.
+Next coordinator: review the worker commits and arrange the new Deck candidate
+and owner playtest before treating the report as accepted; do not start S4 or
+relabel the old draft as containing this fix.
 The checkpoint below retains the source/build history of that tested draft.
 
 Session checkpoint: 2026-11-10. The owner is ending the session. Do not launch

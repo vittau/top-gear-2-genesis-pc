@@ -11,8 +11,9 @@
  *     picture taller than the VDP geometry and report its height.
  * S3  the road strip rasteriser: the road rows are redrawn at N x from the
  *     game's own per-line numbers (width, centre, atlas row, palette), with
- *     fitted silhouettes and analytic coverage on every road boundary. Everything else (sky, sprites, HUD, plane-A effects)
- *     stays the native picture's content, nearest-scaled by N.
+ *     fitted silhouettes and analytic coverage on every road boundary.
+ *     Everything else keeps native detail/size: nearest at Linear Off, RGB
+ *     filtered with explicit plane/sprite coverage at Linear On.
  */
 #pragma once
 
@@ -35,6 +36,15 @@ int tg2_highres_scale(void);
 /* Scale the builder will actually present at: 1 at the stock scale, otherwise
  * the render scale. */
 int tg2_highres_present_scale(void);
+/* The existing live Linear Filter option, paid for only in N x races. */
+int tg2_highres_linear_filter(void);
+/* Copy the completed 1x row and its explicit native-art ownership after HUD
+ * relocation. Rows are tagged with the current picture serial, never retained
+ * as guest state; every row must be fresh before the filter is composed. */
+void tg2_highres_capture_native(int line, const uint32_t *pixels,
+                                const unsigned char *foreground, int width);
+unsigned tg2_highres_filtered_frames(void);
+unsigned tg2_highres_filter_incomplete(void);
 
 /* Per-row classification. Values are stable for capture dumps and tools. */
 enum {
@@ -94,7 +104,7 @@ unsigned tg2_highres_build_frames(void);
  * nearest-expanded by the scale. Returns the number of complete rows written:
  * > native_h selects that presented height, 0 keeps the stock picture. */
 int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
-                      int native_w, int native_h);
+                      int native_w, int native_h, int first, int last);
 
 /* Qualification only: while `path` is not empty, every built picture writes
  * its native (1x) canvas there as a binary PPM (all native rows, before the

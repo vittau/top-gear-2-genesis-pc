@@ -12,6 +12,17 @@
 static int mode;
 static int race60;
 static uint64_t present_frame;
+/* Explicit native layer winner for the optional S3 art filter. The raster
+ * seam evaluates hardware sprites once and exposes the same priority inputs
+ * that produced the native RGB row. Custom margin/HUD writes update its mask. */
+static const GVDPRasterRow *filter_layers;
+static unsigned char *filter_foreground;
+static int foreground_at(const GVDPRasterRow *r, int x) {
+    unsigned a = r->plane_a[x], b = r->plane_b[x];
+    int sp = r->opaque[x] != 0;
+    return (sp && r->high[x]) || ((a & 0xC0) == 0xC0) ||
+           ((b & 0xC0) != 0xC0 && (sp || (a & 0x40)));
+}
 static void presentation_clear(void);
 /* Stock CRT overscan hid the eight-row window band at the top of the race
  * screen. Hiding it is presentation-only: four of the eight rows carry the
@@ -429,10 +440,15 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                      ap && (a & 0x8000) ? ap : bp && (b & 0x8000) ? bp :
                      sp ? sp : ap ? ap : bp ? bp : v->reg[7] & 63;
         out[origin + x] = pal[c];
+        if (filter_foreground)
+            filter_foreground[origin + x] = (sp && (spr_attr[x] & 0x8000)) ||
+                (ap && (a & 0x8000)) || (!(bp && (b & 0x8000)) && (sp || ap));
     }
     for (int x = 0; x < w; ++x)
-        if (shifted[x])
+        if (shifted[x]) {
             out[x] = pal[shifted[x]];
+            if (filter_foreground) filter_foreground[x] = 1;
+        }
 }
 /* Window coordinates are unscrolled, with a 32-cell stride in H32. Only
  * extend an opaque, solid native edge: transparent window texels can expose
@@ -474,9 +490,15 @@ static unsigned window_margins(const GVDP *v, int line, const uint32_t *native,
     unsigned mask = window_band_edge(v, line, native, nw, 0) |
                     (window_band_edge(v, line, native, nw, 1) << 1);
     if (mask & 1)
-        for (int x = 0; x < origin; ++x) out[x] = native[0];
+        for (int x = 0; x < origin; ++x) {
+            out[x] = native[0];
+            if (filter_foreground) filter_foreground[x] = 1;
+        }
     if (mask & 2)
-        for (int x = origin + nw; x < w; ++x) out[x] = native[nw - 1];
+        for (int x = origin + nw; x < w; ++x) {
+            out[x] = native[nw - 1];
+            if (filter_foreground) filter_foreground[x] = 1;
+        }
     return mask;
 }
 /* A surface that owns the native edge covers several adjacent plane-A
@@ -515,9 +537,15 @@ static void plane_a_margins(const GVDP *v, int line, const uint32_t *native,
         if (plane_a_edge_run(v, line, ha, va, ba, nw, side) < 8) continue;
         pa_extend_mask |= 1u << side;
         if (side)
-            for (int x = origin + nw; x < w; ++x) out[x] = native[edge];
+            for (int x = origin + nw; x < w; ++x) {
+                out[x] = native[edge];
+                if (filter_foreground) filter_foreground[x] = 1;
+            }
         else
-            for (int x = 0; x < origin; ++x) out[x] = native[edge];
+            for (int x = 0; x < origin; ++x) {
+                out[x] = native[edge];
+                if (filter_foreground) filter_foreground[x] = 1;
+            }
     }
 }
 /* $2B20..$2BEC installs the weather map at C800/C840 (atlas rows
@@ -610,8 +638,8 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
 /* S3: a render scale above 1 presents an N x canvas whose content is the 1x
  * picture scaled by nearest in both axes. The road rows are then repainted at
  * output resolution by tg2_highres_build() once the frame is complete; every
- * other row keeps this nearest expansion (sprites, HUD and plane-A effects
- * stay native content until S4/S5). */
+ * other row keeps native detail. Linear On later interpolates this art with
+ * explicit native-layer coverage; it does not change LOD, size or positions. */
 static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                             uint32_t *out, int w) {
     int scale = tg2_highres_present_scale();
@@ -624,7 +652,13 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     }
     static uint32_t row1[4096];
     int w1 = w / scale;
+    static unsigned char foreground[4096];
+    int filtered = tg2_highres_linear_filter() && filter_layers &&
+                   filter_layers->width >= (unsigned)nw;
+    filter_foreground = filtered ? foreground : NULL;
     render_scanline_1x(v, line, native, nw, row1, w1);
+    if (filtered) tg2_highres_capture_native(line, row1, foreground, w1);
+    filter_foreground = NULL;
     for (int x = 0; x < w; ++x)
         out[x] = row1[x / scale];
 }
@@ -664,6 +698,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     }
     for (int x = 0; x < w; ++x)
         out[x] = 0xFF000000;
+    if (filter_foreground) memset(filter_foreground, 1, (size_t)w);
     /* Presentation-only: the stock top window band carried coloured
      * window-plane artefacts that CRT overscan hid. Blank the whole band in
      * every output mode, while an inactive window keeps menu rows intact. */
@@ -712,6 +747,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         out[x] = pal[bp ? bp : v->reg[7] & 63];
         unsigned ap = weather_pixel(v, line, nx, ha, va, ba);
         if (ap) out[x] = pal[ap];
+        if (filter_foreground) filter_foreground[x] = ap != 0;
     }
     unsigned window_mask = window_margins(v, line, native, nw, out, w);
     plane_a_margins(v, line, native, nw, pal, out, w, ha, va, ba);
@@ -746,11 +782,17 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
                 continue; /* solid high-priority window, as in the native compositor */
             if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
+                if (filter_foreground) filter_foreground[ox] = 1;
                 ++frame_margin_pixels;
             }
         }
     }
     memcpy(out + origin, native, nw * sizeof *out);
+    if (filter_foreground) {
+        int offset = ((int)filter_layers->width - nw) / 2;
+        for (int x = 0; x < nw; ++x)
+            filter_foreground[origin + x] = foreground_at(filter_layers, offset + x);
+    }
     hud_row(v, line, ha, hb, va, vb, ba, bb, pal, nw, out, w);
 }
 /* Completed pictures are immutable host snapshots. The guest still executes
@@ -1052,7 +1094,16 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     mix_reverse = 0;
     uint8_t indices[GVDP_MAX_WIDTH];
     uint32_t pixels[GVDP_MAX_WIDTH];
-    int count = gvdp_render_scanline(row_vdp, line, indices);
+    static GVDPRasterRow filtered_raster;
+    const GVDPRasterRow *saved_layers = filter_layers;
+    int count;
+    if (tg2_highres_linear_filter() && gvdp_capture_presented_scanline(row_vdp, line, &filtered_raster)) {
+        count = gvdp_compose_captured(&filtered_raster, indices);
+        filter_layers = &filtered_raster;
+    } else {
+        count = gvdp_render_scanline(row_vdp, line, indices);
+        filter_layers = NULL;
+    }
     for (int x = 0; x < count; ++x)
         pixels[x] = indices[x] < 192 ? genesis_dac_cram_to_argb(
             row_vdp->cram[indices[x] & 63], indices[x] >> 6) : 0xFF000000;
@@ -1060,6 +1111,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     shown = &mixed_scene;
     synthesizing = 1;
     draw_scanline(row_vdp, line, pixels, nw, out, w);
+    filter_layers = saved_layers;
     synthesizing = 0;
     shown = saved;
     put_word(row_vdp->vram, scroll_slot, scroll_saved);
@@ -1087,8 +1139,11 @@ static int compose_presented(uint32_t *pixels, int stride, int width,
      * canvas (widescreen off) is always wide enough. */
     if (width > native_w && width < native_w * scale)
         return 0;
+    int crop = tg2_video_get_hide_overscan() && crop_race_ok && crop_bottom_ok &&
+               crop_top_rows == CROP_TOP && width >= 256;
     return tg2_highres_build(present_frame, pixels, stride, width, native_w,
-                             native_h);
+                             native_h, crop ? CROP_TOP : 0,
+                             crop ? native_h - CROP_BOTTOM : native_h);
 }
 /* Called by the runner once per completed picture, after every native row was
  * produced. Cropping is presentation-only: the bands are dropped from what is
@@ -1220,9 +1275,25 @@ void tg2_video_highres_command(int id, const char *json) {
                           rows[line].va, rows[line].vb);
         n += snprintf(out + n, CAPACITY - n, "]");
     }
+    if (n > 0 && n < CAPACITY)
+        n += snprintf(out + n, CAPACITY - n, ",\"filtered_frames\":%u,\"filter_incomplete\":%u,\"native_filter\":%d",
+                      tg2_highres_filtered_frames(), tg2_highres_filter_incomplete(),
+                      tg2_highres_linear_filter());
     if (n > 0 && n < CAPACITY) snprintf(out + n, CAPACITY - n, "}");
     cmd_send_response(out);
     free(out);
+}
+/* Reuse the framework's immutable presented-row seam; sprite/status work is
+ * not repeated on the live VDP. Off uses exactly the legacy row producer. */
+static int filter_raster_enabled(const GVDP *v) {
+    return tg2_highres_linear_filter() && race(v);
+}
+static void scanline_presented(const GVDP *v, int line, int nw, uint32_t *out,
+                               int w, GameVideoNativeRow native_row, void *ctx,
+                               const GVDPRasterRow *raster) {
+    filter_layers = tg2_highres_linear_filter() ? raster : NULL;
+    scanline(v, line, native_row(ctx), nw, out, w);
+    filter_layers = NULL;
 }
 /* A render scale above 1 owns the canvas even with widescreen off; enabled()
  * keeps reporting the widescreen option itself. */
@@ -1230,4 +1301,5 @@ static int presented_width(void) { return tg2_highres_present_scale() > 1; }
 const GameVideo tg2_video = {
     .configure = configure, .enabled = enabled, .width = width, .scanline = scanline,
     .renderer_enabled = renderer_enabled, .present_window = present_window,
-    .present_frame = compose_presented, .presented_width = presented_width};
+    .present_frame = compose_presented, .presented_width = presented_width,
+    .raster_enabled = filter_raster_enabled, .scanline_presented = scanline_presented};

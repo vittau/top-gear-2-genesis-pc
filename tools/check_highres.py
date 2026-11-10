@@ -861,7 +861,7 @@ def read_ppm(path: Path):
     return w, h, parts[3]
 
 
-def downscale_against(native: Path, shot: Path, scale: int):
+def downscale_against(native: Path, shot: Path, scale: int, native_filter: bool = False):
     """Box-downsample the N x screenshot and compare it with the same frame's
     1x canvas (the builder's own input), cropped like the presented picture."""
     w, h, pixels = read_ppm(native)
@@ -871,6 +871,14 @@ def downscale_against(native: Path, shot: Path, scale: int):
     rows = ch // scale
     top = 8 if rows == 200 else (h - rows) // 2
     reference = pixels[top * w * 3:(top + rows) * w * 3]
+    if native_filter:
+        # Linear On intentionally filters native RGB before N x composition.
+        # Compare with the same linear sampling of the native reference, not
+        # with the unfiltered Off pixels. Road geometry has its own audit.
+        from PIL import Image
+        image = Image.frombytes('RGB', (w, rows), reference)
+        reference = image.resize((cw, ch), Image.Resampling.BILINEAR).resize(
+            (w, rows), Image.Resampling.BOX).tobytes()
     return compare_downscaled(reference, downsample(cpix, cw, ch, cc, scale))
 
 
@@ -906,6 +914,7 @@ def check_drive(args):
     try:
         state = enter_race_password(r, args.port, out, info['country'], info['stage'])
         item['race_start_frame'] = state.frame
+        item['native_filter'] = bool(r.command('tg2_highres')['native_filter'])
         pad, previous, last_shot = 0, None, 0
         start = r.frame()
         while r.frame() - start < args.frames:
@@ -936,8 +945,9 @@ def check_drive(args):
                     reference = out / f'frame-{st.frame}-1x.ppm'
                     native.replace(reference)
                     shot['native'] = str(reference)
-                    shot['downscale'] = downscale_against(reference, Path(path), args.scale)
+                    shot['downscale'] = downscale_against(reference, Path(path), args.scale, item['native_filter'])
                 shots.append(shot)
+        item['highres_filter'] = r.command('tg2_highres')
         video = r.command('tg2_video')
         item['video'] = {k: video.get(k) for k in
                          ('highres_scale', 'highres_capture_us', 'highres_build_us',
@@ -997,6 +1007,7 @@ def check_drive(args):
                                '--min-frames', str(args.min_frames)],
                               capture_output=True, text=True)
         item['road_artifacts'] = json.loads(report.read_text()) if report.exists() else None
+        item['road_artifacts_scope'] = 'analytic underlay before native-art filtering' if item.get('native_filter') else 'completed nearest picture'
         if proc.returncode != 0:
             failures.append(f"{tag}: road artefacts failed")
         if not (item['road_artifacts'] or {}).get('stripe_centres_checked'):

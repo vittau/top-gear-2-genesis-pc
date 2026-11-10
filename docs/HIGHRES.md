@@ -1103,7 +1103,8 @@ the single `--windowed` check; one runtime instance at a time.
 complete; the owner approved the five straight, curve, hill, rain and tunnel
 comparisons on 2026-11-10. The render scale is a player option on the shared
 "Internal resolution" row. Sprites, the HUD, the sky and plane-A effects still keep the native
-picture's content (nearest-scaled), as §8 S3 specifies. Detailed sprite, HUD
+picture's detail and size. Linear Off keeps the approved nearest scaling;
+Linear On now applies the opt-in native RGB filter described in LINEAR_FILTER.md. Detailed sprite, HUD
 and plane-A composition belongs to S4/S5.
 
 The five same-frame comparisons below put the native picture, enlarged by
@@ -1122,10 +1123,17 @@ The tunnel opening remains native plane-A art (see §13.5).
 
 Linear Filter still samples the final N× canvas. At an exact 1:1 canvas/output
 ratio it can produce identical On/Off race pictures while native menus still
-change; see [the S3 filter investigation](LINEAR_FILTER.md#s3-a-correct-final-sampler-can-have-no-visible-effect). Native-art filtering inside S3 is a pending
-policy proposal, not an implemented change.
+change; see [the S3 filter investigation](LINEAR_FILTER.md#s3-a-correct-final-sampler-can-have-no-visible-effect). The coordinator approved game-owned native-art filtering with Linear On;
+Linear Off retains the accepted nearest art and unchanged analytic road.
 
 ### 13.1 What was built
+
+- **Linear On native-art sampling (task 35 follow-up).** The coordinator
+  approved applying the existing live filter to native RGB at N×. Immutable
+  plane/sprite coverage and the game's margin/HUD ownership determine the
+  native art's premultiplied coverage over the independent analytic road.
+  The road is not downscaled or blurred; Linear Off and all accepted images
+  keep their original pixels. This adds no detail/LOD work from S4/S5.
 
 - **Vertical duplication of the picture.** At a render scale above 1 the row
   renderer still draws the 1× canvas row, exactly as before, into a scratch row;
