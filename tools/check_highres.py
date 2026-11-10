@@ -420,8 +420,8 @@ def check_split(args):
         path = out / 'split2p.input'
         path.write_text(script.text())
         r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
-                   widescreen='16:9', max_frames=script.frame + 300,
-                   env_extra={'TG2_HIGHRES_SCALE': '4' if provider else '1',
+                   widescreen=args.mode, max_frames=script.frame + 300,
+                   env_extra={'TG2_HIGHRES_SCALE': str(args.scale) if provider else '1',
                               'TG2_HIGHRES_TEST_PROVIDER': '0'},
                    extra_args=['--turbo', '--hash-frames', '1',
                                '--input-script', str(path)],
@@ -452,7 +452,9 @@ def check_split(args):
     widths = {w for item in results for (w, _, _) in item['frames'].values()}
     if heights - {224, 448}:
         failures.append(f'2P presented height changed: {sorted(heights)}')
-    if any(w > 398 for w in widths):
+    numerator, denominator = (int(x) for x in args.mode.split(':'))
+    expected_width = int(224 * numerator / denominator + 0.5)
+    if any(w > expected_width for w in widths):
         failures.append(f'2P presented width changed: {sorted(widths)}')
     common = sorted(set(stock['frames']) & set(test['frames']))
     differing = [f for f in common if stock['frames'][f] != test['frames'][f]]
@@ -466,7 +468,8 @@ def check_split(args):
         for name, count in item['manifests'].items():
             if count != 0:
                 failures.append(f"{item['tag']}: manifest {name} has {count} entries")
-    summary = {'check': 'split', 'runs': results, 'widths': sorted(widths),
+    summary = {'check': 'split', 'mode': args.mode, 'test_scale': args.scale,
+               'runs': results, 'widths': sorted(widths),
                'heights': sorted(heights), 'compared_frames': len(common),
                'failures': failures, 'ok': not failures}
     (out_root / 'split-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
@@ -1151,6 +1154,9 @@ def main():
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
         s.add_argument('--out', type=Path, default=ROOT / 'build/highres-check')
         s.add_argument('--port', type=int, default=4494)
+    s = sub.choices['split']
+    s.add_argument('--mode', default='16:9', choices=['16:9', '32:9'])
+    s.add_argument('--scale', type=int, default=4, choices=[2,3,4])
     s = sub.choices['g1']
     s.add_argument('--frames', type=int, default=360)
     s = sub.choices['capture']

@@ -611,6 +611,9 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
 static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                             uint32_t *out, int w) {
     int scale = tg2_highres_present_scale();
+    /* A wide native menu/2P canvas can also be divisible by N and wider
+     * than nw*N. Dimensions alone do not make it an N x race picture. */
+    if (scale > 1 && (nw != 256 || !race(v))) scale = 1;
     if (scale <= 1 || w % scale || w / scale < nw) {
         render_scanline_1x(v, line, native, nw, out, w);
         return;
