@@ -602,9 +602,11 @@ chip B stays bit-comparable with SOUND EFFECTS and the mix stays exactly A + B.
 
 **Those numbers were measured before task 37 and are superseded.** Their
 residual was the persisted-BOTH boot upload corrupting the music driver's
-octave table (`$25E..$261`, section 5). On the fixed build the same boot window
-(120–390) is sample-identical to MUSIC, and so is every menu/pre-race window —
-Task 37's own measurement follows.
+octave table (`$25E..$261`, section 5). `tools/verify_both_boot.py` measures the
+same 400–900 window on the fixed build and reports **correlation 1.000000**
+(BOTH vs MUSIC, BOTH vs SOUND EFFECTS and MUSIC vs SOUND EFFECTS all 1.000000),
+and every menu/pre-race window is sample-identical — task 37's own measurement
+follows.
 
 ### Task 37: persisted BOTH, per-screen audio and driver RAM
 

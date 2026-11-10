@@ -48,8 +48,9 @@ through the existing `s_sfx_upload` window (`$0700C8` → RTS `$070188`).
   empty after.
 * Chip A vs MUSIC, same route: 0.973–0.997 before, **1.000000 with maximum
   sample difference 0** after, for title, main menu, 1P setup, track intro and
-  shop. Race window 0.9883 → 0.9953 with an identical note stream (the residual
-  is BOTH's extra BUSREQ/tick timing, not pitch).
+  shop. `tools/verify_both_boot.py`'s 400–900 window (the 0.995227 of the old
+  record) now reads 1.000000. Race window 0.9883 → 0.9953 with an identical
+  note stream (the residual is BOTH's extra BUSREQ/tick timing, not pitch).
 * Register level: 24 of 25 diverging note writes were `$A5 = $04` (block 0)
   where MUSIC wrote `$24` (block 4) for note `$37` on FM channel 2; 0 pitch
   divergences after the fix.

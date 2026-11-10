@@ -1343,3 +1343,13 @@ Regression test: `tools/verify_both_driver_image.py` (exit 0 on the fixed
 build). Not verified: the owner listening to the fixed build, Deck audio, and a
 quickstate saved in an affected session, which keeps the corrupted driver bytes
 until the next boot re-uploads the driver.
+
+Post-fix re-run of the existing boot regression: `tools/verify_both_boot.py`
+reports BOTH vs MUSIC, BOTH vs SFX and MUSIC vs SFX all **1.000000** on its
+400–900 window (the same window that recorded 0.995227 before), exit 0. A
+mid-race BOTH quickstate saved at frame 3004 and loaded back in the same process
+keeps the driver table equal to ROM and keeps issuing SFX commands (174 before
+the save, 610 after the load), so the command-port predicate agrees with the
+machine image after a state load. A cold reset restores the pre-boot machine
+(both cores' RAM zeroed), which the predicate treats as "no image resident"; a
+second race re-runs the same `$0700C8` upload that was verified here.
