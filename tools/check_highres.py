@@ -886,12 +886,14 @@ def check_drive(args):
     env = {'TG2_HIGHRES_SCALE': str(args.scale),
            'TG2_RACE_60FPS': '1' if args.race60 else '0',
            'TG2_HIGHRES_TIMING': '1'}
+    if args.no_audit:
+        env['GENESIS_FRAME_STATS'] = str(out / 'frame-stats.csv')
     if not args.no_audit:
         env['TG2_ROAD_AUDIT_DIR'] = str(audit)
         env['TG2_MARGIN_AUDIT'] = str(out / 'margins.csv')
     r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
                widescreen=args.mode, max_frames=400000, env_extra=env,
-               extra_args=['--turbo'], timeout=120)
+               extra_args=[] if args.no_audit else ['--turbo'], timeout=120)
     item = {'tag': tag, 'track': args.track, 'scale': args.scale, 'mode': args.mode,
             'race60': bool(args.race60), 'frames': args.frames}
     trace, shots, failures = [], [], []
@@ -946,6 +948,21 @@ def check_drive(args):
         r.set_input(0)
     finally:
         item['exit'] = r.stop()
+    if args.no_audit:
+        import csv
+        import statistics
+        with (out / 'frame-stats.csv').open() as stream:
+            rows = [row for row in csv.DictReader(stream) if int(row['frame']) >= start]
+        cpu_work = sorted(max(0, sum(int(v) for k, v in row.items()
+                                    if k.startswith('cpu') and k != 'cpu_wait_us') -
+                              int(row['cpu_wait_us'])) for row in rows)
+        if not cpu_work:
+            failures.append(f'{tag}: no realtime CPU frame costs recorded')
+        else:
+            item['cpu_work_us'] = dict(frames=len(cpu_work),
+                                      p50=statistics.median(cpu_work),
+                                      p95=cpu_work[int(.95 * (len(cpu_work) - 1))],
+                                      mean=round(statistics.mean(cpu_work), 1))
     (out / 'trace.json').write_text(json.dumps(trace) + '\n')
     item.update({'shots': shots, 'manifests': empty_manifests(out),
                  'steps': len(trace),
