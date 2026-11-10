@@ -1,37 +1,21 @@
 #!/usr/bin/env python3
-"""High-resolution rendering checks: S1 (row-state capture) and S2 (engine
-seam for a taller presented picture), per docs/HIGHRES.md §8.
+"""High-resolution qualification (docs/HIGHRES.md §8, S3).
 
-Subcommands:
+  g1        Canonical Off/1x hashes, non-race canvases, all four manifests.
+  s3        Same-frame baseline-route PNGs and box-downscale comparison, 1x..4x.
+  drive     Closed-loop track drive, road/stripe-centre/margin audits, paired
+            1x/Nx pictures; --no-audit measures cost without audit/dump work.
+  nx        Deterministic baseline-route road and margin audit.
+  captures  Password-entry track captures (drive also supplies moving pictures).
+  option    settings.ini and real Esc-menu scale persistence.
+  launcher  Real macOS launcher persistence, scripted in a hidden cocoa window.
+  split     Exact-frame 1x versus 4x two-player hashes; geometry stays native.
+  cap       3x adaptive canvas cap and Off/fixed-aspect transitions.
+  capture   S1 row-state capture versus the live renderer.
+  route     Historical S1/S2 identity check, only for a stubbed Nx builder.
 
-  g1        Canonical framebuffer hashes with the render scale at 1 and above
-            (the S1 builder copies native rows, so every hash must match), in
-            both `--widescreen off` and `16:9`, and with the temporary S2 test
-            provider enabled on non-race frames. Every run must also leave the
-            four runtime manifests empty.
-
-  capture   Drive a race and sample the compact per-row capture three times.
-            Compares every captured row with the live row words the renderer
-            used for the same picture, and reports the capture cost.
-
-  s2        Drive a race with the temporary synthetic test provider and check
-            that the taller picture is presented correctly (dimensions and
-            pattern content) in `off` and `16:9`, that menus keep the stock
-            canvas and height, and that the 1x picture is unchanged. Add
-            `--windowed` for the one real-window check.
-
-  route     Replay the committed baseline route (frame-exact input script) at
-            scale 1 and at scale 2 with the builder stub, in `off` and `16:9`,
-            and require the same framebuffer hash on every sampled frame,
-            race frames included. This is the byte-identity gate for S1/S2.
-
-  split     Run the committed two-pad split-screen script at scale 2 with the
-            test provider off and on: the 2P flag must be observed, no picture
-            may grow, and every framebuffer hash must match. 2P is excluded
-            from the N x path by design.
-
-Only read-only TCP queries and controller input are used. All captures stay
-under the ignored build/ directory. Nothing here writes guest state.
+All guest-state access is read-only; controller/UI input drives the real game.
+Captures remain under ignored build/. Launcher qualification restores settings.
 """
 from __future__ import annotations
 
@@ -1060,6 +1044,48 @@ def check_nx(args):
     return 0 if not failures else 1
 
 
+def check_launcher(args):
+    """Exercise the real macOS launcher in a hidden window, then restore config."""
+    import os
+    if sys.platform != 'darwin':
+        raise RuntimeError('launcher qualification currently uses the macOS cocoa driver')
+    out = args.out / 'launcher'
+    out.mkdir(parents=True, exist_ok=True)
+    settings = args.exe.parent / 'settings.ini'
+    backup = settings.read_bytes() if settings.exists() else None
+    results, failures = [], []
+    try:
+        settings_write(settings, 'internal_scale', 1)
+        for value in (2, 3, 4, 1):
+            shot = out / f'selected-{value}.png'
+            # Fixed logical size, independent of Retina framebuffer density.
+            script = (f'size:1100x818;view:settings;wait:8;click:450,237;wait:4;'
+                      f'click:450,{288 + 26 * (value - 1)};wait:4;shot:{shot};quit')
+            env = dict(os.environ, SDL_VIDEODRIVER='cocoa', SDL_AUDIODRIVER='dummy',
+                       LNG_TEST_HIDDEN='1', LNG_SCRIPT=script)
+            for key in ('APPIMAGE', 'TG2_HIGHRES_SCALE', 'GENESIS_NO_LAUNCHER'):
+                env.pop(key, None)
+            with (out / f'selected-{value}.log').open('w') as log:
+                proc = subprocess.run([str(args.exe), str(args.rom), '--launcher'],
+                                      cwd=args.exe.parent, env=env, stdout=log,
+                                      stderr=subprocess.STDOUT, timeout=25)
+            actual = settings_read(settings, 'internal_scale')
+            results.append(dict(selected=value, persisted=actual, exit=proc.returncode,
+                                screenshot=str(shot), script=script))
+            if proc.returncode != 0 or actual != value or not shot.exists():
+                failures.append(f'launcher {value}: exit {proc.returncode}, persisted {actual}')
+    finally:
+        if backup is None:
+            settings.unlink(missing_ok=True)
+        else:
+            settings.write_bytes(backup)
+    summary = dict(check='launcher', runs=results, failures=failures, ok=not failures,
+                   driver='cocoa', hidden=True)
+    (out / 'launcher-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps(summary, indent=2))
+    return int(bool(failures))
+
+
 def check_cap(args):
     """An extreme adaptive output still has whole N-pixel columns at 3x."""
     out = args.out / 'cap'
@@ -1102,7 +1128,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split', 'cap'):
+    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split', 'cap', 'launcher'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
@@ -1156,7 +1182,8 @@ def main():
             p.error(f'--{name} not found: {getattr(args, name)}')
     return {'g1': check_g1, 'capture': check_capture, 's3': check_s3,
             'nx': check_nx, 'drive': check_drive, 'captures': check_captures, 'option': check_option,
-            'route': check_route, 'split': check_split, 'cap': check_cap}[args.check](args)
+            'route': check_route, 'split': check_split, 'cap': check_cap,
+            'launcher': check_launcher}[args.check](args)
 
 
 if __name__ == '__main__':
