@@ -437,7 +437,8 @@ typedef struct {
     int32_t lane_error_x256;           /* worst measured stripe-centre error */
 } NxAuditRow;
 enum { NX_FLAG_INTERPOLATED = 1, NX_FLAG_FULL = 2, NX_FLAG_STRUCTURE = 4,
-       NX_FLAG_AMBIGUOUS = 8 };
+       NX_FLAG_AMBIGUOUS = 8, NX_FLAG_LANE_AMBIGUOUS = 16,
+       NX_FLAG_LANE_CLASSIFIED = 32 };
 
 static const char *nx_audit_dir(void) {
     static int checked;
@@ -486,6 +487,7 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
         }
     }
     a->lanes_src = lanes_src;
+    a->flags |= NX_FLAG_LANE_CLASSIFIED;
     double lane_centres[ROAD_MAX_RUNS];
     int lane_count = 0;
     for (int i = runs->first; i <= runs->last; ++i) {
@@ -506,7 +508,8 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
             if ((runs->index[j] & 15) != 6 || colour[i] != colour[j]) continue;
             double gap = j < i ? boundaries[i] - boundaries[j + 1]
                                : boundaries[j] - boundaries[i + 1];
-            if (gap * scale < 2.0) a->flags |= NX_FLAG_AMBIGUOUS;
+            if (gap * scale < 2.0)
+                a->flags |= NX_FLAG_AMBIGUOUS | NX_FLAG_LANE_AMBIGUOUS;
         }
     }
     /* A verge that shares a colour with the road (fades, some palettes) cannot
@@ -559,6 +562,11 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
                 if (d < best_d || (d == best_d && kind[i] > kind[best])) { best_d = d; best = i; }
             }
             int kd = kind[best];
+            /* Snow/verge can be the same white as a lane. Count lanes only
+             * inside the road interval; road-edge geometry remains separately
+             * marked ambiguous when its colours cannot identify the verge. */
+            if (kd == 2 && (x + 0.5 < boundaries[runs->first] * scale ||
+                            x + 0.5 >= boundaries[runs->last + 1] * scale)) kd = 0;
             if (kd == 2) {
                 for (int i = runs->first; i <= runs->last; ++i) {
                     if ((runs->index[i] & 15) == 6 && colour[i] == colour[best] &&

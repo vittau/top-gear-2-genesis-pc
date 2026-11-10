@@ -78,6 +78,7 @@ NX_DTYPE = np.dtype([(name, '<i4') for name in (
     'seen_l', 'seen_r', 'lanes', 'lanes_src', 'holes',
     'outliers', 'margin_outliers', 'band', 'lane_error_x256')])
 NX_INTERPOLATED, NX_FULL, NX_STRUCTURE, NX_AMBIGUOUS = 1, 2, 4, 8
+NX_LANE_AMBIGUOUS, NX_LANE_CLASSIFIED = 16, 32
 # The fitted silhouette may sit this far from the authored one (FIT_LIMIT in
 # game/tg2_highres.c), in native pixels.
 NX_FIT_LIMIT = 1.5
@@ -148,11 +149,18 @@ def main_nx(a):
                                               float(geometry.max()))
         # 4. No verge pixel inside the road, and the lane marks are all there.
         bad_hole = full & (r['holes'] > 0)
-        bad_stripe = free & (r['lanes'] != r['lanes_src'])
-        totals['stripe_rows_checked'] += int(free.sum())
+        # A winter verge can equal the lane colour while asphalt still
+        # separates the interior stripes. New records classify lane pixels
+        # only inside the strip, independently of edge-colour ambiguity.
+        lane_free = np.where(r['flags'] & NX_LANE_CLASSIFIED != 0,
+                             (r['flags'] & NX_FULL != 0) &
+                             (r['flags'] & NX_LANE_AMBIGUOUS == 0) &
+                             (el > 1) & (er < w1 - 1), free)
+        bad_stripe = lane_free & (r['lanes'] != r['lanes_src'])
+        totals['stripe_rows_checked'] += int(lane_free.sum())
         bad_centre = np.zeros(len(r), dtype=bool)
         if 'lane_error_x256' in r.dtype.names:
-            lane_rows = free & (r['lanes_src'] > 0)
+            lane_rows = lane_free & (r['lanes_src'] > 0)
             error = np.where(lane_rows, r['lane_error_x256'] / 256.0, 0.0)
             bad_centre = error > 1.5
             totals['stripe_centres_checked'] += int(lane_rows.sum())
