@@ -14,7 +14,7 @@ Rules that apply to every item:
   other versions of Top Gear 2.
 - When an owner request is added or settled, update this file, not `STATUS.md`.
 
-## Current plan (owner, 2026-11-09)
+## Current plan (owner, 2026-11-10)
 
 The owner picked the first items to work on, in this order:
 
@@ -22,17 +22,20 @@ The owner picked the first items to work on, in this order:
    **Paused by the owner on 2026-11-09** before any code was written (the
    Blargg LGPL question is open too). Branch `vittau/tg2-ntsc-scanlines` has
    no commits.
-2. **High-resolution rendering** — research and design first
-   ([task 29](tasks/29-highres-design.md), in progress), then implementation
-   from that design (a later task).
+2. **High-resolution rendering** — design (task 29), S1/S2 (task 31) and
+   S3 (task 33) are complete and merged. The owner approved S3's visuals and
+   requested a Linux draft for his Steam Deck. Address its new playtest
+   feedback first; [S4/task 34](tasks/34-highres-s4.md) is prepared, not started.
+   S3/S4 implementation is restricted to Opus, Fable or Sol.
 3. **Clean FM, separate volumes and better engine/nitro PCM** —
-   [task 30](tasks/30-clean-fm-and-pcm.md), implemented; awaiting the owner's
-   listening confirmation.
+   [task 30](tasks/30-clean-fm-and-pcm.md): finished Music/SFX faders remain;
+   the owner rejected Clean FM and Clean engine samples after listening and
+   they were removed. Do not reintroduce them as unfinished release work.
 
-How they run, to avoid rework (at most two workers at once): task 29 and
-task 30 run in parallel now, since audio shares no code with the video work.
-The high-resolution implementation starts once the task 29 design is
-accepted and a worker slot is free.
+No worker remains active at the session checkpoint. See
+[CONTINUATION.md](CONTINUATION.md) for source/build revisions, draft assets,
+validation evidence, retained worktrees and next-session decisions. Keep at
+most two supervised workers and serialize heavy steps with the shared lock.
 
 Shared rules fixed up front, kept while NTSC is paused so it can resume
 without rework: NTSC runs at native source resolution and is mutually
@@ -117,8 +120,10 @@ Render races above 224p in our renderer. This would also give the
 It uses the same assets, only better, which fits the owner's rule on foreign
 assets.
 
-First steps: map the LOD tables (pattern sets per object and distance
-thresholds), and find which per-line road state is enough to re-rasterise.
+S3's road rasteriser is accepted and merged. Next, finish the partially
+mapped per-type LOD ladders and capture actor metadata for S4; see
+[task 34](tasks/34-highres-s4.md). Start with any fresh S3/Deck defect the
+owner reports. Detailed scope and remaining boundaries are in HIGHRES §13.
 
 Design and ground truth: [docs/HIGHRES.md](HIGHRES.md) (task 29). It maps the
 per-line road state, the atlas geometry and palette banks, and the sprite LOD

@@ -1184,4 +1184,40 @@ plane-A composition in S5; the S3 nearest plane-A path and margins are tested.
 The colour terrain mask can confuse an overlay pixel matching its underlying
 plane-B colour; S4/S5 need explicit coverage masks. See HIGHRES §13.5.
 
-No CI, tag, release, audio implementation change, or main merge was made.
+The S3 worker made no CI, tag, release, audio implementation change or main
+merge during qualification. After the owner's visual approval, the coordinator
+merged S3 and built the Linux draft below.
+
+## S3 merge and Steam Deck draft (2026-11-10)
+
+Owner-approved S3 was merged into `main` as
+`a2057597b29de1542a0dbc8d21a7aed9a80c918e`. The only merge conflict was the
+HIGHRES documentation's S3 completion line; the approved high-resolution
+implementation and patches were retained. The existing main audio-option
+removals were retained too.
+
+Coordinator command `gh workflow run build.yml --ref main -f platforms=linux
+-f dry_run=false` exited 0 and created
+[run 42842299392](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/42842299392).
+Linux and independent Linux verification both succeeded; Windows/macOS and
+the full-matrix release job were skipped. Tarball/AppImage content checks
+passed; both downloaded payloads need glibc 2.34 (≤2.35 gate) and smoke-ran
+600 frames with the ROM auto-detected, exit 0, no true dispatch misses.
+
+`gh run download`, local streamed checksum comparison and
+`tools/release/verify_artifact.py` all exited 0. BUILD-INFO identifies game
+`a205759`, engine `dd520f1f975a`, version `0.1.0-ga205759`, Release profile,
+TCP and reverse-debug disabled. The tarball SHA-256 is
+`37ae02c929a223ad6300a1d7243f196864a902f390b1415a9006347ab6434618`;
+AppImage is `e5ea30e405cd798869a34f467a5f2cbf9fa7832b91f1e15d653a5ef33945e825`.
+
+`gh release create deck-s3-20261110 --draft --prerelease --latest=false
+--target a2057597b29de1542a0dbc8d21a7aed9a80c918e` (with the tarball,
+AppImage, SHA256SUMS and handwritten notes) exited 0. A subsequent metadata
+read confirmed all three uploaded assets/digests, the exact source target,
+and `isDraft=true`. [Draft URL](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-fb40acbd6ff0b4a9d90d).
+No `v*` tag or published release was created.
+
+The owner clarified he uses the **extracted tar.gz** on his Deck. This
+draft's real-device result is still pending; CI does not establish Deck GPU,
+gamepad or pacing behaviour. See CONTINUATION.md for the next coordinator.

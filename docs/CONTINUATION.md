@@ -1,0 +1,151 @@
+# Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
+
+Session checkpoint: 2026-11-10. The owner is ending the session. Do not launch
+new implementation work merely because this checkpoint exists.
+
+## Start here
+
+1. Read `AGENTS.md`, this file, `STATUS.md`, and `HIGHRES.md` §§3, 8, 9, 13.
+2. Read the owner's new feedback before choosing the next task. Fix a reported
+   S3/Deck defect first; otherwise S4 is the next high-resolution step, with
+   a prepared brief in [task 34](tasks/34-highres-s4.md).
+3. Use Orca's `orca-cli` and `orchestration` skills for supervised workers.
+   **Only Opus, Fable or Sol may implement S3/S4.** The last worker used
+   Codex `gpt-6.1-sol`, medium. Do not fall back to Flash/Haiku for this work.
+
+## Git and completion state
+
+- S3 is implemented, locally qualified, visually accepted, and merged into
+  `main` as `a2057597b29de1542a0dbc8d21a7aed9a80c918e`.
+- The owner viewed the five curated same-frame native/2× comparisons (straight,
+  curve, hill, rain, tunnel) in Preview and said **“Está ótimo.”** Approval was
+  recorded in `d78e513`, before the merge. Do not ask for that approval again.
+- S3's branch is `vittau/tg2-highres-s3`, at `d78e513` when merged. The old
+  checkout remains at
+  `/Users/vitor/orca/workspaces/top-gear-2-genesis-pc/tg2-highres-s1-s2`.
+  Its name reflects its history, not unfinished S1/S2 work. Begin new changes
+  from current `main`; the S3 branch lacks the later documentation commits
+  and retained some older audio code that `main` correctly removed.
+- The root checkout is `/Users/vitor/git/top-gear-2-genesis-pc` on `main`.
+  At the checkpoint its only pre-existing dirt was the engine's applied
+  patches and an untracked `.DS_Store`. Neither was added to the merge.
+  The engine upstream pin remains `dd520f1`; do not commit a patched pin.
+  The root engine working tree was not reset/rebuilt after the merge: its
+  applied patch set may be stale. Snapshot both nested source trees before
+  refreshing the current project patch stack, then regenerate/build. The
+  successful CI used a clean recursive checkout of the exact merge revision.
+- No S4 implementation has started. Task 28 (NTSC/scanlines) remains paused.
+  Clean FM and Clean engine samples were rejected and removed; keep the
+  finished Music/SFX volume controls. Do not restore the withdrawn options.
+
+## Draft delivered for the owner's Steam Deck test
+
+- Tag name on the draft: `deck-s3-20261110`.
+- [Open the draft](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-fb40acbd6ff0b4a9d90d).
+  It is **draft + prerelease**, not published. Its target is `a205759`, not a
+  future `main` revision. GitHub uses an `untagged-*` URL for this draft.
+- [Linux-only CI run 42842299392](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/42842299392)
+  passed both Linux jobs. Windows/macOS were deliberately skipped. No `v*`
+  tag or full platform matrix was pushed for this Deck-only draft.
+- Assets: `TG2Recomp-linux-x86_64.tar.gz`, `TG2Recomp-x86_64.AppImage`,
+  `SHA256SUMS`. Built version: `0.1.0-ga205759`; engine `dd520f1f975a`;
+  Release profile, static SDL2/C++ runtime, TCP/reverse-debug rings disabled.
+- Both tarball and AppImage passed content gates and 600-frame headless
+  smoke tests with ROM discovery by content, exit 0. The downloaded packages
+  were independently checked in CI: highest required glibc symbol **2.34**,
+  within the **≤2.35** release floor. SHA-256:
+
+  ```text
+  37ae02c929a223ad6300a1d7243f196864a902f390b1415a9006347ab6434618  TG2Recomp-linux-x86_64.tar.gz
+  e5ea30e405cd798869a34f467a5f2cbf9fa7832b91f1e15d653a5ef33945e825  TG2Recomp-x86_64.AppImage
+  ```
+
+- **Owner uses the extracted tar.gz on the Deck, not AppImage.** Continue
+  supporting that folder layout and the existing Steam shortcut to
+  `TG2Recomp`; keep his ROM, settings and saves. A matching executable path
+  avoids changing the shortcut. Do not require migration to AppImage.
+- Internal resolution defaults to **1×**. To test S3, select 2× in the shared
+  Internal resolution row and restart. Check Adaptive 16:10, gamepad/overlay,
+  audio and frame pacing. This draft's real Deck result has **not** been
+  reported yet. The owner had played an older tarball and reported aspect/log
+  issues; do not describe the Deck as never having been played at all.
+- A later fix needs a new build with an explicit source revision; never
+  silently relabel these existing binaries as containing new commits.
+  Draft creation does not authorize publishing or a future release tag.
+
+## Evidence and known boundaries
+
+Committed references: `HIGHRES.md` §13, `VALIDATION.md` task 33,
+`tasks/33-highres-s3.md`, and `docs/images/highres-{straight,curve,hill,rain,tunnel}.png`.
+
+Local ignored evidence is in the retained S3 checkout:
+
+- `build/s3-reverify/worker-report.md` — exact changes, commands and exit codes.
+- `build/s3-reverify/final-summary.json`, `qualification-commands.json`,
+  `commands.json`, per-track `drive/` summaries and same-frame 1×/N× pairs.
+- `build/s3-wide-menu-{before,after}/summary.json` and
+  `build/s3-wide-2p/split2p/split-summary.json`.
+
+Final local qualification: 22,575 presented images, 445,794 measured stripe
+rows, zero audit violations, maximum stripe-centre error 0.5 output pixel;
+all four execution manifests empty. Stock frame hashes remain
+`60=2A0B972960C5E325`, `300=1131D937D70234FD`. Stock 1× 60-fps comparison has
+360/360 distinct pictures, unchanged sampled RAM and identical WAV hash.
+Measured builder cost on this Mac: 0.803/1.067/1.396 ms at 2×/3×/4×; these
+are local development CPU measurements, not Deck/GPU performance claims.
+
+S3 fixes worth protecting: serial freshness beyond 65,535 captures; 3× cap
+at 4095 columns; native menus/2P not accidentally expanded at 32:9; actual
+H32 Off width (3× = 768×600, not 960×600); real option/launcher persistence;
+white lane/border/snow classification in the audit.
+
+Remaining scope is deliberate:
+
+- Sprites/HUD/sky/plane-A art retain native detail. S4 handles actors, S5
+  HUD/effects/weather and tunnel-opening artwork.
+- S3's colour terrain mask can repaint an overlay pixel matching plane B.
+  No visible failure was found in approved captures; S4/S5 need explicit
+  layer/coverage handling rather than more colour heuristics.
+- Full N× + 60-fps temporal qualification belongs to S6; current N× evidence
+  includes a short combined smoke only. Stock 1× 60 fps is qualified.
+- Scale switching requires restart (live switching is S7); NTSC exclusion
+  awaits the future filter. GPU/Deck performance still needs playtest evidence.
+
+## Validation and coordination preferences
+
+The owner questioned the expensive full scale matrix. It had already finished
+by the time the reduction reached the worker. **Do not repeat it.** Reuse
+valid evidence; use short directed checks in 2×/3×/4×, one long audit at the
+largest effective scale, and weather/tunnel in one scale unless an actual
+scale-specific failure justifies more. Keep stock gates and manifests.
+`HIGHRES.md` §13.4 has the reduced reproduction recipe.
+
+Build/heavy-analysis lock and ≤3 jobs still apply. Run headless; one runtime
+at a time. CI remains manual, Linux by default, coordinator only. Do not
+publish audio/graphics WIP. Keep ROMs, dumps, generated C and saves out of
+git and release assets. Before anything that could discard a checkout,
+snapshot untracked files too, following the global instructions.
+
+Orca run: `run_c27967950521`. Successful implementation dispatch:
+`ctx_691e1900abf0`; documentation follow-up: `ctx_19e86d733377` (succeeded,
+exited and released). There is no active build, runtime, probe or worker
+assignment at this checkpoint. Rediscover handles after a restart.
+The abandoned historical Fable dispatch `ctx_f40a338dbfcc` has retained
+metadata; its exact observation previously confirmed exit. Do not revive
+that stale assignment as if S3 were still unfinished.
+
+Other inactive TG2 checkouts were removed from Orca at the owner's request:
+`tg2-clean-fm-pcm`, `tg2-deck-aspect-logs`, `tg2-highres-design`,
+`tg2-ntsc-scanlines`. Branches were retained. Before removal, full source
+trees (including dirty nested submodules and untracked source) were committed
+to safety refs and exported to verified Git bundles. Recovery manifest:
+`~/.cache/tg2-worktree-backups/20261110/manifest.json`. Original Fable WIP was
+also committed/pushed as `bb8f45f`; the retained S3 checkout has
+`refs/keep/tg2-s3-fable-{core,engine,worktree}-20261110` in the respective repos.
+
+When the owner returns, report where things stand in plain language. If input
+is actually needed, follow his global red-callout, ping and Telegram
+“Claudão” instructions. The existing Make notification scenario is
+`6660765`, connection `11751065` (“Claudão”), organization `9317102`, team
+`3207272`; discover and verify its current interface before use, never write
+credentials into this repository.

@@ -1,11 +1,18 @@
-# Project status (2026-11-09)
+# Project status (2026-11-10)
+
+**Next coordinator:** start with [CONTINUATION.md](CONTINUATION.md).
+S3 is merged and visually approved; the Linux-only Steam Deck draft is ready.
+The owner uses the extracted tar.gz and has not yet reported this draft's
+playtest. Address new S3/Deck feedback first, then use the prepared
+[S4 brief](tasks/34-highres-s4.md). No implementation worker is active.
 
 **v0.1.0 is out** (published 2026-11-08, tag on `f1cb093`; release notes in
 `release/v0.1.0.md`). It is a native Top Gear 2 for Windows, Linux/Steam Deck
 and macOS, with widescreen, true 60 fps, music and SFX together, save states
 and controller-only play. It has been played on Linux (Ryzen 5 3500U) and
-macOS (Apple Silicon); Windows, Intel macOS and the Steam Deck only pass CI
-headless smoke tests so far.
+macOS (Apple Silicon). The owner also played an older Linux tarball on the
+Steam Deck; the latest aspect/logging fixes and S3 still need his Deck test.
+Windows and Intel macOS have CI headless smoke evidence only.
 
 Where to look:
 
@@ -22,6 +29,7 @@ Where to look:
 | Native 4:3 baseline | Boot → menus → full 4-lap race → results/shop/next race; 2P split-screen; 33.7-min soak, plus a 43.7-min soak with all options on (16:9 + Edges + 60 fps + Hide overscan, 13 races, SP stable). 0 dispatch misses. | `BRINGUP.md`, `VALIDATION.md` |
 | All 64 races | Password codec reversed (`PASSWORDS.md`, `tools/tg2_password.py`). All 16 countries raced for 62 s in Off and 16:9+Edges, 0 manifest entries; rain, night, fog and snow covered. Task 25 drove the last 19 races (index selected from the ROM table on the setup screen) to the finish: 64/64. Nitro = C button. | `VALIDATION.md` |
 | Widescreen | Adaptive / 16:9 / 21:9 race renderer: road, background, sprites in the margins. HUD Centered or Edges. Off is byte-identical to stock. | `WIDESCREEN.md` |
+| High-resolution S3 | Road rasteriser at 2×/3×/4×, default 1×, restart required. Owner approved straight/curve/hill/rain/tunnel comparisons; merged in `a205759`. 22,575 audited images, 0 violations. Sprites/HUD/effects remain native detail; S4 is prepared, not started. | `HIGHRES.md` §13, `CONTINUATION.md` |
 | Widescreen fixes from playtests | Black bands on downhills, the top-window line, tunnel margins (now follow the walls), and the motion-only flicker in 60 fps synthesized frames. Full-presented-frame margin audit: 1019 → 0. | `WIDESCREEN.md` |
 | Hide overscan | Default On: crops the 8 top and 16 bottom empty race lines (the top band's stock red marks go with them), so the picture fills the window. Menus, results and split-screen keep their full height. | `WIDESCREEN.md` |
 | 60 fps | Stock simulation plus host-only interpolation. Identical WRAM over 16000 frames; 60 pictures/s; no road artefacts; adds 50 ms display latency. | `FRAMERATE.md` |
@@ -46,7 +54,10 @@ submodule pin is upstream `dd520f1`.
 
 ## Known limitations
 
-- Windows, Intel macOS and the Steam Deck are unplayed on real hardware.
+- Windows and Intel macOS lack real-device playtests. The new Linux S3 draft
+  still needs the owner's Steam Deck performance, controller and visual check.
+- Full N× + 60-fps qualification is S6; live scale switching is S7. S3's
+  same-colour terrain-mask ambiguity is recorded in HIGHRES §13.5 for S4/S5.
 - Menus, the shop and the results screens are shown in their original width,
   centred.
 - Save states are refused on the password and setup screens, and deferred to
@@ -57,8 +68,13 @@ submodule pin is upstream `dd520f1`.
 
 ## For playtests
 
-Release build: the v0.1.0 GitHub release, or the latest manual `build.yml`
-artifact (ROM next to the binary). Dev build:
+Current Deck test: [draft deck-s3-20261110](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-fb40acbd6ff0b4a9d90d),
+target `a205759`, Linux-only [green CI](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/42842299392).
+Use the tar.gz folder layout the owner already uses. Its binary and AppImage
+need glibc 2.34 (within the ≤2.35 target), pass 600-frame smoke tests, and
+contain no ROM/generated C/debug payloads. The draft is not published.
+
+Stable release: v0.1.0. Dev build:
 `build-main/TG2Recomp ~/roms/genesis/tg2.bin`.
 
 ## History: the road to v0.1.0

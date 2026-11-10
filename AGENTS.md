@@ -8,6 +8,9 @@ framework. The finished port runs **widescreen (adaptive, 16:9+)** at a
 `docs/ORIGINAL_PLAN.md` is the owner's initial roadmap. Treat it as a
 suggestion, not a spec. Some of the tools it names don't exist as described.
 
+Read `docs/CONTINUATION.md` when resuming coordination or high-resolution work;
+it records the accepted S3, Steam Deck draft/playtest and S4 starting point.
+
 ## Layout
 
 | Path | What |
