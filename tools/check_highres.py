@@ -422,7 +422,7 @@ def geometry_hashes(out: Path):
 def check_split(args):
     """2P split-screen is excluded from the N x path: `race()` fails while
     `$FF189E != 0`, so the builder must decline. The committed 2P script is
-    frame-exact, so the framebuffer series with and without the test provider
+    frame-exact, so the framebuffer series at 1x and 4x
     must be identical, and no picture may grow."""
     from tg2_split_screen import build_script
     out_root = args.out / 'split2p'
@@ -437,8 +437,8 @@ def check_split(args):
         path.write_text(script.text())
         r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
                    widescreen='16:9', max_frames=script.frame + 300,
-                   env_extra={'TG2_HIGHRES_SCALE': '2',
-                              'TG2_HIGHRES_TEST_PROVIDER': '1' if provider else '0'},
+                   env_extra={'TG2_HIGHRES_SCALE': '4' if provider else '1',
+                              'TG2_HIGHRES_TEST_PROVIDER': '0'},
                    extra_args=['--turbo', '--hash-frames', '1',
                                '--input-script', str(path)],
                    video_driver='dummy')
@@ -464,8 +464,8 @@ def check_split(args):
     stock, test = results
     if not stock['two_p_samples']:
         failures.append('never observed $FF189E != 0 (no 2P frame sampled)')
-    heights = {h for (_, h, _) in stock['frames'].values()}
-    widths = {w for (w, _, _) in stock['frames'].values()}
+    heights = {h for item in results for (_, h, _) in item['frames'].values()}
+    widths = {w for item in results for (w, _, _) in item['frames'].values()}
     if heights - {224, 448}:
         failures.append(f'2P presented height changed: {sorted(heights)}')
     if any(w > 398 for w in widths):
@@ -477,6 +477,8 @@ def check_split(args):
     if differing:
         failures.append(f'test provider changed {len(differing)}/{len(common)} 2P frames')
     for item in results:
+        if item['exit'] != 0:
+            failures.append(f"{item['tag']}: exit {item['exit']}")
         for name, count in item['manifests'].items():
             if count != 0:
                 failures.append(f"{item['tag']}: manifest {name} has {count} entries")
