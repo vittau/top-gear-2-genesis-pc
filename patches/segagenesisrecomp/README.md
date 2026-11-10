@@ -32,6 +32,15 @@ patch touches lines an earlier one changed). After adding or regenerating a
 patch, run it once with `--reset`. The submodules stay pinned to their upstream
 commits; local fixes remain visible as its applied working-tree diff.
 
+Windows uses the portable twin `tools/apply-engine-patches.py`: numbered
+patches target `segagenesisrecomp/`, `core-*` targets its
+`external/m68k-recomp-core/`, and `ui-*` targets `recomp-ui/`. Both applicators
+share the same stack/pins stamp and resolve it in the repository Git directory,
+including when launched from another directory. Python `--check` inspects each
+patch against the current tree; it does not apply dependencies or prove that a
+clean sequential stack works. Qualify a clean stack by actually applying it,
+then repeat to verify idempotence; preserve existing edits before any reset.
+
 - `0011-writer-routed-second-sound-chip.patch`: tag every queued FM/PSG write with its writer and, when the game asks for it, feed a second virtual YM2612+SN76489 from the 68K-origin writes while the first chip keeps the Z80 music driver (`audio_set_chip_routing`). Stock modes keep the single chip and are untouched; the per-chip timer/status model keeps chip A's timer B as the music clock (patch 0010's free-running phase included) and gives the 68K side its own. `audio_mixer_chip_output()` exposes each chip's stream for the BOTH acceptance export (`GENESIS_AUDIO_CHIPDUMP`). The 68K no longer stalls the Z80 for its chip writes while routing is on, because those go to the second chip.
 
 - `0012-game-video-presented-window.patch`: let a game video provider crop empty scanline bands from the presented picture (a `present_window` hook called once per completed frame, so captures, hashes and the margin audit keep all native rows) — Top Gear 2's race overscan crop needs it.

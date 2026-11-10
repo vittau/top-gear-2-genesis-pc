@@ -18,7 +18,7 @@ core="$engine/external/m68k-recomp-core"
 ui="$repo/recomp-ui"
 # The stamp lives in this repository's git dir: a submodule's .git is a
 # file, and a worktree's .git is a pointer file too.
-stamp="$(git -C "$repo" rev-parse --git-dir)/tg2-engine-patches.stamp"
+stamp="$(git -C "$repo" rev-parse --absolute-git-dir)/tg2-engine-patches.stamp"
 
 patch_hash() {
     cat "$repo"/patches/segagenesisrecomp/*.patch | sha256sum | cut -d' ' -f1

@@ -20,8 +20,8 @@ The shared UI exposes an optional section-name mapping plus an explicit section
 order. TG2 selects that policy through `GameSpec.runtime_ui_layout`; a host with
 no policy keeps the previous UI behavior. Section ordering moves section rows,
 not descriptors, so item order, confirmation prompts and callbacks stay aligned.
-The patches live in `patches/segagenesisrecomp/{0051-*,ui-0001-*}`. The application
-script applies `ui-*` to `recomp-ui/` and includes its pinned revision in the stamp;
+The patches live in `patches/segagenesisrecomp/{0051-*,ui-0001-*}`. Both the
+shell and Windows Python application scripts apply `ui-*` to `recomp-ui/` and include its pinned revision in the stamp;
 neither submodule pin changes.
 
 Focused evidence is under `build/linear-s3/menu-{before,after}/`: real controller
