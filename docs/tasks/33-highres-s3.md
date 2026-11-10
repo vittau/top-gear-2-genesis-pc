@@ -1,5 +1,25 @@
 # Task 33: high-resolution rendering, step S3 (road + background) as an experimental option
 
+**Status: implementation and local technical qualification complete; awaiting
+the owner's visual acceptance.** The completed results, measured costs,
+curated comparisons and remaining limitations are in
+[HIGHRES §13](../HIGHRES.md) and the task-33 table in
+[VALIDATION](../VALIDATION.md).
+
+The experimental Internal resolution control defaults to 1×. Detailed
+sprites/HUD/plane-A composition remains S4/S5; full N× + 60 fps qualification
+remains S6, and live switching remains S7. NTSC exclusion awaits the future
+NTSC option, and GPU/Steam Deck/release performance is unverified. The
+coordinator will request the owner's visual review using the comparisons.
+
+The original brief below is retained for reference. Its validation matrix is
+superseded by the reduced reproduction plan in HIGHRES §13.4: retain valid
+evidence, cover each scale briefly, keep one long audit at the largest
+effective scale, and cover weather/tunnel at one scale unless a
+scale-specific defect appears.
+
+## Original implementation brief
+
 Read `AGENTS.md` first. Follow the "Machine resources" rules: at most 3 build
 jobs (`JOBS=3 tools/build-linux.sh`, which also works on macOS), and run every
 build and heavy analysis under `flock ~/.cache/tg2-heavy.lock`. Never trigger

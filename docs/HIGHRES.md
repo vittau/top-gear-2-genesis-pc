@@ -1,10 +1,17 @@
 # High-resolution rendering: ground truth, architecture and plan
 
-**Task 29 — research and design.** The design below is unchanged; steps S1 and
-S2 were implemented and verified by task 31 (2026-11-09), see §12. S3 and later
-are not started.
+**Implementation status:** S1/S2 were implemented and verified by task 31
+(§12); S3 implementation and local technical qualification are complete as
+task 33 (§13), awaiting the owner's visual acceptance. S4–S7 remain planned,
+apart from the minimum experimental scale control already included in S3.
+Detailed sprites/HUD/plane-A work, full N× + 60 fps qualification, live scale
+switching and future NTSC exclusion retain the limitations listed in §13.5.
 
-Everything below was measured or read on the stock USA ROM
+**Task 29 — research and design.** The original stock-ROM findings and design
+follow below; current implementation results, costs, comparisons and the
+reduced validation plan are recorded in §13.
+
+The original research was measured or read on the stock USA ROM
 (CRC32 `BD3074D2`). Evidence paths are private under `build/highres/`, as the
 repo rules require. Unless stated otherwise the presentation shows a
 single-player race, widescreen Off, 60 fps Off, Hide overscan Off, so the frame
@@ -16,7 +23,8 @@ Status of this document:
 |---|---|
 | Verified by ROM disassembly | road/raster emitters, LOD block and table, mapper entry, per-line state producer |
 | Verified by runtime capture | per-line scroll/atlas state over 12 race frames; 18k mapper entries with model indices and pattern sets; atlas geometry and palette banks decoded from a live VRAM dump |
-| Estimated | CPU cost at 2×/3×/4× (benchmarks on this Mac; Ryzen 3500U / Deck extrapolated, not measured) |
+| Measured locally | S3 CPU cost at 2×/3×/4× on this Mac, with scope and results in §13.2 |
+| Estimated | Ryzen 3500U / Steam Deck cost extrapolations; device and release performance remain unverified |
 | Not derived | the per-object-type LOD ladder (which model is most detailed, and the exact screen thresholds), `$FF1894` bias semantics on other tracks |
 
 ---
