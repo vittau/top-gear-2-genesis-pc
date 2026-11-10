@@ -2,7 +2,7 @@
 
 **Implementation status:** S1/S2 were implemented and verified by task 31
 (§12); S3 implementation and local technical qualification are complete as
-task 33 (§13), awaiting the owner's visual acceptance. S4–S7 remain planned,
+task 33 (§13), with owner visual approval on 2026-11-10. S4–S7 remain planned,
 apart from the minimum experimental scale control already included in S3.
 Detailed sprites/HUD/plane-A work, full N× + 60 fps qualification, live scale
 switching and future NTSC exclusion retain the limitations listed in §13.5.
@@ -1098,9 +1098,10 @@ the single `--windowed` check; one runtime instance at a time.
 
 ## 13. S3 — the road rasteriser and the experimental option (task 33)
 
-**Status: S3 implementation and local technical qualification complete.
-The render scale is a player option on the shared "Internal resolution" row;
-owner visual acceptance remains pending.** Sprites, the HUD, the sky and plane-A effects still keep the native
+**Status: S3 complete.** Implementation and local technical qualification are
+complete; the owner approved the five straight, curve, hill, rain and tunnel
+comparisons on 2026-11-10. The render scale is a player option on the shared
+"Internal resolution" row. Sprites, the HUD, the sky and plane-A effects still keep the native
 picture's content (nearest-scaled), as §8 S3 specifies. Detailed sprite, HUD
 and plane-A composition belongs to S4/S5.
 
@@ -1171,7 +1172,8 @@ The tunnel opening remains native plane-A art (see §13.5).
 
 Merged-state qualification on this Mac (Apple A18 Pro, 8 GiB, macOS arm64),
 development build, SDL dummy video/audio, one runtime and shared heavy lock.
-Audit work is excluded from the cost runs. Owner visual acceptance is pending.
+Audit work is excluded from the cost runs. The owner approved the visual
+comparisons on 2026-11-10.
 
 | Scale | Builder µs / presented frame | Whole frame CPU µs, mean / p95 |
 |---|---:|---:|
@@ -1346,6 +1348,7 @@ completed S3 qualification.
   qualification belongs to S6. Stock 1× 60 fps is covered by G3.
 - **Live switching** waits for S7 (the option explicitly applies next launch).
   NTSC exclusion is reserved for task 28; there is no NTSC option to gate yet.
-- **Owner visual acceptance is pending.** The five curated comparisons make
-  the implemented look reviewable; technical qualification does not replace
-  the owner's end-to-end judgement.
+- **Owner visual approval:** on 2026-11-10 the owner reviewed the five curated
+  straight, curve, hill, rain and tunnel comparisons and approved their look
+  ("Está ótimo"). This approves the S3 visuals shown; the other limitations
+  above remain unchanged.

@@ -1,7 +1,7 @@
 # Task 33: high-resolution rendering, step S3 (road + background) as an experimental option
 
-**Status: implementation and local technical qualification complete; awaiting
-the owner's visual acceptance.** The completed results, measured costs,
+**Status: complete.** Implementation and local technical qualification are
+complete; the owner approved the five visual comparisons on 2026-11-10. The completed results, measured costs,
 curated comparisons and remaining limitations are in
 [HIGHRES §13](../HIGHRES.md) and the task-33 table in
 [VALIDATION](../VALIDATION.md).
@@ -10,7 +10,7 @@ The experimental Internal resolution control defaults to 1×. Detailed
 sprites/HUD/plane-A composition remains S4/S5; full N× + 60 fps qualification
 remains S6, and live switching remains S7. NTSC exclusion awaits the future
 NTSC option, and GPU/Steam Deck/release performance is unverified. The
-coordinator will request the owner's visual review using the comparisons.
+owner approved the straight, curve, hill, rain and tunnel comparisons.
 
 The original brief below is retained for reference. Its validation matrix is
 superseded by the reduced reproduction plan in HIGHRES §13.4: retain valid

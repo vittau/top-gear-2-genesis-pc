@@ -1089,8 +1089,9 @@ and controller-only operation of the new Diagnostics row on the device.
 
 ## Task 33 — high-resolution rendering S3 (branch `vittau/tg2-highres-s3`)
 
-**S3 implementation and local technical qualification complete. Owner visual
-acceptance remains pending; no release or merge into main was performed.**
+**S3 complete:** implementation and local technical qualification passed, and
+the owner approved the straight, curve, hill, rain and tunnel visual comparisons
+on 2026-11-10 ("Está ótimo"). No release or merge into main was performed.
 
 Merged-state requalification on macOS arm64 (Apple A18 Pro, 8 GiB), trace
 development build, SDL dummy video/audio, one runtime at a time, all builds
@@ -1178,8 +1179,7 @@ reduced reproduction pattern. Moving paired downscales across the nine runs
 had maximum mean error 0.426 and maximum fraction >64 of 0.112%.
 
 Not verified: GPU/Steam Deck/release cost, full N× + 60 fps composition (S6),
-live switching (S7), NTSC exclusion (option not yet implemented), or owner
-visual acceptance. Tunnel-opening artwork and detailed weather sampling are
+live switching (S7), or NTSC exclusion (option not yet implemented). Tunnel-opening artwork and detailed weather sampling are
 plane-A composition in S5; the S3 nearest plane-A path and margins are tested.
 The colour terrain mask can confuse an overlay pixel matching its underlying
 plane-B colour; S4/S5 need explicit coverage masks. See HIGHRES §13.5.
