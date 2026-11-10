@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 19:30:00 -0300
+Subject: [PATCH] Publish a presented width while the viewport mode is off
+
+A game-owned render scale is not a widescreen mode: the provider needs a
+wider canvas (N x the 1x canvas) even with widescreen off, while enabled()
+must keep reporting the real option state for the UI rows. GameVideo
+.presented_width lets the provider publish width() for the frame without
+changing the viewport policy. NULL keeps the enabled()-gated behaviour.
+---
+ runner/game_video.h | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/runner/game_video.h b/runner/game_video.h
+--- a/runner/game_video.h
++++ b/runner/game_video.h
+@@ -97,6 +97,14 @@
+      * picture. */
+     int (*present_frame)(uint32_t *pixels, int stride_pixels, int width,
+                          int native_w, int native_h);
++    /* Optional: the provider owns the presented row width even while its
++     * viewport mode is off (a game-owned render scale is not a widescreen
++     * mode). Returning non-zero makes width() publish the presented canvas
++     * width for the frame without changing enabled() / the viewport policy,
++     * so a game's render-scale provider gets a wider canvas with widescreen
++     * off and every UI row still reports the real option state. NULL keeps
++     * the enabled()-gated width. */
++    int (*presented_width)(void);
+ } GameVideo;
+ 
+ /* Host-local derived frame plan, never deterministic machine/snapshot state.
+@@ -124,7 +132,10 @@
+     if(!video || native_w<=0 || native_h<=0)return frame;
+     /* Width may publish simulation state. Always do it before local ownership
+      * or texture eligibility, including when the selected renderer declines. */
+-    if(video->enabled && video->enabled() && video->width)
++    int publish_width=video->enabled ? video->enabled() : 0;
++    if(!publish_width && video->width && video->presented_width &&
++       video->presented_width())publish_width=1;
++    if(publish_width && video->width)
+         frame.requested_width=video->width(drawable_w,drawable_h,native_w,native_h);
+     int valid_width=frame.requested_width>=native_w;
+     frame.viewport=valid_width;

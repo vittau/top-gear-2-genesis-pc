@@ -42,4 +42,4 @@ the machine-resource rules, and never trigger CI.
 | [30](30-clean-fm-and-pcm.md) | Clean FM, separate volumes, better engine/nitro PCM | Done: Music/SFX volume controls (live-safe). Clean FM and Clean engine samples were built, measured and dropped by the owner after listening (2026-11-09). |
 | [31](31-highres-s1-s2.md) | High-resolution rendering, steps S1 and S2 (capture + engine seam) | Done (merged 2026-11-09) |
 | [32](32-deck-aspect-and-quiet-logs.md) | Steam Deck feedback: device aspect, no logs in normal use | Done (merged 2026-11-09); needs a real Deck run |
-| [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | In progress (resumed 2026-11-09 evening) |
+| [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | Complete; owner visually approved 2026-11-10 (S4–S7 limitations remain) |

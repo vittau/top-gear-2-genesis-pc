@@ -103,11 +103,19 @@ static int width(int dw, int dh, int nw, int nh) {
      * A render scale above 1 multiplies the whole 1x canvas by N, so the
      * presented picture keeps the exact N:1 relationship in both axes. */
     int scale = canvas_scale();
+    if (mode == 0) {
+        /* Planning runs before the raster IRQ switches to H32, so `nw` can
+         * still be the nominal H40 width (320). A qualified 1P race is H32
+         * (256); keep Off exactly N times that actual native picture. */
+        return (highres_wanted ? 256 : nw) * scale;
+    }
     int h = cropped_height(nh);
     double w = h * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
     result *= scale;
-    if (result > 4096) result = 4096;
+    /* The capped canvas must still contain whole N-pixel columns. At 3x,
+     * 4096 is not divisible by N and would bypass the high-res builder. */
+    if (result > 4096) result = (4096 / scale) * scale;
     return result < nw * scale ? nw * scale : result;
 }
 /* Snapshots match the SAT actually displayed, rather than the CPU's next
@@ -541,7 +549,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         if (path && *path) {
             margin_audit = fopen(path, "w");
             if (!margin_audit) { perror(path); exit(1); }
-            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band,pa_run,pa_extend\n");
+            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band,pa_run,pa_extend,margin_weather\n");
         }
     }
     if (!margin_audit || w <= nw) return;
@@ -568,14 +576,16 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                 (pixel(v, ba, x - ha, line + va, &attr) ||
                  pixel(v, bb, x - hb, line + vb, &attr))) backdrop = 0;
         }
-        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d,%d,%d\n",
+        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d,%d,%d,%u\n",
                 (unsigned long long)present_frame, line, side, native[edge],
                 out[origin + (side ? nw : -1)], ap, aa, bp, ab,
                 v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0), mb,
                 genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0),
                 solid, window_band_edge(v, line, native, nw, side), backdrop,
                 plane_a_edge_run(v, line, ha, va, ba, nw, side),
-                (pa_extend_mask >> side) & 1);
+                (pa_extend_mask >> side) & 1,
+                /* A rain/snow particle the margin continuation drew there. */
+                weather_pixel(v, line, side ? nw : -1, ha, va, ba));
     }
     if (line == 223) fflush(margin_audit);
 }
@@ -590,10 +600,33 @@ static int last_frame_race;
 static void note_crop_row(int line, const uint32_t *out, int w);
 static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                             uint32_t *out, int w);
+static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
+                               uint32_t *out, int w);
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     render_scanline(v, line, native, nw, out, w);
     note_crop_row(line, out, w);
+}
+/* S3: a render scale above 1 presents an N x canvas whose content is the 1x
+ * picture scaled by nearest in both axes. The road rows are then repainted at
+ * output resolution by tg2_highres_build() once the frame is complete; every
+ * other row keeps this nearest expansion (sprites, HUD and plane-A effects
+ * stay native content until S4/S5). */
+static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
+                            uint32_t *out, int w) {
+    int scale = tg2_highres_present_scale();
+    /* A wide native menu/2P canvas can also be divisible by N and wider
+     * than nw*N. Dimensions alone do not make it an N x race picture. */
+    if (scale > 1 && (nw != 256 || !race(v))) scale = 1;
+    if (scale <= 1 || w % scale || w / scale < nw) {
+        render_scanline_1x(v, line, native, nw, out, w);
+        return;
+    }
+    static uint32_t row1[4096];
+    int w1 = w / scale;
+    render_scanline_1x(v, line, native, nw, row1, w1);
+    for (int x = 0; x < w; ++x)
+        out[x] = row1[x / scale];
 }
 static void note_crop_row(int line, const uint32_t *out, int w) {
     if (line < CROP_TOP) return;              /* counted when the band is blanked */
@@ -602,8 +635,12 @@ static void note_crop_row(int line, const uint32_t *out, int w) {
     for (int x = 0; x < w; ++x)
         if (out[x] & 0xFFFFFF) { crop_bottom_ok = 0; return; }
 }
-static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
-                     int w) {
+/* The 1x canvas picture. At a render scale above 1 this draws into a scratch
+ * row of the 1x canvas width and render_scanline() expands it by N; every
+ * placement rule (origin, margins, HUD, crop note, margin audit) stays the
+ * stock 1x logic. */
+static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
+                               uint32_t *out, int w) {
     int origin = (w - nw) / 2;
     pa_extend_mask = 0;
     if (!line) {
@@ -1050,7 +1087,8 @@ static int compose_presented(uint32_t *pixels, int stride, int width,
      * canvas (widescreen off) is always wide enough. */
     if (width > native_w && width < native_w * scale)
         return 0;
-    return tg2_highres_build(pixels, stride, width, native_w, native_h);
+    return tg2_highres_build(present_frame, pixels, stride, width, native_w,
+                             native_h);
 }
 /* Called by the runner once per completed picture, after every native row was
  * produced. Cropping is presentation-only: the bands are dropped from what is
@@ -1096,11 +1134,13 @@ void tg2_video_command(int id, const char *json) {
                   (unsigned long long)(to_picture ? to_picture->frame : 0), phase_num, phase_den);
     n += snprintf(out + n, sizeof out - n,
                   ",\"highres_scale\":%d,\"highres_present_scale\":%d,"
-                  "\"highres_test_provider\":%d,\"highres_capture_frames\":%u,"
-                  "\"highres_capture_us\":%.3f,\"highres_capture_rows\":%u",
+                  "\"highres_capture_frames\":%u,"
+                  "\"highres_capture_us\":%.3f,\"highres_capture_rows\":%u,"
+                  "\"highres_build_frames\":%u,\"highres_build_us\":%.3f",
                   tg2_highres_scale(), tg2_highres_present_scale(),
-                  tg2_highres_test_provider(), tg2_highres_capture_frames(),
-                  tg2_highres_capture_us(), tg2_highres_capture_rows_done());
+                  tg2_highres_capture_frames(),
+                  tg2_highres_capture_us(), tg2_highres_capture_rows_done(),
+                  tg2_highres_build_frames(), tg2_highres_build_us());
     if (json && strstr(json, "\"rows\"")) {
         n += snprintf(out + n, sizeof out - n, ",\"rows\":[");
         for (int i = 0; i < 224; ++i)
@@ -1137,17 +1177,30 @@ void tg2_video_highres_command(int id, const char *json) {
         cmd_send_response("{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     }
+    /* {"dump":"path"}: N x pictures also write their 1x canvas ("" stops). */
+    const char *dump = json ? strstr(json, "\"dump\"") : NULL;
+    if (dump && (dump = strchr(dump + 6, '"')) != NULL) {
+        char path[1024];
+        size_t length = strcspn(dump + 1, "\"");
+        if (length < sizeof path) {
+            memcpy(path, dump + 1, length);
+            path[length] = 0;
+            tg2_highres_request_native_dump(path);
+        }
+    }
     const Tg2RowState *captured = tg2_highres_rows();
-    const unsigned short *row_serial = tg2_highres_row_serial();
+    const unsigned *row_serial = tg2_highres_row_serial();
     unsigned serial = tg2_highres_serial();
     int n = snprintf(out, CAPACITY,
                      "{\"id\":%d,\"ok\":true,\"scale\":%d,\"present_scale\":%d,"
-                     "\"test_provider\":%d,\"capture_frames\":%u,\"serial\":%u,"
-                     "\"capture_us\":%.3f,\"capture_rows\":%u",
+                     "\"capture_frames\":%u,\"serial\":%u,"
+                     "\"capture_us\":%.3f,\"capture_rows\":%u,"
+                     "\"build_frames\":%u,\"build_us\":%.3f",
                      id, tg2_highres_scale(), tg2_highres_present_scale(),
-                     tg2_highres_test_provider(), tg2_highres_capture_frames(),
+                     tg2_highres_capture_frames(),
                      serial, tg2_highres_capture_us(),
-                     tg2_highres_capture_rows_done());
+                     tg2_highres_capture_rows_done(),
+                     tg2_highres_build_frames(), tg2_highres_build_us());
     if (json && strstr(json, "\"rows\"") && n > 0 && n < CAPACITY) {
         n += snprintf(out + n, CAPACITY - n, ",\"rows\":[");
         for (int line = 0; line < TG2_HIGHRES_ROWS && n > 0 && n < CAPACITY; ++line) {
@@ -1171,7 +1224,10 @@ void tg2_video_highres_command(int id, const char *json) {
     cmd_send_response(out);
     free(out);
 }
+/* A render scale above 1 owns the canvas even with widescreen off; enabled()
+ * keeps reporting the widescreen option itself. */
+static int presented_width(void) { return tg2_highres_present_scale() > 1; }
 const GameVideo tg2_video = {
     .configure = configure, .enabled = enabled, .width = width, .scanline = scanline,
     .renderer_enabled = renderer_enabled, .present_window = present_window,
-    .present_frame = compose_presented};
+    .present_frame = compose_presented, .presented_width = presented_width};

@@ -40,7 +40,11 @@ def check(path, max_brief_frames=3):
             plane_a_cover = bool(row['ap'] and row['attr_a'] & 0x8000)
             black = (not row['window_band'] and row['margin'] & 0xffffff == 0 and row['native'] & 0xffffff
                      and row['native_b'] & 0xffffff and not row['margin_bp'])
+            # The margins continue the weather overlay (docs/RAIN_WIDESCREEN.md):
+            # a rain/snow particle on the sampled margin texel is plane A, not
+            # a break in the ground. margin_weather is exported since task 33.
             ground = (not row['window_band'] and not plane_a_cover
+                      and not row.get('margin_weather', 0)
                       and row['native'] & 0xffffff and row['bp'] in (5, 15, 21, 31)
                       and (432 <= row['atlas_y'] < 448
                            or row['margin_bp'] in (5, 15, 21, 31))

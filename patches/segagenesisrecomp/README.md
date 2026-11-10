@@ -83,3 +83,7 @@ commit; local fixes remain visible as its applied working-tree diff.
 - `0048-debug-flag-enables-diagnostics.patch`: `--debug` enables the feedback replay and the runtime evidence for that launch (never persisted), and rewrites a migrated settings.ini once after the launcher has settled the effective options.
 
 - `0049-diagnostics-row-in-runtime-menu.patch`: a Diagnostics (bug report) row in the in-game recomp-ui menu sets the same `[mods.diagnostics]` option the launcher's Mods page owns, so a controller-only Deck player can turn the replay on for the next launch without a terminal.
+
+- `0035-presented-width-without-viewport.patch`: a `GameVideo.presented_width` hook lets a provider publish `width()` while its viewport mode is off, so a game-owned render scale gets an N x canvas with widescreen off without making the UI report widescreen as on (Top Gear 2's S3).
+
+- `0050-game-internal-resolution-vocabulary.patch`: a `GameSpec.internal_scale` vocabulary lets a game whose own provider reads the render scale present its own values/labels/text in the shared "Internal resolution" row (in-game menu and launcher), still storing the same `settings.ini` `internal_scale`; Top Gear 2's experimental 1x-4x road renderer needs it (task 33, S3). Numbered after task 32's 0045-0049 because it rewrites the same menu lines.

@@ -46,7 +46,11 @@ def capture(path, start, count):
         with wave.open(str(audio), 'rb') as w:
             summary['audio'] = dict(frames=w.getnframes(), rate=w.getframerate(),
                                     channels=w.getnchannels(), width=w.getsampwidth())
-        summary['audio']['sha256'] = hashlib.file_digest(audio.open('rb'), 'sha256').hexdigest()
+        digest = hashlib.sha256()
+        with audio.open('rb') as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        summary['audio']['sha256'] = digest.hexdigest()
     return summary
 
 

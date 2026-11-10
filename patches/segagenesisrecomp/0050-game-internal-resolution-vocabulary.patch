@@ -1,0 +1,163 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 19:00:00 -0300
+Subject: [PATCH] Let a game supply its own Internal resolution vocabulary
+
+The shared "Internal resolution" row offers the engine's supersampling ladder
+(1,2,4,...64) and drives the engine's HD path. A game whose video provider
+reads the render scale itself supplies a GameInternalScale instead: the same
+row key and the same settings.ini value (internal_scale), with the game's own
+values and labels, its own row description for the in-game menu, and an
+optional note for the launcher. The launcher path seeds the row from the
+current value and writes the chosen one back into g_app_config. NULL keeps
+every existing game unchanged.
+
+Numbered after the task-32 diagnostics rows (0045-0049) because it rewrites
+the same menu lines; it stacks on top of them rather than the other way round.
+---
+ runner/game_spec.h | 18 ++++++++++++++++++
+ runner/main.c      | 60 ++++++++++++++++++++++++++++++++++++++++++++++++++-----
+ 2 files changed, 72 insertions(+), 6 deletions(-)
+
+diff --git a/runner/game_spec.h b/runner/game_spec.h
+--- a/runner/game_spec.h
++++ b/runner/game_spec.h
+@@ -37,6 +37,22 @@
+     const char *name;       /* matched against the request "cmd" field */
+     void      (*handler)(int id, const char *json_line);
+ } GameDebugCommand;
++
++/* Optional game-owned vocabulary for the shared "Internal resolution" row.
++ * The row normally offers the engine's supersampling ladder (1,2,4,...64) and
++ * drives the engine's own HD path. A game whose video provider reads the
++ * render scale itself (a game-owned high-resolution renderer) supplies its own
++ * values, labels and text instead: `values` are the settings.ini
++ * internal_scale numbers the provider understands, in display order, and the
++ * row stores one of them. All arrays are borrowed and must stay valid for the
++ * process lifetime (static data). NULL keeps the engine ladder unchanged. */
++typedef struct GameInternalScale {
++    const int *values;
++    const char *const *labels;
++    int count;
++    const char *description;  /* in-game (Esc) menu row text, or NULL */
++    const char *note;         /* launcher note drawn under the row, or NULL */
++} GameInternalScale;
+ 
+ typedef struct GameSpec {
+     const GameVideo *video;          /* NULL = native VDP presentation only */
+@@ -309,6 +325,8 @@
+     /* Non-zero hides the runtime menu's "Internal resolution" row, for games
+      * whose own video provider ignores the supersampling scale. */
+     int hide_internal_resolution;
++    /* Game-owned Internal resolution vocabulary (see GameInternalScale). */
++    const GameInternalScale *internal_scale;
+ } GameSpec;
+ 
+ /*
+diff --git a/runner/main.c b/runner/main.c
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -337,6 +337,32 @@
+ static const RecompRuntimeUiItem s_hd_items[]={
+     {"video.internal_resolution","Video","Internal resolution (restart)","Applies next launch. Unsupported hardware keeps native presentation.",RECOMP_RUNTIME_UI_CHOICE,0,6,1,s_hd_labels,7,NULL}
+ };
++/* A game-owned render scale replaces the engine ladder (GameInternalScale):
++ * same row key and settings.ini value (internal_scale), the game's own values
++ * and labels. */
++static const GameInternalScale *game_internal_scale(void) {
++    const GameInternalScale *g=g_game_spec.internal_scale;
++    return g && g->values && g->labels && g->count>0 ? g : NULL;
++}
++static const int *hd_scale_values(void) {
++    const GameInternalScale *g=game_internal_scale();
++    return g ? g->values : s_hd_scales;
++}
++static int hd_scale_count(void) {
++    const GameInternalScale *g=game_internal_scale();
++    return g ? g->count : 7;
++}
++static RecompRuntimeUiItem hd_scale_item(void) {
++    RecompRuntimeUiItem item=s_hd_items[0];
++    const GameInternalScale *g=game_internal_scale();
++    if(g) {
++        if(g->labels) item.choices=g->labels;
++        if(g->description) item.description=g->description;
++        item.choice_count=(size_t)g->count;
++        item.maximum=g->count-1;
++    }
++    return item;
++}
+ static const RecompRuntimeUiItem s_video_mod_items[]={
+     {"mods.widescreen.enabled","Mods","Widescreen","Opt-in custom scene renderer with expanded objects and screen-anchored HUD.",RECOMP_RUNTIME_UI_BOOL,0,1,1},
+     {"mods.widescreen.aspect","Mods","Aspect ratio","Adaptive follows the whole window without a 32:9 cap.",RECOMP_RUNTIME_UI_CHOICE,0,3,1,s_mod_aspects,4}
+@@ -364,7 +390,8 @@
+     else if (!strcmp(i->key,"mods.diagnostics.enabled")) *out=g_app_config.replay_diagnostics;
+     else if (!strcmp(i->key,"states.slot")) *out = s_quickstate_slot;
+     else if (!strcmp(i->key,"video.internal_resolution")) {
+-        *out=0;for(int n=0;n<7;++n)if(s_hd_scales[n]==g_app_config.internal_scale)*out=n;
++        const int *values=hd_scale_values();int count=hd_scale_count();
++        *out=0;for(int n=0;n<count;++n)if(values[n]==g_app_config.internal_scale)*out=n;
+     }
+     else if (g_game_spec.runtime_ui_get && g_game_spec.runtime_ui_get(i->key, out)) return 1;
+     else return 0; return 1;
+@@ -372,8 +399,9 @@
+ static int runtime_ui_set(void *p, const RecompRuntimeUiItem *i, int v) {
+     RuntimeUiContext *c = (RuntimeUiContext *)p;
+     if(!strcmp(i->key,"video.internal_resolution")) {
+-        if(v<0||v>6)return 0;
+-        g_app_config.internal_scale=s_hd_scales[v];return 1;
++        const int *values=hd_scale_values();int count=hd_scale_count();
++        if(v<0||v>=count)return 0;
++        g_app_config.internal_scale=values[v];return 1;
+     }
+     if (!strcmp(i->key,"states.slot")) { if (v<1 || v>9) return 0; s_quickstate_slot=v; return 1; }
+     if(!strcmp(i->key,"audio.bypass_filter")) {
+@@ -2588,6 +2616,11 @@
+         ls.audio_freq       = g_app_config.audio_freq;
+         ls.volume           = g_app_config.volume;
+         ls.skip_launcher    = g_app_config.skip_launcher;
++        /* A game-owned render scale round-trips through the launcher's
++         * Internal resolution row (see GameInternalScale). Seed the current
++         * value; it is read back below and persisted in settings.ini. */
++        if (game_internal_scale())
++            ls.internal_resolution = g_app_config.internal_scale;
+ #ifdef RECOMP_LAUNCHER_HAS_REWIND_ENABLED
+         ls.rewind_enabled   = g_app_config.rewind_enabled;
+ #endif
+@@ -2626,6 +2659,14 @@
+         gi.rom_noun             = "ROM";
+         gi.pad_mode_supported   = 1;   /* 3-Button / 6-Button selector */
+         gi.pad_mode_selectable  = 1;
++        if (game_internal_scale()) {
++            const GameInternalScale *g=game_internal_scale();
++            gi.has_supersampling = 1;
++            gi.internal_resolution_labels = g->labels;
++            gi.internal_resolution_values = g->values;
++            gi.num_internal_resolutions = g->count;
++            gi.internal_resolution_note = g->note;
++        }
+ #ifdef RECOMP_LAUNCHER_HAS_REWIND_DEPTH
+         gi.has_rewind_depth     = 1;
+ #endif
+@@ -2700,6 +2741,12 @@
+             g_app_config.volume           = ls.volume;
+             g_app_config.audio_freq       = ls.audio_freq;
+             g_app_config.skip_launcher    = ls.skip_launcher;
++            if (game_internal_scale()) {
++                const int *values=hd_scale_values();int count=hd_scale_count();
++                for (int n=0;n<count;++n)
++                    if (values[n]==ls.internal_resolution)
++                        g_app_config.internal_scale=ls.internal_resolution;
++            }
+ #ifdef RECOMP_LAUNCHER_HAS_REWIND_ENABLED
+             g_app_config.rewind_enabled   = ls.rewind_enabled != 0;
+ #endif
+@@ -3790,7 +3837,7 @@
+             items[count++]=s_audio_filter_item;
+             items[count++]=s_diagnostics_item;
+             if (!g_game_spec.hide_internal_resolution) {
+-                memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
++                items[count++]=hd_scale_item();
+             }
+             if (!g_game_spec.state_unavailable_reason || !g_game_spec.state_unavailable_reason()) {
+                 memcpy(items+count,s_quickstate_items,sizeof s_quickstate_items);count+=3;

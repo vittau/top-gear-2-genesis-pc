@@ -1086,3 +1086,102 @@ evidence `.toml` files.
 Not verified here: a real Steam Deck / gamescope session (window size, panel
 mode, scaled output), the Deck's 1280×800 panel through an actual compositor,
 and controller-only operation of the new Diagnostics row on the device.
+
+## Task 33 — high-resolution rendering S3 (branch `vittau/tg2-highres-s3`)
+
+**S3 complete:** implementation and local technical qualification passed, and
+the owner approved the straight, curve, hill, rain and tunnel visual comparisons
+on 2026-11-10 ("Está ótimo"). No release or merge into main was performed.
+
+Merged-state requalification on macOS arm64 (Apple A18 Pro, 8 GiB), trace
+development build, SDL dummy video/audio, one runtime at a time, all builds
+and heavy checks under `flock ~/.cache/tg2-heavy.lock`, builds at `JOBS=3`.
+The real-launcher test uses a hidden cocoa window; it restores settings.
+
+The atlas-run renderer fits continuous road bands within 1.5 native pixels
+and analytically covers road, border and lane boundaries. Sprites, HUD, sky
+and plane-A effects retain integer-N× nearest content. Internal resolution
+offers experimental 1×–4×, defaults to 1× and applies next launch.
+
+Review fixes: keep row/picture serials at the same width (the 16-bit row tag
+disabled smoothing after 65,535 pictures), cap 3× at 4095 whole output
+columns, keep Off at the actual H32 256×N width,
+keep wide native menus/2P out of N× expansion, correct wrapped option
+navigation, compare actual 1× versus 4× in 2P, fail
+missing manifests, and measure stripe centres from final pixels while
+distinguishing white border/stripe palette collisions. Patch 0050 correctly
+leaves `choice_values` NULL: the Esc callbacks map indices 0–3 to scales 1–4;
+the launcher receives the actual scale values.
+
+| Check | Command / evidence | Result |
+|---|---|---|
+| Patch reset + build | `tools/apply-engine-patches.sh --reset`; `JOBS=3 flock ~/.cache/tg2-heavy.lock tools/build-linux.sh ~/roms/genesis/tg2.bin build` | exit 0, upstream submodule pins unchanged |
+| G1, Off/1× and 60 fps boot | `tools/check_highres.py g1` | exit 0; frames 60/300 `2A0B972960C5E325` / `1131D937D70234FD` |
+| G2 | four manifests after every qualification runtime | 0 / 0 / 0 / 0, absent manifests fail |
+| G3, 1× widescreen | `tools/verify_widescreen.py` | exit 0; Off/16:9/21:9, RAM/VRAM/native centre identical at 600/1350/2800/3300/4501 |
+| G3, 1× 60 fps | `tools/probe_framerate.py` Off and `--60fps`, then `tools/compare_framerate.py` | exits 0; 186/360 stock versus 360/360 changed pictures, no scalar RAM mismatches, identical WAV SHA-256 |
+| Exact-frame downscale, 1×–4× | `tools/check_highres.py s3` | exit 0; max mean 0.316/255, at most 0.060% of pixels >64; mean tolerance 2.5, fraction tolerance 2% |
+| N× road + margins, Auckland 2× | `tools/check_highres.py drive --scale 2 --frames 3200` | exit 0; 3,638 pictures / 451,686 output road rows, 51,150 stripe rows, centre error ≤0.500 output px; all violations 0 |
+| N× road + margins, Auckland 3× | `tools/check_highres.py drive --scale 3 --frames 3200` | exit 0; 3,641 pictures / 690,066 output road rows, 86,467 stripe rows, centre error ≤0.496 output px; all violations 0 |
+| N× road + margins, Auckland 4× | `tools/check_highres.py drive --scale 4 --frames 3200` | exit 0; 3,641 pictures / 911,412 output road rows, 119,389 stripe rows, centre error ≤0.496 output px; all violations 0 |
+| Moving straight/curve/hill captures, bavaria-rain, 2×/3×/4× | `tools/check_highres.py drive --track bavaria-rain --scale N --frames 1500 --min-frames 1000` | exits 0; 1,939–1,946 pictures per scale; road, stripe-centre and margin violations 0; paired native/N× downscale passes |
+| Moving straight/curve/hill captures, canada, 2×/3×/4× | `tools/check_highres.py drive --track canada --scale N --frames 1500 --min-frames 1000` | exits 0; 1,939–1,948 pictures per scale; road, stripe-centre and margin violations 0; paired native/N× downscale passes |
+| Options, Esc | `tools/check_highres.py option` | exit 0; settings 1/2/3/4 report the same scale, invalid 8 → 1×; real Esc row cycles to 4× and persists it |
+| Options, launcher | `tools/check_highres.py launcher` | exit 0; real hidden launcher persists 2→3→4→1, labels and experimental note captured |
+| 2P stays native, menus unchanged | `tools/check_highres.py split`; G1 + widescreen captures | exit 0; 7,902 exact 1×/4× hashes, always 398×224, including the menu flow |
+| Wide native menus/2P, 32:9, 1× versus 2× | `build/s3-wide-menu-after/summary.json`; `build/s3-wide-2p/split2p/split-summary.json` | exits 0; menu hashes identical (four differed before the fix), 7,901 2P/menu hash pairs identical, always 796×224 |
+| 3× adaptive width cap and mode changes | `tools/check_highres.py cap` | exit 0; extreme adaptive canvas 4095×600, Off 768×600, fixed 16:9 1068×600; paired Off downscale mean 0.411, 0.107% pixels >64 |
+| Long-session freshness | `tools/check_highres_serial.py` | exit 0 through 131,074 captures and reset; the same fixture rejects the inherited implementation with expected SIGABRT (-6) |
+
+| Scale | Builder µs / frame, without audit | Full CPU work µs / frame, mean / p95 |
+|---|---:|---:|
+| 2× | 802.6 | 7478.8 / 9092 (910 sampled frames) |
+| 3× | 1067.1 | 7642.6 / 10216 (910 sampled frames) |
+| 4× | 1396.0 | 7072.8 / 8787 (910 sampled frames) |
+
+Cost command: `tools/check_highres.py drive --scale N --frames 900
+--shot-every 10000 --no-audit`. These runs use realtime audio and record all
+thread-CPU phases; full CPU work subtracts only the pacer CPU wait. Neither
+SDL/vsync blocking time nor audit/dump work is presented as rendering cost.
+Whole-frame values include variable guest work from separate closed-loop
+runs; isolated builder timings provide the comparison of S3 scale cost.
+
+Evidence: `build/s3-reverify/final-summary.json` and its command/qualification
+logs; per-track `drive-summary.json`, `trace.json`, paired PNG/PPM captures;
+`s3/s3-summary.json`, `ws/summary.json`, `fps/comparison.json`, option/launcher
+summaries and hidden-launcher PNGs. The raw `.nxroad` and large margin CSVs
+were removed after their verdicts, as required by the resource rules.
+
+Curated comparisons inspected: `docs/images/highres-straight.png`,
+`highres-curve.png`, `highres-hill.png`, `highres-rain.png`,
+`highres-tunnel.png`. Both halves were verified byte-for-byte against the
+same-frame 1× canvas and 2× capture; provenance and frames are in HIGHRES §13.3.
+Auckland supplies the tunnel case; Bavaria supplies rain and Canada a distinct
+winter atlas. No gaps, fan duplicates or striped tearing were seen in the
+reviewed examples; the automated checks cover the longer sequences above.
+
+Initial centre-audit trials failed for incomplete palette classification:
+white borders and winter snow shared the lane colour. The framerate comparer
+also required a streaming SHA-256 compatible with Python 3.9. Targeted tests
+then exposed real wide-native and Off-width defects; both were fixed and
+rerun to exit 0. Earlier failure logs and command histories remain under
+`build/s3-reverify/`. Valid 1× and 16:9 race checks were retained when later
+changes affected only audit measurement or separately tested native-width
+paths.
+
+The coordinator relayed the owner's reduced validation strategy after the
+existing matrix completed: keep valid results, use short directed checks per
+scale and one long audit at the largest effective scale, and cover weather/
+tunnel at one scale unless a scale-specific defect appears. The tables above
+state the coverage actually produced, including the earlier long Auckland
+2×/3×/4× runs; no further long matrix was repeated. HIGHRES §13.4 gives the
+reduced reproduction pattern. Moving paired downscales across the nine runs
+had maximum mean error 0.426 and maximum fraction >64 of 0.112%.
+
+Not verified: GPU/Steam Deck/release cost, full N× + 60 fps composition (S6),
+live switching (S7), or NTSC exclusion (option not yet implemented). Tunnel-opening artwork and detailed weather sampling are
+plane-A composition in S5; the S3 nearest plane-A path and margins are tested.
+The colour terrain mask can confuse an overlay pixel matching its underlying
+plane-B colour; S4/S5 need explicit coverage masks. See HIGHRES §13.5.
+
+No CI, tag, release, audio implementation change, or main merge was made.
