@@ -212,8 +212,9 @@ Other inactive TG2 checkouts were removed from Orca at the owner's request:
 trees (including dirty nested submodules and untracked source) were committed
 to safety refs and exported to verified Git bundles. Recovery manifest:
 `~/.cache/tg2-worktree-backups/20261110/manifest.json`. Original Fable WIP was
-also committed/pushed as `bb8f45f`; the retained S3 checkout has
+also committed/pushed as `bb8f45f`; its safety refs were originally
 `refs/keep/tg2-s3-fable-{core,engine,worktree}-20261110` in the respective repos.
+After checkout removal, use the verified bundles/manifests above for recovery.
 
 When the owner returns, report where things stand in plain language. If input
 is actually needed, follow his global red-callout, ping and Telegram
