@@ -5,7 +5,9 @@ is done. A supervised OpenCode worker confirmed the coordinator's static
 diagnosis (BOTH persisted at boot diverted Z80 `$025E..$0261`, four entries of
 the music driver's octave table, to the second Z80), fixed `z80_route()`, and
 the owner approved the fix by ear (“Está certo”). It is merged into `main`
-(branch `vittau/tg2-race-menu-instruments`); no new Deck draft includes it yet.
+(branch `vittau/tg2-race-menu-instruments`). Deck draft
+[deck-instruments-20261110](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-8c70f39421b827e442b5)
+(target `8f2bd53`, tar.gz only, CI 42911855879) awaits the owner's Deck test.
 At the owner's request the `tg2-race-menu-instruments` worktree was then removed
 through Orca (its OpenCode session was idle and interrupted). Branch
 `vittau/tg2-race-menu-instruments` is retained at `8cba6d4`; verified bundles of

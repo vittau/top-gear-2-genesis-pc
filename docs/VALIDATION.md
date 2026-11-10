@@ -1353,3 +1353,23 @@ the save, 610 after the load), so the command-port predicate agrees with the
 machine image after a state load. A cold reset restores the pre-boot machine
 (both cores' RAM zeroed), which the predicate treats as "no image resident"; a
 second race re-runs the same `$0700C8` upload that was verified here.
+
+## Deck draft: race-menu music fix (task 37, 2026-11-10)
+
+Owner-approved task 37 was merged into `main` (`f540b21`, docs `8f2bd53`).
+Coordinator command `gh workflow run build.yml --ref main -f platforms=linux
+-f dry_run=false` exited 0 and created
+[run 42911855879](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/42911855879):
+Linux build and independent Linux verification succeeded (payload gate PASS,
+highest glibc symbol 2.34 ≤ 2.35, 600-frame headless smoke with ROM discovery);
+Windows/macOS and the release job were skipped. `gh run download`, local
+checksum check and `tools/release/verify_artifact.py` exited 0. BUILD-INFO:
+version `0.1.0-g8f2bd53`, game `8f2bd53`, engine `dd520f1f975a`, Release, TCP
+and reverse-debug disabled.
+
+[Draft deck-instruments-20261110](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-8c70f39421b827e442b5)
+(draft + prerelease, target `8f2bd53`) carries only the tarball the owner uses
+on the Deck plus `SHA256SUMS`. Tarball SHA-256:
+`03d41406b7907911e0e404787dec96dbb7c699e8292ad10900d782cc5e2a93a2`.
+No `v*` tag or published release was created; earlier drafts are unchanged.
+Deck listening of the fix is pending.
