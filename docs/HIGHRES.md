@@ -778,7 +778,7 @@ Every step ends with the same mandatory gates, recorded as evidence:
 **Model restriction (owner):** only Opus, Fable or Sol may implement this step,
 because of its high complexity.
 
-**Implemented (task 33), qualification in progress:** road strip rasteriser, §13.
+**Done (task 33, local technical qualification):** road strip rasteriser, §13.
 - Implement `tg2_highres_build()`: road strip rasteriser, sky, skyline, ground
   at N×; keep sprites/HUD native-sized in the frame for now (drawn by the
   existing row renderer at 1× in the N× frame is *not* acceptable — instead the
@@ -1090,11 +1090,11 @@ the single `--windowed` check; one runtime instance at a time.
 
 ## 13. S3 — the road rasteriser and the experimental option (task 33)
 
-**Status: implementation complete; merged-state qualification is in progress
-(the pending measurements are explicit below). The render scale is a player
-option on the shared "Internal resolution" row.** Sprites, the HUD, the sky and plane-A effects still keep the native
-picture's content (nearest-scaled), as §8 S3 specifies; nothing here depends on
-the remaining §9 decisions (S4/S5 own sprites and HUD).
+**Status: S3 implementation and local technical qualification complete.
+The render scale is a player option on the shared "Internal resolution" row;
+owner visual acceptance remains pending.** Sprites, the HUD, the sky and plane-A effects still keep the native
+picture's content (nearest-scaled), as §8 S3 specifies. Detailed sprite, HUD
+and plane-A composition belongs to S4/S5.
 
 The five same-frame comparisons below put the native picture, enlarged by
 nearest to the same display size, on the left and the 2× renderer on the right.
@@ -1165,15 +1165,17 @@ Merged-state qualification on this Mac (Apple A18 Pro, 8 GiB, macOS arm64),
 development build, SDL dummy video/audio, one runtime and shared heavy lock.
 Audit work is excluded from the cost runs. Owner visual acceptance is pending.
 
-| Scale | Builder µs / presented frame | Whole frame CPU µs, median / p95 |
+| Scale | Builder µs / presented frame | Whole frame CPU µs, mean / p95 |
 |---|---:|---:|
-| 2× | 802.6 | 7893.0 / 9092 (910 frames) |
-| 3× | pending | pending |
-| 4× | pending | pending |
+| 2× | 802.6 | 7478.8 / 9092 (910 frames) |
+| 3× | 1067.1 | 7642.6 / 10216 (910 frames) |
+| 4× | 1396.0 | 7072.8 / 8787 (910 frames) |
 
 Whole-frame cost is the sum of the recorded thread-CPU phases minus the
 pacer CPU wait, including emulation, layout/road drawing, audio and SDL work.
 This is CPU work per presented frame, not the SDL/vsync wall interval.
+Whole-frame values include variable guest work from separate closed-loop
+runs; compare the isolated builder timings when assessing scale cost alone.
 Builder cost is separately timed in `tg2_highres_build()` with no audit or
 native dump; neither number is a release/Steam Deck performance guarantee.
 
@@ -1228,6 +1230,9 @@ mismatches, identical WAV SHA-256, and four empty manifests in both runs.
 | `build/s3-reverify/launcher/launcher-summary.json`, `selected-*.png` | real launcher 2→3→4→1 persistence, hidden cocoa window |
 | `build/s3-reverify/split2p/split-summary.json` | 7,902 exact framebuffer matches at 1× and 4×, always 398×224 |
 | `build/reverify-serial.log`, `build/reverify-serial-old.log` | serial regression passes current code and rejects the inherited code |
+| `build/s3-wide-menu-{before,after}/summary.json` | four wide-menu hash mismatches before the fix, none after |
+| `build/s3-wide-2p/split2p/split-summary.json` | 7,901 1×/2× hashes identical at 32:9, always 796×224 |
+| `build/s3-reverify/cap/cap-summary.json` | 4095-column cap, native Off width, same-frame Off downscale |
 
 The `.nxroad` records and large margin CSVs are deleted after verdicts;
 summaries, trace data and selected pictures remain. Early centre-audit attempts
@@ -1251,31 +1256,43 @@ The left half is the native canvas cropped to rows 8..207 and nearest-scaled
 atlas-run renderer; the later row-tag and canvas-cap fixes do not alter their
 pixels (all are below 65,536 captures and below the width cap).
 
-### 13.4 Reproduction
+### 13.4 Reproduction and reduced validation plan
+
+The coordinator relayed the owner's validation reduction after the existing
+matrix had completed: retain valid checks, cover each scale briefly, keep one
+long audit at the largest effective scale, and direct weather/tunnel coverage
+at one scale unless a scale-specific failure appears. The table above records
+what actually ran; those earlier long Auckland runs were retained. Later bugs
+were checked with the targeted 32:9 native-menu/2P and Off/cap cases, without
+repeating the valid race matrix.
+
+Run only checks affected by a change. A fresh minimum geometry qualification
+can use the following pattern (the Auckland long drive includes the tunnel):
 
 ```sh
 tools/apply-engine-patches.sh --reset
 JOBS=3 flock ~/.cache/tg2-heavy.lock tools/build-linux.sh ~/roms/genesis/tg2.bin build
-flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres_serial.py
 flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py g1
-flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py s3
-for n in 2 3 4; do
-  flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py drive --scale "$n" --frames 3200
-  for track in bavaria-rain canada; do
-    flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py drive --track "$track" --scale "$n" --frames 1500 --min-frames 1000
-  done
-  flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py drive --scale "$n" --frames 900 --shot-every 10000 --no-audit
+flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py drive --scale 4 --frames 3200
+for n in 2 3; do
+  flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py drive --scale "$n" --frames 300 --min-frames 200
 done
-flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py option
-flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py launcher # macOS, hidden cocoa
-flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py split
+flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py drive --track bavaria-rain --scale 4 --frames 900 --min-frames 600
 flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py cap
 ```
 
-NumPy is needed by the road checker; Pillow is needed by the widescreen
-comparison. G3 reproduction: `tools/verify_widescreen.py`, then
-`tools/probe_framerate.py` Off and `--60fps`, followed by
-`tools/compare_framerate.py` on those directories, all under the same lock.
+Reuse the existing downscale, captures, settings/Esc/launcher, 2P, stock gates
+and cost evidence unless the corresponding path changes. Targeted tools:
+`check_highres.py s3` (box downscale), `option`, `launcher` (macOS hidden cocoa),
+`split --mode 32:9 --scale 2` (wide native 2P), and `check_highres_serial.py`
+(ROM-free long-session freshness). Cost reproduction uses `drive --scale N
+--frames 900 --shot-every 10000 --no-audit`. Wrap each in the same shared lock.
+NumPy is needed by the road checker and Pillow by the widescreen comparison.
+
+G3 reproduction uses `verify_widescreen.py`, then `probe_framerate.py` Off and
+`--60fps`, followed by `compare_framerate.py` on the two directories. All of
+those checks already passed here; no repeated matrix is required for this
+completed S3 qualification.
 
 ### 13.5 Review findings and remaining scope
 
@@ -1286,6 +1303,11 @@ comparison. G3 reproduction: `tools/verify_widescreen.py`, then
   pictures without a ROM, including reset.
 - **Extreme adaptive width fixed:** the 3× canvas cap is divisible by three
   (4095), rather than 4096, which bypassed the N× builder.
+- **Off width fixed:** frame planning can still report nominal H40 width
+  320 before the raster switches to H32. A qualified 1P race is 256 pixels,
+  so Off now requests exactly 256×N rather than accidentally widening the
+  picture to 320×N. The final 3× check is 768×600; its same-frame native
+  downscale has mean error 0.411 and 0.107% of pixels >64.
 - **Wide native canvases fixed:** only qualified 1P race rows are expanded.
   At 32:9 a native menu/2P canvas could be divisible by N and wider than
   `native_w * N`, which the old dimension-only guard mistook for an N×
@@ -1294,7 +1316,7 @@ comparison. G3 reproduction: `tools/verify_widescreen.py`, then
 - **Option test corrected:** choice navigation wraps, so three right presses
   reach 4× from 1×; five presses return to 2×. Missing evidence manifests now
   fail the checks rather than being treated as zero entries.
-- **Weather margins are S3-qualified at N×:** the existing plane-A weather
+- **Weather margins are S3-qualified at 2×/3×/4×:** the existing plane-A weather
   compositor is nearest-expanded, then road painting preserves overlay pixels.
   The margin rules recognise sampled weather particles; the N× audit also
   checks the finished road-margin pixels for unexplained colours. Detailed
