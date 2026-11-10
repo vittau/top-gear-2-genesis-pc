@@ -477,7 +477,7 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
         if (road && (runs->index[i] & 15) == 13) {
             int visible = 1;
             for (int j = runs->first; j <= runs->last; ++j)
-                if ((runs->index[j] & 15) != 13 && colour[j] == colour[i]) visible = 0;
+                if ((runs->index[j] & 15) == 14 && colour[j] == colour[i]) visible = 0;
             if (visible) kind[i] = 2;
         }
         if (road) {
@@ -496,6 +496,19 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
     }
     int lane_begin = -1, lane_seen = 0;
     double lane_error = 0;
+    /* A white border can share the lane colour. Its authored interval, with
+     * one output pixel of coverage allowance, separates it from a lane.
+     * At tiny widths where those intervals touch, pixels cannot distinguish
+     * them reliably, so exclude the row from geometry/stripe measurement. */
+    for (int i = runs->first; i <= runs->last; ++i) {
+        if (kind[i] != 2) continue;
+        for (int j = runs->first; j <= runs->last; ++j) {
+            if ((runs->index[j] & 15) != 6 || colour[i] != colour[j]) continue;
+            double gap = j < i ? boundaries[i] - boundaries[j + 1]
+                               : boundaries[j] - boundaries[i + 1];
+            if (gap * scale < 2.0) a->flags |= NX_FLAG_AMBIGUOUS;
+        }
+    }
     /* A verge that shares a colour with the road (fades, some palettes) cannot
      * be told from it in the picture: the row's geometry is not measurable. */
     for (int i = 0; i < runs->count; ++i)
@@ -546,6 +559,16 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
                 if (d < best_d || (d == best_d && kind[i] > kind[best])) { best_d = d; best = i; }
             }
             int kd = kind[best];
+            if (kd == 2) {
+                for (int i = runs->first; i <= runs->last; ++i) {
+                    if ((runs->index[i] & 15) == 6 && colour[i] == colour[best] &&
+                        x + 0.5 >= boundaries[i] * scale - 1.0 &&
+                        x + 0.5 <= boundaries[i + 1] * scale + 1.0) {
+                        kd = 1;             /* border, not an extra lane */
+                        break;
+                    }
+                }
+            }
             if (kd == 2 && lane_begin < 0) lane_begin = x;
             if (kd != 2 && lane_begin >= 0) {
                 if (lane_seen < lane_count) {
