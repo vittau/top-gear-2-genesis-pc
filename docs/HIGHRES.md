@@ -1120,6 +1120,11 @@ The tunnel opening remains native plane-A art (see §13.5).
 
 ![Road edge zoom](images/highres-edge-zoom.png)
 
+Linear Filter still samples the final N× canvas. At an exact 1:1 canvas/output
+ratio it can produce identical On/Off race pictures while native menus still
+change; see [the S3 filter investigation](LINEAR_FILTER.md#s3-a-correct-final-sampler-can-have-no-visible-effect). Native-art filtering inside S3 is a pending
+policy proposal, not an implemented change.
+
 ### 13.1 What was built
 
 - **Vertical duplication of the picture.** At a render scale above 1 the row
@@ -1154,7 +1159,7 @@ The tunnel opening remains native plane-A art (see §13.5).
   report on.
 - **Option.** Engine patch `0050` gives the shared "Internal resolution" row a
   game-owned vocabulary: `1x (off)`, `2x`, `3x`, `4x`, an experimental
-  description in the in-game menu and a note in the launcher, still stored as
+  description in the VIDEO menu and a note in the launcher, still stored as
   `settings.ini` `internal_scale`. Default 1×. `TG2_HIGHRES_SCALE` remains the
   capture-only override. The value is read once, so a change applies on the next
   launch (the row says so). NTSC will be refused at scale > 1 when task 28

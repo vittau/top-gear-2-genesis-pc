@@ -1,7 +1,9 @@
 # Task 35: Linear Filter has no visible effect in races after S3
 
-**Status: investigating; owner-reported Steam Deck regression.** S4 waits
+**Status: pinned-SDL reproduction shows correct sampling at 1:1; native-art filter policy awaits coordinator decision.** S4 waits
 until this report is resolved. Implement with Opus, Fable or Sol only.
+
+Local evidence and the scoped proposal: [Linear Filter investigation](../LINEAR_FILTER.md#s3-a-correct-final-sampler-can-have-no-visible-effect). No native-art sampling change has been made.
 
 ## Report and source
 
