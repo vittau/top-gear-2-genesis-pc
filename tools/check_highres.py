@@ -738,32 +738,35 @@ def check_option(args):
         try:
             r.start()
             r.wait_frame(120)
-            r.command('ui_open')
+            def tap(name):
+                # "held" is the key state; a tap needs frames between the edges.
+                r.command('key', name=name, held=1)
+                r.wait_frame(r.frame() + 3)
+                r.command('key', name=name, held=0)
+                r.wait_frame(r.frame() + 8)
+
+            # The runtime menu is paged; the row lives on the Video page.
+            r.command('ui_open', section='Video')
+            r.wait_frame(r.frame() + 8)
             rows = r.command('ui_rows')['rows']
+            menu['rows'] = [row['label'] for row in rows]
             index = next(i for i, row in enumerate(rows)
                          if 'Internal resolution' in row['label'])
             menu['row_index'] = index
-            menu['labels'] = []
+            menu['row_label'] = rows[index]['label']
             menu['before'] = rows[index]['value']
-            for _ in range(index):
-                for edge in ('down', 'up-unused'):
-                    if edge == 'down':
-                        r.command('key', name='down', down=1)
-                        r.command('key', name='down', down=0)
-            r.command('key', name='right', down=1)
-            r.command('key', name='right', down=0)
-            rows = r.command('ui_rows')['rows']
-            menu['after'] = rows[index]['value']
-            # Walk the whole choice list once to record the labels.
-            for _ in range(4):
-                r.command('key', name='right', down=1)
-                r.command('key', name='right', down=0)
-                rows = r.command('ui_rows')['rows']
-                label = rows[index]['value']
+            menu['labels'] = [menu['before']]
+            selected = next((i for i, row in enumerate(rows) if row['selected']), 0)
+            for _ in range(abs(index - selected)):
+                tap('down' if index > selected else 'up')
+            # Walk the choice list to its end, recording every label.
+            for _ in range(5):
+                tap('right')
+                label = r.command('ui_rows')['rows'][index]['value']
                 if label not in menu['labels']:
                     menu['labels'].append(label)
-            r.command('key', name='escape', down=1)
-            r.command('key', name='escape', down=0)
+            menu['after'] = r.command('ui_rows')['rows'][index]['value']
+            tap('escape')
             r.wait_frame(r.frame() + 30)
         finally:
             menu['exit'] = r.stop()
@@ -774,8 +777,9 @@ def check_option(args):
             failures.append(f"menu choices do not reach 4x: {menu['labels']}")
         if menu['before'] == menu['after']:
             failures.append('menu right did not change the value')
-        if menu['settings_after'] == 1:
-            failures.append('menu change was not written to settings.ini')
+        if menu['settings_after'] != 4:
+            failures.append(f"menu left settings.ini internal_scale at "
+                            f"{menu['settings_after']}, expected 4")
     finally:
         if backup is None:
             if settings.exists():

@@ -57,7 +57,7 @@ diff --git a/runner/game_spec.h b/runner/game_spec.h
 diff --git a/runner/main.c b/runner/main.c
 --- a/runner/main.c
 +++ b/runner/main.c
-@@ -337,6 +337,33 @@
+@@ -337,6 +337,32 @@
  static const RecompRuntimeUiItem s_hd_items[]={
      {"video.internal_resolution","Video","Internal resolution (restart)","Applies next launch. Unsupported hardware keeps native presentation.",RECOMP_RUNTIME_UI_CHOICE,0,6,1,s_hd_labels,7,NULL}
  };
@@ -82,7 +82,6 @@ diff --git a/runner/main.c b/runner/main.c
 +    if(g) {
 +        if(g->labels) item.choices=g->labels;
 +        if(g->description) item.description=g->description;
-+        item.choice_values=g->values;
 +        item.choice_count=(size_t)g->count;
 +        item.maximum=g->count-1;
 +    }
@@ -91,7 +90,7 @@ diff --git a/runner/main.c b/runner/main.c
  static const RecompRuntimeUiItem s_video_mod_items[]={
      {"mods.widescreen.enabled","Mods","Widescreen","Opt-in custom scene renderer with expanded objects and screen-anchored HUD.",RECOMP_RUNTIME_UI_BOOL,0,1,1},
      {"mods.widescreen.aspect","Mods","Aspect ratio","Adaptive follows the whole window without a 32:9 cap.",RECOMP_RUNTIME_UI_CHOICE,0,3,1,s_mod_aspects,4}
-@@ -364,7 +391,8 @@
+@@ -364,7 +390,8 @@
      else if (!strcmp(i->key,"mods.diagnostics.enabled")) *out=g_app_config.replay_diagnostics;
      else if (!strcmp(i->key,"states.slot")) *out = s_quickstate_slot;
      else if (!strcmp(i->key,"video.internal_resolution")) {
@@ -101,7 +100,7 @@ diff --git a/runner/main.c b/runner/main.c
      }
      else if (g_game_spec.runtime_ui_get && g_game_spec.runtime_ui_get(i->key, out)) return 1;
      else return 0; return 1;
-@@ -372,8 +400,9 @@
+@@ -372,8 +399,9 @@
  static int runtime_ui_set(void *p, const RecompRuntimeUiItem *i, int v) {
      RuntimeUiContext *c = (RuntimeUiContext *)p;
      if(!strcmp(i->key,"video.internal_resolution")) {
@@ -113,7 +112,7 @@ diff --git a/runner/main.c b/runner/main.c
      }
      if (!strcmp(i->key,"states.slot")) { if (v<1 || v>9) return 0; s_quickstate_slot=v; return 1; }
      if(!strcmp(i->key,"audio.bypass_filter")) {
-@@ -2588,6 +2617,11 @@
+@@ -2588,6 +2616,11 @@
          ls.audio_freq       = g_app_config.audio_freq;
          ls.volume           = g_app_config.volume;
          ls.skip_launcher    = g_app_config.skip_launcher;
@@ -125,7 +124,7 @@ diff --git a/runner/main.c b/runner/main.c
  #ifdef RECOMP_LAUNCHER_HAS_REWIND_ENABLED
          ls.rewind_enabled   = g_app_config.rewind_enabled;
  #endif
-@@ -2626,6 +2660,14 @@
+@@ -2626,6 +2659,14 @@
          gi.rom_noun             = "ROM";
          gi.pad_mode_supported   = 1;   /* 3-Button / 6-Button selector */
          gi.pad_mode_selectable  = 1;
@@ -140,7 +139,7 @@ diff --git a/runner/main.c b/runner/main.c
  #ifdef RECOMP_LAUNCHER_HAS_REWIND_DEPTH
          gi.has_rewind_depth     = 1;
  #endif
-@@ -2700,6 +2742,12 @@
+@@ -2700,6 +2741,12 @@
              g_app_config.volume           = ls.volume;
              g_app_config.audio_freq       = ls.audio_freq;
              g_app_config.skip_launcher    = ls.skip_launcher;
@@ -153,7 +152,7 @@ diff --git a/runner/main.c b/runner/main.c
  #ifdef RECOMP_LAUNCHER_HAS_REWIND_ENABLED
              g_app_config.rewind_enabled   = ls.rewind_enabled != 0;
  #endif
-@@ -3790,7 +3838,7 @@
+@@ -3790,7 +3837,7 @@
              items[count++]=s_audio_filter_item;
              items[count++]=s_diagnostics_item;
              if (!g_game_spec.hide_internal_resolution) {
