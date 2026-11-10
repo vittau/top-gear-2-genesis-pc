@@ -775,7 +775,7 @@ Every step ends with the same mandatory gates, recorded as evidence:
 
 ### S3 — Road + background at N× (the core)
 
-**Model restriction (owner):** only Opus or Sol may implement this step,
+**Model restriction (owner):** only Opus, Fable or Sol may implement this step,
 because of its high complexity.
 
 - Implement `tg2_highres_build()`: road strip rasteriser, sky, skyline, ground
@@ -799,7 +799,7 @@ because of its high complexity.
 
 ### S4 — Sprites at N× with sub-pixel positions and detailed variants
 
-**Model restriction (owner):** only Opus or Sol may implement this step,
+**Model restriction (owner):** only Opus, Fable or Sol may implement this step,
 because of its high complexity.
 
 - Draw the pre-cull scene (`$B5FA` capture) at N×: resolve each object's model 0
