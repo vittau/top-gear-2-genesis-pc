@@ -1,7 +1,8 @@
 # Task 37: intermittent missing instruments in race-menu music
 
-**Status: root-caused, fixed and verified at runtime (2026-11-10). One owner
-listening check remains.**
+**Status: done (2026-11-10).** Root-caused, fixed, verified at runtime and
+merged into `main`. The owner listened to the fixed build from a clean boot
+with his own BOTH settings and approved it ("Está certo").
 
 After manually testing the current local macOS build containing the S3 Linear
 Filter and unified runtime menu, the owner approved those changes ("Está tudo
@@ -67,4 +68,5 @@ through the existing `s_sfx_upload` window (`$0700C8` → RTS `$070188`).
 * The comment above `step_z80()` in the engine's `genesis_machine.c` still
   describes the withdrawn BUSREQ release; code and docs say the Z80 is halted on
   BUSREQ. Comment only — not changed here (it would need its own engine patch).
-* Owner listening on the fixed build is the remaining verification.
+* Owner listening: approved on the local macOS build (2026-11-10). Steam Deck
+  audio was not listened to separately.

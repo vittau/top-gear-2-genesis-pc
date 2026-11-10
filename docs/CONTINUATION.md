@@ -1,6 +1,14 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
-Latest owner decision: he tested the local macOS filter/menu build and said
+Latest owner decision (2026-11-10): [task 37](tasks/37-intermittent-race-menu-instruments.md)
+is done. A supervised OpenCode worker confirmed the coordinator's static
+diagnosis (BOTH persisted at boot diverted Z80 `$025E..$0261`, four entries of
+the music driver's octave table, to the second Z80), fixed `z80_route()`, and
+the owner approved the fix by ear (“Está certo”). It is merged into `main`
+(branch `vittau/tg2-race-menu-instruments`); no new Deck draft includes it yet.
+The worktree `tg2-race-menu-instruments` is kept until the owner asks to remove it.
+
+Earlier owner decision: he tested the local macOS filter/menu build and said
 **“Está tudo certo.”** Tasks 35/36 are approved; do not request that approval
 again. He separately reported occasional missing instruments in race-menu
 music, then explicitly deferred it to another session after saving the

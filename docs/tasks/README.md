@@ -46,4 +46,4 @@ the machine-resource rules, and never trigger CI.
 | [34](34-highres-s4.md) | High-resolution rendering, step S4 (detailed sprites at N×) | Brief prepared; not started. Handle new S3/Deck feedback first; Opus/Fable/Sol only. |
 | [35](35-linear-filter-highres.md) | Linear Filter has no visible effect in races after S3 (Deck playtest) | Complete; merged `87e926b`, owner approved local macOS playtest. Latest Deck performance remains unmeasured. |
 | [36](36-unify-runtime-menu-groups.md) | Unify Esc menu groups: Display/Graphics/Video → Video; Sound/Audio → Audio | Complete; merged `87e926b`, owner approved local macOS playtest. |
-| [37](37-intermittent-race-menu-instruments.md) | Intermittent missing instruments in race-menu music | Owner reported; explicitly deferred to another session, no investigation started. |
+| [37](37-intermittent-race-menu-instruments.md) | Intermittent missing instruments in race-menu music | Done: BOTH persisted at boot diverted four bytes of the music driver's octave table; fixed, merged, owner approved. |

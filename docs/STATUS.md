@@ -11,8 +11,10 @@ reviewed, merged in `87e926b`, and in the new
 Linux build/glibc/smoke gates pass. The owner approved the local macOS
 filter/menu playtest (“Está tudo certo”). Linear On adds about 4.51 ms CPU
 locally at 4×; latest-fix Deck performance still needs measurement.
-He separately reported intermittent missing instruments in race-menu music
-and explicitly deferred investigation to another session ([task 37](tasks/37-intermittent-race-menu-instruments.md)).
+His report of intermittent missing instruments in race-menu music is fixed
+([task 37](tasks/37-intermittent-race-menu-instruments.md)): with BOTH saved,
+the boot diverted four bytes of the music driver's octave table to the second
+Z80. Merged into `main`; the owner listened and approved it.
 The [S4 brief](tasks/34-highres-s4.md) remains prepared but unstarted.
 
 **v0.1.0 is out** (published 2026-11-08, tag on `f1cb093`; release notes in
