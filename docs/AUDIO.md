@@ -221,8 +221,10 @@ Z80 core for the race SFX image).
   bus-request/reset state (`GenesisBus.z80_sfx_*`, `GenesisMachine.z80_sfx`).
   A game-owned predicate (`game/tg2_audio_both.c: z80_route`) sends the 68K's
   upload access (RAM writes plus `$A11100`/`$A11200`) and its later PCM command
-  ports (`$A0025E..$A00261`) to the second core; every other 68K Z80-space access
-  still reaches the music driver. The upload's writes, reset pulse and image can
+  ports (`$A0025E..$A00261`) to the second core — the command ports only while
+  that core actually holds the SFX image (task 37, below) — and every other 68K
+  Z80-space access still reaches the music driver. The upload's writes, reset
+  pulse and image can
   no longer stop the music driver — the failure mode of the first prototype.
   The second core is stepped per scanline with the same cycle accounting as the
   first, halts on its own BUSREQ (faithful SOUND EFFECTS timing) and is reset and
@@ -241,9 +243,10 @@ Z80 core for the race SFX image).
   music driver from BUSREQ in BOTH; that let the Z80 read the music mailbox while
   the 68K was writing it, so a persisted BOTH silenced the title/menu music.
   Halting is the hardware behaviour and costs the music nothing measurable (the
-  68K engine's BUSREQ window is a few hundred cycles per frame). Regression
-  capture: boot with `[mods.racesound] mode = both`, title/menu music correlates
-  0.9952 with MUSIC mode (≥ 0.99 required).
+  68K engine's BUSREQ window is a few hundred cycles per frame). The persisted-BOTH
+  regression capture used to read 0.9952 against MUSIC mode; that residual was the
+  command-port routing bug of task 37 (below), and the menu/pre-race windows are
+  now sample-identical (correlation 1.000000, maximum sample difference 0).
 
 Stock modes (MUSIC, SOUND EFFECTS) never enable routing or the second core: one
 chip, one core, the old merged-stamp path, byte-identical output (verified
@@ -284,9 +287,71 @@ the owner's "sounds repeating".
 scenes are qualified with the stock MUSIC path). `$001FBE/$001FF4` (boot sound
 test) save and force the word on their own stack and are left alone.
 
-`$0700C8` (the race SFX Z80 image upload) is skipped while BOTH is live: the
-image would overwrite the resident music driver in Z80 RAM. See *Limitations*
-for what that costs (the car's PCM sample player).
+`$0700C8` (the race SFX Z80 image upload) is not skipped while BOTH is live: it
+really runs, and every Z80-space access it makes is routed to the second core
+(patch 0014), so the resident music driver keeps its RAM and its reset line.
+
+### The command ports and the music driver's block table (task 37)
+
+The four command bytes at Z80 `$A0025E..$A00261` are shared property: they are
+the race SFX image's command ports **and** entries `$37..$3A` of the resident
+music driver's note → octave table. The driver reads that table at Z80 `$0151`
+(`LD HL,$0227`), indexed by `note + transpose + 1`, and ORs the value into the
+YM2612 frequency high byte (`OR (HL)` at `$0161`), so the value is `block << 3`:
+
+| Table | Contents |
+|---|---|
+| `$0227..$0286` | 96 entries, 8 octaves × 12 semitones; octave *n* filled with `n << 3` |
+| `$0287..$02E6` | per-note index into the frequency table (`0,2,..,$16` repeating) |
+| `$02E7..$02FE` | 12 frequency words (fnum low, fnum high) |
+
+ROM `$2589A + $25E..$261` = `$20 $20 $20 $20`, i.e. octave 4, semitones 7..10
+(G, G♯, A, A♯). Note indices `$37..$3A` are exactly those four semitones.
+
+The first version of `z80_route()` sent **every** 68K access in
+`$A0025E..$A00261` to the second core whenever BOTH was live, not only the SFX
+engine's command writes. The 68K uploads the music driver byte by byte at boot
+(`$024C76`, `MOVE.B (A0)+,(A1)+` copying ROM `$02589A..` to `$A00000..`), and
+`adopt_mode()` runs from `tg2_audio_frame_pre()` before the guest's first
+instruction, so a **persisted** BOTH is live during that upload: the four bytes
+went into the second core's RAM instead, and the driver's table kept zeros.
+Those four note indices then played block 0 (four octaves down, below audibility)
+instead of block 4. A session that selects BOTH *after* boot is unaffected,
+because the upload already happened; that is why the regression captures and the
+live-toggle probe (which visit the RACE SOUND page) never saw it.
+
+Evidence (details and numbers in section 8, "Task 37"):
+
+| Check | Before | After |
+|---|---|---|
+| `$25E..$261` first core, persisted BOTH, frame 400 | `00 00 00 00` | `20 20 20 20` (= ROM, = MUSIC) |
+| Second-core RAM `$25E..$261` (from the machine image in a quickstate) | `20 20 20 20` | empty (0 non-zero bytes) |
+| Music-driver image vs ROM, whole 8 KB | 97 bytes differ | 96 = MUSIC's own work-variable writes (93–97 in every mode, run to run) |
+| register `$A5` for the affected note (title theme) | `$04` (block 0) | `$24` (block 4), as MUSIC |
+| chip A vs MUSIC, menu/pre-race windows | 0.973..0.997 | **1.000000, max sample difference 0** |
+
+Fix: the command ports are routed only while the second core really holds the
+race SFX image, tested from guest state — its first three bytes are the image's
+`JP $0410` (`C3 10 04`), exactly like `first_z80_runs_sfx_image()`'s test for
+the music driver. No host flag is involved, so the predicate cannot drift out of
+sync with the machine: a cold reset restores both cores' RAM to the pre-boot
+image (routing off again for the boot upload), a quickstate load restores
+whatever that state held (a mid-race BOTH state answers "image resident"), and
+each race re-runs `$0700C8` before its first command. The upload itself is
+unaffected: `s_sfx_upload` (set at `$0700C8`, cleared at the routine's RTS
+`$070188`) still routes every access of the upload, including the second core's
+reset pulse.
+
+Two consequences worth knowing:
+
+* A quickstate **saved in an affected session keeps the corrupted driver bytes**
+  (Z80 RAM is part of the machine image), so loading it back into a fixed build
+  still plays those four indices low until the next boot re-uploads the driver.
+* The comment above `step_z80()` in
+  `segagenesisrecomp/runner/video/genesis_machine.c` still describes the
+  withdrawn BUSREQ release; the code below it halts the Z80 on BUSREQ, which is
+  the behaviour section 5 documents. Comment only, no behaviour difference, left
+  alone by this task.
 
 ### Menu value page (and the re-entry bug)
 
@@ -534,6 +599,122 @@ The +6 % RMS is a constant DAC bias: each idle YM2612 model emits a fixed +380
 offset, stock modes carry one chip's worth (mean 193) and BOTH carries two
 (mean 569). It is inaudible DC, costs no headroom, and is left uncorrected so
 chip B stays bit-comparable with SOUND EFFECTS and the mix stays exactly A + B.
+
+**Those numbers were measured before task 37 and are superseded.** Their
+residual was the persisted-BOTH boot upload corrupting the music driver's
+octave table (`$25E..$261`, section 5). On the fixed build the same boot window
+(120–390) is sample-identical to MUSIC, and so is every menu/pre-race window —
+Task 37's own measurement follows.
+
+### Task 37: persisted BOTH, per-screen audio and driver RAM
+
+Route: boot from a clean runtime directory whose `settings.ini` holds
+`[mods.racesound] mode = <mode>` (no SOUND page visit, so the mode is the one
+live at the upload, which is the owner's configuration), title → START → main
+menu → 1P setup → track intro → shop → race, 9000 wall frames, controller input
+only (`build/exp37.py route <mode> 9000`). Chip A is `GENESIS_AUDIO_CHIPDUMP`
+(`chipA.wav`); the MUSIC reference is its `--wav` stream (single chip, same
+route). Windows are given in wall frames.
+
+| Window (frames) | Screen | Before: corr / max Δ | After: corr / max Δ |
+|---|---|---|---|
+| 120–390 | title | 0.995124 / 3616 | **1.000000 / 0** |
+| 430–780 | main menu | 0.996797 / 3464 | **1.000000 / 0** |
+| 830–1040 | 1P setup | 0.973455 / 2021 | **1.000000 / 0** |
+| 1100–1340 | track intro | 0.983151 / 1999 | **1.000000 / 0** |
+| 1400–1650 | shop | 0.983786 / 1975 | **1.000000 / 0** |
+| 2000–4500 | race | 0.988310 / 4857 | 0.995298 / 4857 |
+
+(Windows are mono left-channel sample ranges of the 223721 Hz dump; the race
+row is capped at frame 4500 because that is where the first capture's dump
+ended — both rows use the same range. The earlier "0.995227" of the persisted
+BOTH section above covered 400–900, i.e. it mixed the pre-race screens.)
+
+The pre-race screens were the worst case, which is what the owner reported as
+"race-menu music". The race window keeps a residual because BOTH also ticks the
+68K SFX engines and takes BUSREQ for them, which re-stamps the first Z80's
+writes (section 5); its **note** stream is nevertheless identical — see below.
+
+Second acceptance run with the throttle held from the countdown (B, 4000 wall
+frames, same route; the engine/nitro sample player is what forces SOUND EFFECTS
+and BOTH apart in a race):
+
+| Check | Result |
+|---|---|
+| `GENESIS_AUDIO_SFXPCM_TRACE`, BOTH vs SOUND EFFECTS | **byte-identical**, 465 commands (MD5 `1732560acd37b8869ef7c018eaafd73a`): engine loop `6` ×441, gear `3` ×14, impacts `5`/`7`/`2`, `1` ×2 |
+| `GENESIS_AUDIO_CHIPDUMP` B (BOTH) vs SOUND EFFECTS `--wav`, race 2000–3990 | **0.999980**, RMS 1459.0 both |
+| chip A (BOTH) vs MUSIC `--wav`, same race window | 0.993431, RMS 1491.3/1491.4 |
+
+So the SFX layer stays exactly SOUND EFFECTS' on chip B (the car's PCM player is
+audible there, RMS ≈ 1459) while the music stays on chip A.
+
+Same-route `GENESIS_AUDIO_WRITEDUMP` register decode (address latch resolved per
+FM port, Z80-origin writes only, `$A0-$A2`/`$A8-$AA` low bytes and
+`$A4-$A6`/`$AC-$AE` high bytes as `block<<3 | fnum>>8`):
+
+| Check | Before | After |
+|---|---|---|
+| Frames whose note set differs from MUSIC (of 1064) | 25 | **1** |
+| of which are a pitch difference | 24 (`$A5 = $04` vs `$24`, same fnum) | 0 |
+| the remaining one | — | frame 4947, `$A5=$23`/`$A1=$09` re-written by MUSIC and skipped by BOTH although that exact pair was last latched at frame 4940; no pitch change, no audio difference |
+
+Affected note: every divergence before the fix is note index `$37` (octave 4,
+semitone G) on FM channel 2, once every ~221 frames (3.7 s) — one arpeggio/
+counter-melody line of the title, 1P-setup, shop, intro and race songs. Its
+`$A5` value drops from `$24` to `$04`, i.e. block 4 → block 0, a frequency four
+octaves lower; with the same fnum the note lands below audibility, so the line
+*disappears* rather than sounding wrong — the reported symptom. On this route
+only table entry `$37` is played; `$38..$3A` are the neighbouring semitones
+(A♯/B region) and would fail the same way in songs that use them.
+
+Single-session causality proof (no code change): boot persisted BOTH, then poke
+the four bytes back to `$20` through the debug server at frame 800
+(`build/exp37.py idle both 1700 800`; probe-only RAM write, used as a diagnostic,
+not as the fix). Chip A vs MUSIC on the same frames:
+
+| Window | corr |
+|---|---|
+| 300–760 (before the poke) | 0.994834 |
+| 860–1650 (after the poke) | **1.000000** |
+
+Driver RAM (`read_z80_ram` at frame 400, whole 8 KB vs ROM `$02589A`):
+
+| Mode | `$25E..$261` | bytes differing | second core `$25E..$261` |
+|---|---|---|---|
+| BOTH before | `00 00 00 00` | 97 | `20 20 20 20` (4 non-zero bytes) |
+| BOTH after | `20 20 20 20` | 96 (= MUSIC/SFX) | empty |
+| MUSIC | `20 20 20 20` | 96 | empty |
+| SOUND EFFECTS | `20 20 20 20` | 96 | empty |
+
+The 96 shared differences are the driver's own work variables (`$081`, `$086`,
+`$222`, `$224`, …), identical in all three modes. The second-core bytes are read
+from the machine image in a quickstate file (Z80 RAM sits at
+`offsetof(GenesisBus, z80_ram)`; the second core's RAM is 0x200B further on),
+which is also why the corrupted bytes travel with a state saved in an affected
+session.
+
+`tools/verify_both_driver_image.py` is the regression: it boots the three modes
+from clean runtime directories and requires BOTH's driver image and octave-4
+table row to equal ROM, the second core to be empty, and no difference from
+MUSIC inside `$0227..$0286`. (The driver's own work variables — the mailbox at
+`$081`, `$08C`, `$094`, the Z80 stack at `$1FDC..`, `$222`/`$224` — differ by a
+few bytes between runs and modes because BOTH halts the Z80 on the 68K's BUSREQ
+at slightly different points; the whole-image count therefore wobbles around
+93–97 in every mode, MUSIC included.)
+
+Stock modes are untouched, checked against a `main` (d57cffa) build of the same
+script (`tools/build-linux.sh` in a separate clone, same `settings.ini`,
+`--input-script`, `--wav`, 4000 frames, 4:3 Off):
+
+| Capture | `main` d57cffa | this branch |
+|---|---|---|
+| MUSIC whole-run WAV MD5 | `117d0e45d83ab0a66ec0fee2e368bdb6` | `117d0e45d83ab0a66ec0fee2e368bdb6` |
+| SOUND EFFECTS whole-run WAV MD5 | `e55d0e0bf0b119dce503990e36df1e3b` | `e55d0e0bf0b119dce503990e36df1e3b` |
+| frame hashes (every 60 frames, MUSIC and SFX) | 66 lines each | identical, `diff` empty |
+| `dispatch_misses` / `floor_coverage` / `interior_label_misses` / `floor_unsafe` | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 (all runs) |
+
+The stock 4:3 fingerprints still appear: frame 60 `2A0B972960C5E325`, frame 300
+`1131D937D70234FD`.
 
 Selecting BOTH mid-session is the acceptance route above (menu → RACE SOUND →
 BOTH → race); the music never stops at the switch and the race starts with both
