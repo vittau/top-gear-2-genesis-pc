@@ -775,6 +775,9 @@ Every step ends with the same mandatory gates, recorded as evidence:
 
 ### S3 — Road + background at N× (the core)
 
+**Model restriction (owner):** only Opus or Sol may implement this step,
+because of its high complexity.
+
 - Implement `tg2_highres_build()`: road strip rasteriser, sky, skyline, ground
   at N×; keep sprites/HUD native-sized in the frame for now (drawn by the
   existing row renderer at 1× in the N× frame is *not* acceptable — instead the
@@ -795,6 +798,9 @@ Every step ends with the same mandatory gates, recorded as evidence:
 - **Check:** a new `tools/check_highres.py` that automates the above plus PNGs.
 
 ### S4 — Sprites at N× with sub-pixel positions and detailed variants
+
+**Model restriction (owner):** only Opus or Sol may implement this step,
+because of its high complexity.
 
 - Draw the pre-cull scene (`$B5FA` capture) at N×: resolve each object's model 0
   (most detailed) read-only from `A1`, scale to the captured on-screen size,

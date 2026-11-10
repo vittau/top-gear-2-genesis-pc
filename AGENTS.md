@@ -37,6 +37,9 @@ renderer) and adapt it. Don't copy its game-specific addresses.
 
 ## Rules
 
+- High-resolution tasks S3 and S4 may only be implemented by Opus or Sol
+  models because of their high complexity. This overrides the general model
+  selection and fallback rules for these tasks.
 - Never edit generated C. Fix `game.toml`, discovery evidence, or the
   recompiler/runner, then regenerate.
 - Disassembly and runtime evidence are ground truth (engine PRINCIPLES #16).
