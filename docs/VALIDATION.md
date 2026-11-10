@@ -1089,6 +1089,11 @@ and controller-only operation of the new Diagnostics row on the device.
 
 ## Task 33 — high-resolution rendering S3 (branch `vittau/tg2-highres-s3`)
 
+**Requalification in progress:** the table below is the earlier worker's
+record, not the final merged-state verdict. Current results are in HIGHRES
+§13; all nine driven track/scale audits have passed, with cost and canvas-cap
+checks still pending.
+
 The road is redrawn at 2×/3×/4× from the game's own per-line width, centre,
 atlas row and palette, with analytic edges and interpolated sub-lines; every
 other pixel is the native picture nearest-scaled by N (sprites/HUD/plane-A stay

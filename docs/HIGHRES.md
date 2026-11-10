@@ -1167,7 +1167,7 @@ Audit work is excluded from the cost runs. Owner visual acceptance is pending.
 
 | Scale | Builder µs / presented frame | Whole frame CPU µs, median / p95 |
 |---|---:|---:|
-| 2× | pending | pending |
+| 2× | 802.6 | 7893.0 / 9092 (910 frames) |
 | 3× | pending | pending |
 | 4× | pending | pending |
 
@@ -1202,7 +1202,7 @@ phase rather than blending templates.
 | bavaria-rain, 4× | 1,939 / 479,188 | 9,622 / 0.496 px | 0 violations / pass |
 | canada, 2× | 1,948 / 252,038 | 37,473 / 0.500 px | 0 violations / pass |
 | canada, 3× | 1,940 / 373,032 | 54,764 / 0.500 px | 0 violations / pass |
-| canada, 4× | pending | pending | pending |
+| canada, 4× | 1,939 / 497,224 | 73,226 / 0.500 px | 0 violations / pass |
 
 Every completed run has all four manifests at 0. Ambiguous edge colours are
 excluded from edge measurement, while interior lanes can remain measurable
