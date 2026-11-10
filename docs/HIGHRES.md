@@ -1192,23 +1192,23 @@ continuous band. The audit checks the actual lane counts and centres against
 the analytic plan (centre tolerance 1.5 output pixels), retaining source stripe
 phase rather than blending templates.
 
-| Driven track / scale | Presented pictures / road rows | Measured stripe centres / worst error | Road / margin verdict |
+| Driven track / scale | Presented pictures / road rows | Stripe rows / worst centre error | Road / margin verdict |
 |---|---:|---:|---|
 | auckland, 2× | 3,638 / 451,686 | 51,150 / 0.500 px | 0 violations / pass |
 | auckland, 3× | 3,641 / 690,066 | 86,467 / 0.496 px | 0 violations / pass |
-| auckland, 4× | pending | pending | pending |
-| bavaria-rain, 2× | pending | pending | pending |
-| bavaria-rain, 3× | pending | pending | pending |
-| bavaria-rain, 4× | pending | pending | pending |
-| canada, 2× | pending | pending | pending |
-| canada, 3× | pending | pending | pending |
+| auckland, 4× | 3,641 / 911,412 | 119,389 / 0.496 px | 0 violations / pass |
+| bavaria-rain, 2× | 1,946 / 240,304 | 5,483 / 0.492 px | 0 violations / pass |
+| bavaria-rain, 3× | 1,943 / 359,742 | 8,220 / 0.496 px | 0 violations / pass |
+| bavaria-rain, 4× | 1,939 / 479,188 | 9,622 / 0.496 px | 0 violations / pass |
+| canada, 2× | 1,948 / 252,038 | 37,473 / 0.500 px | 0 violations / pass |
+| canada, 3× | 1,940 / 373,032 | 54,764 / 0.500 px | 0 violations / pass |
 | canada, 4× | pending | pending | pending |
 
-Every completed run has all four manifests at 0. Ambiguous palette/overlap
-rows are excluded from pixel geometry/stripe classification and remain
-covered by envelope, continuity and colour checks. White borders sharing a
-lane colour are separated by their known border span; indistinguishable tiny
-border/lane intervals are explicitly marked ambiguous.
+Every completed run has all four manifests at 0. Ambiguous edge colours are
+excluded from edge measurement, while interior lanes can remain measurable
+when their colour differs from asphalt (including white lanes beside snow).
+Covered strips and indistinguishable tiny border/lane intervals are excluded
+from stripe measurement. Envelope, continuity and colour checks still apply.
 
 G1 retained `2A0B972960C5E325` / `1131D937D70234FD`. G3 widescreen retained
 RAM/VRAM/native-centre identity at all five frames in Off/16:9/21:9. The 60 fps
@@ -1286,6 +1286,11 @@ comparison. G3 reproduction: `tools/verify_widescreen.py`, then
   pictures without a ROM, including reset.
 - **Extreme adaptive width fixed:** the 3× canvas cap is divisible by three
   (4095), rather than 4096, which bypassed the N× builder.
+- **Wide native canvases fixed:** only qualified 1P race rows are expanded.
+  At 32:9 a native menu/2P canvas could be divisible by N and wider than
+  `native_w * N`, which the old dimension-only guard mistook for an N×
+  canvas. The 32:9 menu hashes now match 1×; the expanded 2P check covers this
+  case separately from the original 16:9 check.
 - **Option test corrected:** choice navigation wraps, so three right presses
   reach 4× from 1×; five presses return to 2×. Missing evidence manifests now
   fail the checks rather than being treated as zero entries.
