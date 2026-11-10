@@ -6,7 +6,12 @@ diagnosis (BOTH persisted at boot diverted Z80 `$025E..$0261`, four entries of
 the music driver's octave table, to the second Z80), fixed `z80_route()`, and
 the owner approved the fix by ear (“Está certo”). It is merged into `main`
 (branch `vittau/tg2-race-menu-instruments`); no new Deck draft includes it yet.
-The worktree `tg2-race-menu-instruments` is kept until the owner asks to remove it.
+At the owner's request the `tg2-race-menu-instruments` worktree was then removed
+through Orca (its OpenCode session was idle and interrupted). Branch
+`vittau/tg2-race-menu-instruments` is retained at `8cba6d4`; verified bundles of
+the branch and both dirty submodule trees, the worker report and probe scripts
+are in `~/.cache/tg2-worktree-backups/20261110-race-menu-instruments/`
+(`manifest.json`). Only the main checkout remains registered.
 
 Earlier owner decision: he tested the local macOS filter/menu build and said
 **“Está tudo certo.”** Tasks 35/36 are approved; do not request that approval
