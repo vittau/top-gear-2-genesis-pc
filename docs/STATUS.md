@@ -2,9 +2,10 @@
 
 **Next coordinator:** start with [CONTINUATION.md](CONTINUATION.md).
 S3 is merged and visually approved; the Linux-only Steam Deck draft is ready.
-The owner uses the extracted tar.gz and has not yet reported this draft's
-playtest. Address new S3/Deck feedback first, then use the prepared
-[S4 brief](tasks/34-highres-s4.md). No implementation worker is active.
+The owner uses the extracted tar.gz and reported it worked well, with a
+regression: Linear Filter still works in the main menu but has no visible
+effect during gameplay. Investigate [task 35](tasks/35-linear-filter-highres.md)
+before the prepared [S4 brief](tasks/34-highres-s4.md).
 
 **v0.1.0 is out** (published 2026-11-08, tag on `f1cb093`; release notes in
 `release/v0.1.0.md`). It is a native Top Gear 2 for Windows, Linux/Steam Deck

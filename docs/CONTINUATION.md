@@ -1,5 +1,11 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
+Current feedback: the owner tested the Deck tar.gz and said it worked well,
+but **Linear Filter no longer has an effect during gameplay while still
+working in the main menu**. Investigate [task 35](tasks/35-linear-filter-highres.md)
+before S4. Internal scale/toggle details are not yet known; reproduce first.
+The checkpoint below retains the source/build history of that tested draft.
+
 Session checkpoint: 2026-11-10. The owner is ending the session. Do not launch
 new implementation work merely because this checkpoint exists.
 
@@ -66,8 +72,9 @@ new implementation work merely because this checkpoint exists.
   avoids changing the shortcut. Do not require migration to AppImage.
 - Internal resolution defaults to **1×**. To test S3, select 2× in the shared
   Internal resolution row and restart. Check Adaptive 16:10, gamepad/overlay,
-  audio and frame pacing. This draft's real Deck result has **not** been
-  reported yet. The owner had played an older tarball and reported aspect/log
+  audio and frame pacing. The owner has now reported that the draft worked
+  well, with the Linear Filter regression recorded above; this does not
+  establish individual performance/GPU measurements. He had played an older tarball and reported aspect/log
   issues; do not describe the Deck as never having been played at all.
 - A later fix needs a new build with an explicit source revision; never
   silently relabel these existing binaries as containing new commits.
