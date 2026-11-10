@@ -182,6 +182,7 @@ const GameSpec g_game_spec = {
     .load_settings = tg2_options_load,
     .save_settings = tg2_options_save,
     .runtime_ui_items = tg2_options_runtime_items,
+    .runtime_ui_layout = &tg2_runtime_layout,
     .runtime_ui_get = tg2_options_runtime_get,
     .runtime_ui_set = tg2_options_runtime_set,
     .mods = tg2_mods,

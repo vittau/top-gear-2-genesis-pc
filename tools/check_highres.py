@@ -739,8 +739,8 @@ def check_option(args):
                 r.command('key', name=name, held=0)
                 r.wait_frame(r.frame() + 8)
 
-            # The runtime menu is paged; the row lives on the Video page.
-            r.command('ui_open', section='Video')
+            # The runtime menu is paged; the row lives on the VIDEO page.
+            r.command('ui_open', section='VIDEO')
             r.wait_frame(r.frame() + 8)
             rows = r.command('ui_rows')['rows']
             menu['rows'] = [row['label'] for row in rows]

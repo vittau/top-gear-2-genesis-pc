@@ -1,6 +1,8 @@
 # Task 36: unify the Esc menu's video and audio groups
 
-**Status: requested by the owner; coordinate with task 35 in the same worker.**
+**Status: implemented on the task-35 worker branch; local UI qualification passed; owner playtest remains.**
+
+Implementation and row inventory: [runtime menu](../RUNTIME_MENU.md).
 
 The owner finds the Esc menu confusing and explicitly requested:
 
