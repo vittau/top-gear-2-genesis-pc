@@ -78,7 +78,7 @@ void tg2_highres_capture_row(const struct GVDP *v, int line, int ha, int hb);
  * picture and row_serial[line] names the picture the stored row belongs to. */
 const Tg2RowState *tg2_highres_rows(void);
 unsigned tg2_highres_serial(void);
-const unsigned short *tg2_highres_row_serial(void);
+const unsigned *tg2_highres_row_serial(void);
 unsigned tg2_highres_capture_frames(void);
 /* Capture cost accumulated while TG2_HIGHRES_TIMING=1 (0 otherwise), in
  * microseconds, and the number of captured rows it covers. */

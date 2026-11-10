@@ -1182,7 +1182,7 @@ void tg2_video_highres_command(int id, const char *json) {
         }
     }
     const Tg2RowState *captured = tg2_highres_rows();
-    const unsigned short *row_serial = tg2_highres_row_serial();
+    const unsigned *row_serial = tg2_highres_row_serial();
     unsigned serial = tg2_highres_serial();
     int n = snprintf(out, CAPACITY,
                      "{\"id\":%d,\"ok\":true,\"scale\":%d,\"present_scale\":%d,"

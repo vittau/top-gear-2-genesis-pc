@@ -993,6 +993,8 @@ def check_drive(args):
         item['road_artifacts'] = json.loads(report.read_text()) if report.exists() else None
         if proc.returncode != 0:
             failures.append(f"{tag}: road artefacts failed")
+        if not (item['road_artifacts'] or {}).get('stripe_centres_checked'):
+            failures.append(f"{tag}: no stripe centres were measured (rebuild the runner)")
     if args.mode != 'off' and not args.no_audit:
         proc = subprocess.run([sys.executable, str(ROOT / 'tools' / 'check_margin_artifacts.py'),
                                str(out / 'margins.csv')], capture_output=True, text=True)

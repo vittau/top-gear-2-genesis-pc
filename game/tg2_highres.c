@@ -94,7 +94,9 @@ static int highres_timing(void) {
 /* ── Compact per-row capture (S1/S3) ─────────────────────────────────────── */
 
 static Tg2RowState s_rows[TG2_HIGHRES_ROWS];
-static unsigned short s_row_serial[TG2_HIGHRES_ROWS];
+/* Same width as s_serial: truncating row tags at 16 bits silently stopped
+ * matching fresh rows after 65,535 captured pictures. */
+static unsigned s_row_serial[TG2_HIGHRES_ROWS];
 static unsigned s_serial;
 static unsigned s_capture_frames, s_capture_rows;
 static double s_capture_us;
@@ -226,7 +228,7 @@ void tg2_highres_capture_row(const GVDP *v, int line, int ha, int hb) {
         return;
     int timing = highres_timing();
     double started = timing ? highres_now_us() : 0;
-    s_row_serial[line] = (unsigned short)s_serial;
+    s_row_serial[line] = s_serial;
     Tg2RowState *r = &s_rows[line];
     memcpy(r->reg, v->reg, sizeof r->reg);
     r->vsram[0] = v->vsram[0] & 1023;
@@ -276,7 +278,7 @@ void tg2_highres_capture_row(const GVDP *v, int line, int ha, int hb) {
 
 const Tg2RowState *tg2_highres_rows(void) { return s_rows; }
 unsigned tg2_highres_serial(void) { return s_serial; }
-const unsigned short *tg2_highres_row_serial(void) { return s_row_serial; }
+const unsigned *tg2_highres_row_serial(void) { return s_row_serial; }
 unsigned tg2_highres_capture_frames(void) { return s_capture_frames; }
 double tg2_highres_capture_us(void) { return s_capture_us; }
 unsigned tg2_highres_capture_rows_done(void) { return s_capture_rows; }
@@ -432,6 +434,7 @@ typedef struct {
     int32_t seen_l, seen_r;             /* road pixels found, output x      */
     int32_t lanes, lanes_src, holes;
     int32_t outliers, margin_outliers, band;
+    int32_t lane_error_x256;           /* worst measured stripe-centre error */
 } NxAuditRow;
 enum { NX_FLAG_INTERPOLATED = 1, NX_FLAG_FULL = 2, NX_FLAG_STRUCTURE = 4,
        NX_FLAG_AMBIGUOUS = 8 };
@@ -462,7 +465,8 @@ static int colour_distance(uint32_t a, uint32_t b) {
 /* Measure one built row back from its pixels. */
 static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colour,
                        const uint32_t *row, const uint32_t *native_row, int scale,
-                       int w1, int origin, int native_w, int reach, int centre) {
+                       int w1, int origin, int native_w, int reach, int centre,
+                       const double *boundaries) {
     /* Pixel kinds by nearest run colour: 0 verge, 1 road, 2 lane mark. A lane
      * colour that equals another road colour (the "off" phase) is plain road. */
     unsigned char kind[ROAD_MAX_RUNS];
@@ -482,6 +486,16 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
         }
     }
     a->lanes_src = lanes_src;
+    double lane_centres[ROAD_MAX_RUNS];
+    int lane_count = 0;
+    for (int i = runs->first; i <= runs->last; ++i) {
+        if (kind[i] != 2) continue;
+        int first = i;
+        while (i < runs->last && kind[i + 1] == 2) ++i;
+        lane_centres[lane_count++] = (boundaries[first] + boundaries[i + 1]) * scale * 0.5;
+    }
+    int lane_begin = -1, lane_seen = 0;
+    double lane_error = 0;
     /* A verge that shares a colour with the road (fades, some palettes) cannot
      * be told from it in the picture: the row's geometry is not measurable. */
     for (int i = 0; i < runs->count; ++i)
@@ -532,6 +546,15 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
                 if (d < best_d || (d == best_d && kind[i] > kind[best])) { best_d = d; best = i; }
             }
             int kd = kind[best];
+            if (kd == 2 && lane_begin < 0) lane_begin = x;
+            if (kd != 2 && lane_begin >= 0) {
+                if (lane_seen < lane_count) {
+                    double error = fabs((lane_begin + x) * 0.5 - lane_centres[lane_seen]);
+                    if (error > lane_error) lane_error = error;
+                }
+                ++lane_seen;
+                lane_begin = -1;
+            }
             if (kd) {
                 if (a->seen_l < 0) a->seen_l = x;
                 a->seen_r = x;
@@ -544,6 +567,8 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
             last_kind = kd;
         }
     }
+    /* Clipped stripes are excluded by the checker's full/unclipped-row gate. */
+    a->lane_error_x256 = (int32_t)floor(fmin(lane_error, 1e6) * 256.0 + 0.5);
 }
 
 static void nx_audit_write(uint64_t frame, int scale, int w1, int native_w) {
@@ -556,7 +581,7 @@ static void nx_audit_write(uint64_t frame, int scale, int w1, int native_w) {
     uint32_t header[6] = {(uint32_t)frame, (uint32_t)scale, (uint32_t)w1,
                           (uint32_t)native_w, (uint32_t)s_audit_count,
                           (uint32_t)sizeof(NxAuditRow)};
-    fwrite("TG2NXR02", 1, 8, f);
+    fwrite("TG2NXR03", 1, 8, f);
     fwrite(header, sizeof header, 1, f);
     fwrite(s_audit, sizeof *s_audit, (size_t)s_audit_count, f);
     fclose(f);
@@ -714,7 +739,7 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
         /* Scenery may only move as far as the silhouette did. */
         double moved = fabs(el - own_l) > fabs(er - own_r) ? fabs(el - own_l) : fabs(er - own_r);
         nx_measure(a, runs, p->colour, row, native_row, scale, w1, origin, native_w,
-                   (int)ceil(moved) + 1, m->centre);
+                   (int)ceil(moved) + 1, m->centre, q);
     }
 }
 

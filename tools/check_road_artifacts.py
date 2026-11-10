@@ -71,12 +71,12 @@ def strip(out, audit, start):
 # from the finished row, not from the builder's variables): first/last road
 # pixel, lane-mark runs, verge pixels inside the road, and pixels whose colour
 # the native row cannot explain within the distance the silhouette moved.
-NX_MAGIC = b'TG2NXR02'
+NX_MAGIC = b'TG2NXR03'
 NX_DTYPE = np.dtype([(name, '<i4') for name in (
     'line', 'sub', 'py', 'flags', 'neighbour',
     'own_l', 'own_r', 'nb_l', 'nb_r', 'el_x256', 'er_x256',
     'seen_l', 'seen_r', 'lanes', 'lanes_src', 'holes',
-    'outliers', 'margin_outliers', 'band')])
+    'outliers', 'margin_outliers', 'band', 'lane_error_x256')])
 NX_INTERPOLATED, NX_FULL, NX_STRUCTURE, NX_AMBIGUOUS = 1, 2, 4, 8
 # The fitted silhouette may sit this far from the authored one (FIT_LIMIT in
 # game/tg2_highres.c), in native pixels.
@@ -85,12 +85,13 @@ NX_FIT_LIMIT = 1.5
 
 def load_nx(path):
     data = path.read_bytes()
-    if data[:8] != NX_MAGIC:
+    if data[:8] not in (NX_MAGIC, b'TG2NXR02'):
         raise ValueError(f'invalid N x road capture: {path}')
     frame, scale, w1, native_w, count, size = struct.unpack_from('<6I', data, 8)
-    if size != NX_DTYPE.itemsize or len(data) != 32 + count * size:
+    dtype = NX_DTYPE if data[:8] == NX_MAGIC else np.dtype(NX_DTYPE.descr[:-1])
+    if size != dtype.itemsize or len(data) != 32 + count * size:
         raise ValueError(f'incomplete N x road capture: {path}')
-    rows = np.frombuffer(data, dtype=NX_DTYPE, offset=32)
+    rows = np.frombuffer(data, dtype=dtype, offset=32)
     rows = rows[np.lexsort((rows['sub'], rows['line']))]
     return dict(frame=frame, scale=scale, w1=w1, native_w=native_w), rows
 
@@ -102,12 +103,13 @@ def main_nx(a):
         raise SystemExit('no N x road audit files; run with TG2_ROAD_AUDIT_DIR')
     counters = ['envelope_violations', 'gap_violations', 'geometry_violations',
                 'hole_violations', 'stripe_violations', 'continuity_violations',
-                'outlier_rows', 'margin_outlier_rows']
+                'outlier_rows', 'margin_outlier_rows', 'stripe_centre_violations']
     totals = dict(mode='nx', frames=0, road_frames=0, scales=[], presented_rows=0,
                   interpolated_rows=0, full_rows=0, stripe_rows_checked=0,
                   continuity_pairs_checked=0, band_breaks=0,
                   max_envelope_violation_px=0.0, max_geometry_error_px=0.0,
-                  max_fit_offset_px=0.0, max_edge_step_px=0.0, examples=[])
+                  max_fit_offset_px=0.0, max_edge_step_px=0.0,
+                  stripe_centres_checked=0, max_stripe_centre_error_px=0.0, examples=[])
     totals.update({k: 0 for k in counters})
     for path in paths:
         h, r = load_nx(path)
@@ -148,6 +150,14 @@ def main_nx(a):
         bad_hole = full & (r['holes'] > 0)
         bad_stripe = free & (r['lanes'] != r['lanes_src'])
         totals['stripe_rows_checked'] += int(free.sum())
+        bad_centre = np.zeros(len(r), dtype=bool)
+        if 'lane_error_x256' in r.dtype.names:
+            lane_rows = free & (r['lanes_src'] > 0)
+            error = np.where(lane_rows, r['lane_error_x256'] / 256.0, 0.0)
+            bad_centre = error > 1.5
+            totals['stripe_centres_checked'] += int(lane_rows.sum())
+            totals['max_stripe_centre_error_px'] = max(
+                totals['max_stripe_centre_error_px'], float(error.max(initial=0)))
         # 5. Nothing the native row cannot explain, margins included.
         bad_out = r['outliers'] > 0
         bad_margin = r['margin_outliers'] > 0
@@ -176,7 +186,7 @@ def main_nx(a):
         bad_cont = np.zeros(len(r), dtype=bool)
         bad_cont[1:] = bad_pair
         for name, bad in zip(counters, [bad_env, bad_gap, bad_geo, bad_hole, bad_stripe,
-                                        bad_cont, bad_out, bad_margin]):
+                                        bad_cont, bad_out, bad_margin, bad_centre]):
             totals[name] += int(bad.sum())
             for i in np.flatnonzero(bad)[:2]:
                 if sum(e['rule'] == name for e in totals['examples']) < 4:
