@@ -468,7 +468,7 @@ static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colo
                        int w1, int origin, int native_w, int reach, int centre,
                        const double *boundaries) {
     /* Pixel kinds by nearest run colour: 0 verge, 1 road, 2 lane mark. A lane
-     * colour that equals another road colour (the "off" phase) is plain road. */
+     * colour that equals asphalt (the "off" phase) is plain road. */
     unsigned char kind[ROAD_MAX_RUNS];
     int lanes_src = 0, previous = 0;
     for (int i = 0; i < runs->count; ++i) {
