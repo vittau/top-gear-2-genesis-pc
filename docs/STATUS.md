@@ -8,9 +8,12 @@ effect during gameplay. [Task 35](tasks/35-linear-filter-highres.md) and the
 unified runtime menu ([task 36](tasks/36-unify-runtime-menu-groups.md)) are
 reviewed, merged in `87e926b`, and in the new
 [Deck draft](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-250db4e89d9b27e23c8f).
-Linux build/glibc/smoke gates pass. Owner retest remains before the prepared
-[S4 brief](tasks/34-highres-s4.md). Linear On adds about 4.51 ms CPU locally
-at 4×; Deck performance still needs measurement.
+Linux build/glibc/smoke gates pass. The owner approved the local macOS
+filter/menu playtest (“Está tudo certo”). Linear On adds about 4.51 ms CPU
+locally at 4×; latest-fix Deck performance still needs measurement.
+He separately reported intermittent missing instruments in race-menu music
+and explicitly deferred investigation to another session ([task 37](tasks/37-intermittent-race-menu-instruments.md)).
+The [S4 brief](tasks/34-highres-s4.md) remains prepared but unstarted.
 
 **v0.1.0 is out** (published 2026-11-08, tag on `f1cb093`; release notes in
 `release/v0.1.0.md`). It is a native Top Gear 2 for Windows, Linux/Steam Deck

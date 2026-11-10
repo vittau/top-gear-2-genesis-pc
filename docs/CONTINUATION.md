@@ -1,9 +1,21 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
+Latest owner decision: he tested the local macOS filter/menu build and said
+**“Está tudo certo.”** Tasks 35/36 are approved; do not request that approval
+again. He separately reported occasional missing instruments in race-menu
+music, then explicitly deferred it to another session after saving the
+filter/menu work. See [task 37](tasks/37-intermittent-race-menu-instruments.md).
+No audio investigation or S4 implementation is active. The manual game has closed.
+For a visible manual launch, unset both LNG_SCRIPT and LNG_TEST_HIDDEN:
+setting them to the string 0 still hides the window because the code checks
+for their presence. The corrected visible launch was verified with one
+“Top Gear 2” window and brought to the foreground. The new Linux draft
+still provides a Deck candidate; local Mac acceptance is not Deck performance evidence.
+
 Current feedback: the owner tested the Deck tar.gz and said it worked well,
 but **Linear Filter no longer has an effect during gameplay while still
 working in the main menu**. [Task 35](tasks/35-linear-filter-highres.md) is now
-implemented and awaiting his Deck retest before S4. His exact original
+implemented and locally approved; the latest Deck performance is unmeasured. His exact original
 scale/toggle sequence was not supplied; controlled local reproduction is documented.
 The owner also requested [task 36](tasks/36-unify-runtime-menu-groups.md):
 unify Esc Display/Graphics/Video into **Video**, and Sound/Audio into **Audio**.
@@ -34,8 +46,9 @@ Tarball SHA-256: `5fe2a14e2f952fd1d50990f353734c1a2a0dcf92f595be65b117a5172954ee
 AppImage: `91bc3f3f4dde4bfd73bb2453494b79ece822df57a22e22390af36373b0339bae`.
 The owner should update the existing tar.gz folder, keeping ROM/settings/saves
 and Steam shortcut, and compare Linear On/Off in a race at his chosen scale.
-Next coordinator: collect owner feedback before treating these fixes as
-accepted or starting S4. The original `deck-s3-20261110` draft/asset identity
+Next coordinator: respect the local approval above and the explicit audio
+deferral; use the owner's next-session direction to investigate task 37 or
+continue S4. The original `deck-s3-20261110` draft/asset identity
 below remains unchanged. No worker assignment is active after the follow-up.
 The checkpoint below retains the source/build history of that tested draft.
 

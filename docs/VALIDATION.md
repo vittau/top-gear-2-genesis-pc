@@ -1292,3 +1292,18 @@ installation. Local Off/On CPU means at 4×1280×800 were 1.882/6.392 ms
 owner visual acceptance is claimed. The target retest covers filter effect
 in races, frame pacing/audio, menu VIDEO/AUDIO/SYSTEM/MODS/SAVE STATES, and
 saved preferences. S4 remains unstarted.
+
+
+## Owner local acceptance: filter and menus
+
+The owner manually tested the current macOS binary containing the merged
+filter/menu changes and said “Está tudo certo.” This approves tasks 35/36
+locally; it does not supply performance measurements for the latest Linux
+binary on the Deck. After the manual session closed, the worker build's four
+execution manifests were checked and each had 0 entries.
+
+He separately reported intermittent missing instruments in race-menu music,
+then explicitly asked to save the filter/menu work and defer the instrument
+question to another session. Task 37 records the report and known revision/
+configuration facts without asserting a diagnosis. No audio code was changed
+or new audio runtime/capture/worker started in response.

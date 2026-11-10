@@ -1,8 +1,9 @@
 # Task 35: Linear Filter has no visible effect in races after S3
 
-**Status: implemented, reviewed and merged in `87e926b`; Linux draft
-`deck-filter-menu-20261110` delivered for owner/Deck retest.** S4 waits
-until this report is resolved. Implement with Opus, Fable or Sol only.
+**Status: complete.** Implemented/reviewed and merged in `87e926b`; the owner
+approved the local macOS playtest (“Está tudo certo”). Linux draft
+`deck-filter-menu-20261110` is available; performance on the Deck for this
+latest fix remains unmeasured. Implement S3 follow-ups with Opus, Fable or Sol only.
 
 Local evidence and the scoped proposal: [Linear Filter investigation](../LINEAR_FILTER.md#s3-a-correct-final-sampler-can-have-no-visible-effect). The original 1:1 diagnosis is retained, followed by the approved game-owned native-art sampling change.
 
