@@ -7,6 +7,18 @@ The owner finds the Esc menu confusing and explicitly requested:
 - Display + Graphics + Video become a single **Video** menu.
 - Sound + Audio become a single **Audio** menu.
 
+The owner specified the exact category order:
+
+1. **VIDEO**
+2. **AUDIO**
+3. **SYSTEM**
+4. **MODS**
+5. **SAVE STATES**
+
+Keep this order in the actual menu and controller focus sequence; do not sort
+categories alphabetically or by whichever descriptor is encountered first.
+Other non-category commands, if present, keep their established behaviour.
+
 This is an in-game menu organization change. Keep every existing option,
 stable setting key, stored value/default, live/restart behaviour and controller
 access. Do not reset preferences, duplicate rows, add a replacement menu or
@@ -30,8 +42,9 @@ Keep rows in a coherent order within the unified categories and maintain
 scrolling/focus on Steam Deck-sized output. The exact sub-order can follow
 the current ordering where sensible; no new user decision is required.
 
-Verify the actual Esc menu: one Video category, one Audio category, no old
-Display/Graphics/Sound categories, all original setting rows reachable by
+Verify the actual Esc menu: the five categories in the exact order above,
+one Video category, one Audio category, no old Display/Graphics/Sound
+categories, all original setting rows reachable by
 controller, including Linear Filter, Internal resolution and Music/SFX
 volumes. Exercise representative toggles and save/reopen round-trip with
 existing settings. A focused hidden/headless UI check and capture suffice;
