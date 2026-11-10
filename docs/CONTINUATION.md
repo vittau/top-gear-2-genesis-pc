@@ -4,6 +4,10 @@ Current feedback: the owner tested the Deck tar.gz and said it worked well,
 but **Linear Filter no longer has an effect during gameplay while still
 working in the main menu**. Investigate [task 35](tasks/35-linear-filter-highres.md)
 before S4. Internal scale/toggle details are not yet known; reproduce first.
+The owner also requested [task 36](tasks/36-unify-runtime-menu-groups.md):
+unify Esc Display/Graphics/Video into **Video**, and Sound/Audio into **Audio**.
+The same worker should handle this UI change in a separate commit, preserving
+all setting keys/values and controller access.
 The checkpoint below retains the source/build history of that tested draft.
 
 Session checkpoint: 2026-11-10. The owner is ending the session. Do not launch
