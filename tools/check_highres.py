@@ -1073,14 +1073,23 @@ def check_cap(args):
         r.wait_frame(r.frame() + 30)
         path = r.screenshot('capped-3x.png')
         w, h, *_ = png_pixels(Path(path))
+        sizes = {'capped': [w, h]}
         if w != 4095 or h not in (600, 672):
             failures.append(f'capped 3x picture is {w}x{h}, expected 4095x600/672')
+        for mode, expected in [('off', 768), ('16:9', 1068)]:
+            r.command('video_configure', mode=mode)
+            r.wait_frame(r.frame() + 20)
+            shot = r.screenshot(mode.replace(':', '-') + '-3x.png')
+            mw, mh, *_ = png_pixels(Path(shot))
+            sizes[mode] = [mw, mh]
+            if (mw, mh) != (expected, 600):
+                failures.append(f'{mode} 3x picture is {mw}x{mh}, expected {expected}x600')
     finally:
         code = r.stop()
     counts = empty_manifests(out)
     if code != 0 or any(n != 0 for n in counts.values()):
         failures.append(f'exit {code}, manifests {counts}')
-    summary = dict(check='cap', size=[w, h], exit=code, manifests=counts,
+    summary = dict(check='cap', sizes=sizes, exit=code, manifests=counts,
                    failures=failures, ok=not failures)
     (out / 'cap-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2))
