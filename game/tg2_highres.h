@@ -11,7 +11,7 @@
  *     picture taller than the VDP geometry and report its height.
  * S3  the road strip rasteriser: the road rows are redrawn at N x from the
  *     game's own per-line numbers (width, centre, atlas row, palette), with
- *     analytic edges. Everything else (sky, sprites, HUD, plane-A effects)
+ *     fitted silhouettes and analytic coverage on every road boundary. Everything else (sky, sprites, HUD, plane-A effects)
  *     stays the native picture's content, nearest-scaled by N.
  */
 #pragma once
@@ -93,8 +93,8 @@ unsigned tg2_highres_build_frames(void);
  * owns; the row renderer has already written the 1x canvas picture into it,
  * nearest-expanded by the scale. Returns the number of complete rows written:
  * > native_h selects that presented height, 0 keeps the stock picture. */
-int tg2_highres_build(const struct GVDP *vdp, uint64_t frame, uint32_t *pixels,
-                      int stride, int width, int native_w, int native_h);
+int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
+                      int native_w, int native_h);
 
 #ifdef __cplusplus
 }

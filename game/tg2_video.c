@@ -582,9 +582,6 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
     if (line == 223) fflush(margin_audit);
 }
 static int synthesizing, audit_race_frame;
-/* The frame's live VDP, remembered for the end-of-frame builder (VRAM is the
- * only per-frame input it needs; per-row state comes from the capture). */
-static const GVDP *frame_vdp;
 /* The last picture was a qualified single-player race (set on its first row).
  * The presented-height builder and the test provider use it, not a re-check
  * of live RAM at frame end, so 2P split-screen frames stay native. */
@@ -968,7 +965,6 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                      uint32_t *out, int w) {
     if (!line) {
         capture_picture = 0;
-        frame_vdp = v;
         from_picture = to_picture = NULL;
         /* An overdue frame is not presented: skip the whole synthesis so the
          * guest tick can be repaid sooner. Guest rendering is unaffected. */
@@ -1080,8 +1076,8 @@ static int compose_presented(uint32_t *pixels, int stride, int width,
      * canvas (widescreen off) is always wide enough. */
     if (width > native_w && width < native_w * scale)
         return 0;
-    return tg2_highres_build(frame_vdp, present_frame, pixels, stride, width,
-                             native_w, native_h);
+    return tg2_highres_build(present_frame, pixels, stride, width, native_w,
+                             native_h);
 }
 /* Called by the runner once per completed picture, after every native row was
  * produced. Cropping is presentation-only: the bands are dropped from what is

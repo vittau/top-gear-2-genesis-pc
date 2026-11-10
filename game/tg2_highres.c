@@ -5,12 +5,13 @@
  *     only when the render scale is above 1.
  * S2  the presented-height seam (engine patch 0033), used by the builder.
  * S3  the road strip rasteriser: road rows are redrawn at N x from the game's
- *     own per-line width/centre/atlas/palette numbers with analytic edges.
+ *     own per-line width/centre/atlas/palette numbers: fitted silhouettes,
+ *     analytic coverage on every colour boundary of the road.
  *     Everything else in the picture is the native picture's content,
  *     nearest-scaled by N (the row renderer expands it before this runs).
  *
- * Everything here is presentation only: it reads the live VDP snapshot the row
- * renderer already owns and writes host pixels. No guest RAM, VRAM, CRAM, CPU,
+ * Everything here is presentation only: it reads the VDP snapshot the row
+ * renderer is drawing from and writes host pixels. No guest RAM, VRAM, CRAM, CPU,
  * SAT or scheduling state is touched.
  */
 #include "tg2_highres.h"
@@ -108,76 +109,103 @@ static unsigned plane_word(const GVDP *v, unsigned address) {
     return (v->vram[address & 65535] << 8) | v->vram[(address + 1) & 65535];
 }
 
-/* Plane B pixel with an explicit plane base and name-table size, so a captured
- * row's registers can drive it instead of the live end-of-frame state.
- * `attr` receives the tile attribute (palette bank bits). */
-static unsigned plane_pixel(const GVDP *v, unsigned base, int size_reg,
-                            int x, int y, unsigned *attr) {
-    int wt = tile_count(size_reg & 3), ht = tile_count((size_reg >> 4) & 3);
-    unsigned a = plane_word(v, base + (((y >> 3) & (ht - 1)) * wt + ((x >> 3) & (wt - 1))) * 2);
-    unsigned px = x & 7, py = y & 7;
-    if (a & 0x800) px ^= 7;
-    if (a & 0x1000) py ^= 7;
-    unsigned b = v->vram[((a & 2047) * 32 + py * 4 + px / 2) & 65535];
-    unsigned c = px & 1 ? b & 15 : b >> 4;
-    if (attr) *attr = a;
-    return c ? ((a >> 9) & 48) | c : 0;
-}
-
-static unsigned row_plane_pixel(const GVDP *v, const Tg2RowState *r,
-                                int x, int y, unsigned *attr) {
-    return plane_pixel(v, (unsigned)(r->reg[4] & 7) << 13, r->reg[16], x, y, attr);
-}
-
 /* Road silhouette palette nibbles, measured in docs/HIGHRES.md §1.4:
  * 6 = border, 13 = lane mark, 14 = asphalt. */
 static int road_texel(unsigned nibble) {
     return nibble == 6 || nibble == 13 || nibble == 14;
 }
 
-/* Walk out from the atlas seam until the road silhouette ends. Returns the
- * palette bank bit (tile attribute bit 13) of the outermost road texel through
- * `*bank` and the extreme x through `*edge`. The road always covers the seam;
- * a row whose seam texel is not road falls back to a full 512-column scan. */
-static int road_edges(const GVDP *v, const Tg2RowState *r, int py,
-                      int *left, int *right, unsigned char *bank) {
-    unsigned base = (unsigned)(r->reg[4] & 7) << 13, attr;
-    int size = r->reg[16];
-    int l = 0, rr = 0;
-    for (int side = -1; side <= 1; side += 2) {
-        int edge = 0;
-        unsigned nib = plane_pixel(v, base, size, 0, py, &attr);
-        unsigned b = (attr >> 13) & 1;
-        if (!road_texel(nib)) {
-            /* Not centred on the seam (rare): scan the whole row. */
-            int found_l = 0, found_r = 0;
-            for (int x = -256; x < 256; ++x) {
-                unsigned n = plane_pixel(v, base, size, x, py, &attr);
-                if (!road_texel(n)) continue;
-                if (!found_l) { found_l = 1; l = x; bank[0] = (unsigned char)((attr >> 13) & 1); }
-                rr = x; found_r = 1; bank[1] = (unsigned char)((attr >> 13) & 1);
-            }
-            *left = found_l ? l : 0;
-            *right = found_r ? rr : 0;
-            return found_r;
+/* One atlas row as the builder needs it: the run-length list of the 512 texels
+ * the row can show (atlas x -256..255, tg2_video's road_x() domain), taken from
+ * the very VDP snapshot the row was rendered with. A 60 fps synthesized row is
+ * rendered from an older picture's VRAM, so this must be recorded at row time,
+ * not read back from the live VRAM when the frame ends. Run `i` covers atlas x
+ * start[i]..start[i+1]-1 and shows palette index index[i] (0 = backdrop);
+ * runs first..last are the road silhouette around the seam. */
+#define ROAD_MAX_RUNS 64
+typedef struct {
+    short start[ROAD_MAX_RUNS + 1];
+    unsigned char index[ROAD_MAX_RUNS];
+    unsigned char count, first, last, valid;
+} RoadRuns;
+static RoadRuns s_runs[TG2_HIGHRES_ROWS];
+
+/* Decode the atlas row tile by tile (64 name-table reads instead of 512). */
+static void atlas_row(const GVDP *v, const Tg2RowState *r, int py,
+                      unsigned char texel[512]) {
+    unsigned base = (unsigned)(r->reg[4] & 7) << 13;
+    int wt = tile_count(r->reg[16] & 3), ht = tile_count((r->reg[16] >> 4) & 3);
+    unsigned line = base + (unsigned)(((py >> 3) & (ht - 1)) * wt) * 2;
+    for (int tx = -32; tx < 32; ++tx) {
+        unsigned a = plane_word(v, line + (unsigned)(tx & (wt - 1)) * 2);
+        unsigned ty = (unsigned)py & 7;
+        if (a & 0x1000) ty ^= 7;
+        const unsigned char *data = &v->vram[((a & 2047) * 32 + ty * 4) & 65535];
+        unsigned bank = (a >> 9) & 48;
+        unsigned char *out = texel + (tx + 32) * 8;
+        for (int px = 0; px < 8; ++px) {
+            unsigned sx = a & 0x800 ? 7u - (unsigned)px : (unsigned)px;
+            unsigned b = data[sx >> 1];
+            unsigned c = sx & 1 ? b & 15 : b >> 4;
+            out[px] = (unsigned char)(c ? bank | c : 0);
         }
-        for (int x = side; x > -256 && x < 256; x += side) {
-            nib = plane_pixel(v, base, size, x, py, &attr);
-            if (!road_texel(nib)) break;
-            edge = x;
-            b = (attr >> 13) & 1;
-        }
-        if (side < 0) { l = edge; bank[0] = (unsigned char)b; }
-        else { rr = edge; bank[1] = (unsigned char)b; }
     }
-    *left = l;
-    *right = rr;
+}
+
+/* Build the row's runs and its road silhouette. Returns 0 when the row shows
+ * no road. The road always covers the seam (atlas x 0); a row whose seam texel
+ * is not road keeps the first..last road texel as its silhouette for the
+ * capture dump but is not redrawn (runs->valid stays 0). */
+static int road_runs(const GVDP *v, const Tg2RowState *r, int py, RoadRuns *runs,
+                     short *left, short *right, unsigned char *bank) {
+    unsigned char texel[512];
+    atlas_row(v, r, py, texel);
+    runs->count = runs->first = runs->last = runs->valid = 0;
+    int l = 0, rr = 0, found = 0;
+    if (road_texel(texel[256] & 15)) {
+        for (l = 0; l > -256 && road_texel(texel[256 + l - 1] & 15); --l) {}
+        for (rr = 0; rr < 255 && road_texel(texel[256 + rr + 1] & 15); ++rr) {}
+        found = 2;
+    } else {
+        for (int x = -256; x < 256; ++x)
+            if (road_texel(texel[256 + x] & 15)) {
+                if (!found) l = x;
+                rr = x;
+                found = 1;
+            }
+    }
+    if (!found)
+        return 0;
+    *left = (short)l;
+    *right = (short)rr;
+    bank[0] = (unsigned char)((texel[256 + l] >> 4) & 1);
+    bank[1] = (unsigned char)((texel[256 + rr] >> 4) & 1);
+    if (found != 2)
+        return 1;
+    int count = 0;
+    for (int x = -256; x < 256; ++x) {
+        /* The silhouette edges always start a run, so runs first..last are
+         * exactly the road. */
+        if (x == -256 || texel[256 + x] != texel[255 + x] || x == l || x == rr + 1) {
+            if (count == ROAD_MAX_RUNS)
+                return 1;                   /* too busy to model: stay nearest */
+            runs->start[count] = (short)x;
+            runs->index[count] = texel[256 + x];
+            if (x == l) runs->first = (unsigned char)count;
+            if (x <= rr) runs->last = (unsigned char)count;
+            ++count;
+        }
+    }
+    runs->start[count] = 256;
+    runs->count = (unsigned char)count;
+    runs->valid = 1;
     return 1;
 }
 
 void tg2_highres_reset(void) {
     memset(s_rows, 0, sizeof s_rows);
     memset(s_row_serial, 0, sizeof s_row_serial);
+    memset(s_runs, 0, sizeof s_runs);
     s_serial = 0;
     s_capture_frames = s_capture_rows = 0;
     s_capture_us = s_build_us = 0;
@@ -211,6 +239,7 @@ void tg2_highres_capture_row(const GVDP *v, int line, int ha, int hb) {
     unsigned char flags = 0;
     short k = -1;
     r->left = r->right = 0;
+    s_runs[line].valid = 0;
     if (py < 288) {                       /* templates 1/2: width 4 + 2k   */
         k = (short)(py < 144 ? py : py - 144);
         flags |= TG2_ROW_ROAD;
@@ -226,7 +255,7 @@ void tg2_highres_capture_row(const GVDP *v, int line, int ha, int hb) {
     if (flags & TG2_ROW_ROAD) {
         /* The second member of each authored pair carries the palette-bank
          * bit (lane-mark phase). Measured from the live name table. */
-        if (!road_edges(v, r, py, &r->left, &r->right, r->bank)) {
+        if (!road_runs(v, r, py, &s_runs[line], &r->left, &r->right, r->bank)) {
             r->left = r->right = 0;
             flags &= (unsigned char)~TG2_ROW_ROAD;
         } else if (r->bank[0]) {
@@ -269,230 +298,423 @@ static int road_centre(unsigned scroll) {
     return 128 + (((int)(scroll & 511) - 128 + 256) & 511) - 256;
 }
 
-/* Blend two ARGB pixels by `alpha` (0..1). */
-static uint32_t blend(uint32_t a, uint32_t b, double alpha) {
-    unsigned w = (unsigned)(alpha * 256.0 + 0.5);
-    unsigned lo = ((a & 0xFF) * (256 - w) + (b & 0xFF) * w) >> 8;
-    unsigned mid = (((a >> 8) & 0xFF) * (256 - w) + ((b >> 8) & 0xFF) * w) >> 8;
-    unsigned hi = (((a >> 16) & 0xFF) * (256 - w) + ((b >> 16) & 0xFF) * w) >> 8;
-    return 0xFF000000u | (hi << 16) | (mid << 8) | lo;
+/* Per-picture road model. Rows that belong to one continuous piece of road
+ * form a band; inside a band the two silhouette edges are fitted across rows,
+ * because the game's per-line numbers are integers (centre) and a 2/4 px
+ * saw-tooth (width): followed literally they give an edge that wobbles at
+ * N x. The fit is a local quadratic over +-FIT_REACH rows, so a straight or
+ * evenly curving edge is reproduced exactly and only the quantisation goes;
+ * the result is held within FIT_LIMIT native pixels of the authored edge. */
+#define FIT_REACH 5
+#define FIT_LIMIT 1.5
+typedef struct {
+    int painted;                /* row is redrawn by the strip rasteriser   */
+    int band;                   /* rows of one continuous road share this   */
+    int centre;                 /* canvas x of the atlas seam               */
+    double raw_l, raw_r;        /* authored silhouette, canvas x            */
+    double fit_l, fit_r;        /* fitted silhouette, canvas x              */
+} RoadRow;
+static RoadRow s_road[TG2_HIGHRES_ROWS];
+
+static int road_row_k(int line) {
+    return s_rows[line].width_k;
+}
+
+static int road_row_py(int line) {
+    return (line + s_rows[line].vsram[1]) & 511;
+}
+
+/* Quadratic least-squares value at `at` of f over the band rows within
+ * FIT_REACH, tricube-ish weights. Falls back to lower orders when the band is
+ * too short to determine a parabola. */
+static double fit_edge(int at, int lo, int hi, int right) {
+    double s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, t0 = 0, t1 = 0, t2 = 0;
+    int from = at - FIT_REACH < lo ? lo : at - FIT_REACH;
+    int to = at + FIT_REACH > hi ? hi : at + FIT_REACH;
+    for (int y = from; y <= to; ++y) {
+        double x = y - at, d = fabs(x) / (FIT_REACH + 1.0);
+        double w = 1.0 - d * d;
+        double f = right ? s_road[y].raw_r : s_road[y].raw_l;
+        s0 += w; s1 += w * x; s2 += w * x * x; s3 += w * x * x * x;
+        s4 += w * x * x * x * x;
+        t0 += w * f; t1 += w * f * x; t2 += w * f * x * x;
+    }
+    double own = right ? s_road[at].raw_r : s_road[at].raw_l;
+    int n = to - from + 1;
+    double value = own;
+    if (n >= 5) {
+        /* Solve the 3x3 normal equations for the constant term. */
+        double det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s3 * s2) +
+                     s2 * (s1 * s3 - s2 * s2);
+        if (fabs(det) > 1e-9)
+            value = (t0 * (s2 * s4 - s3 * s3) - s1 * (t1 * s4 - s3 * t2) +
+                     s2 * (t1 * s3 - s2 * t2)) / det;
+    } else if (n >= 3) {
+        double det = s0 * s2 - s1 * s1;
+        if (fabs(det) > 1e-9)
+            value = (t0 * s2 - s1 * t1) / det;
+    }
+    if (value < own - FIT_LIMIT) value = own - FIT_LIMIT;
+    if (value > own + FIT_LIMIT) value = own + FIT_LIMIT;
+    return value;
+}
+
+static void model_road(int origin, int native_h) {
+    int band = 0;
+    for (int y = 0; y < native_h; ++y) {
+        RoadRow *m = &s_road[y];
+        const Tg2RowState *r = &s_rows[y];
+        m->painted = s_row_serial[y] == s_serial && (r->flags & TG2_ROW_ROAD) &&
+                     s_runs[y].valid && road_row_py(y) < 432;
+        if (!m->painted)
+            continue;
+        m->centre = origin + road_centre(r->hscroll[1]);
+        m->raw_l = m->centre + s_runs[y].start[s_runs[y].first];
+        m->raw_r = m->centre + s_runs[y].start[s_runs[y].last + 1];
+        /* A new band starts where the road is not continuous with the row
+         * above: another pair family, or a jump in the atlas row no single
+         * surface produces (a crest hiding part of the road). */
+        int joined = y > 0 && s_road[y - 1].painted &&
+                     road_family(road_row_py(y)) == road_family(road_row_py(y - 1)) &&
+                     abs(road_row_k(y) - road_row_k(y - 1)) <= 8;
+        m->band = joined ? s_road[y - 1].band : ++band;
+    }
+    for (int y = 0; y < native_h; ++y) {
+        if (!s_road[y].painted)
+            continue;
+        int lo = y, hi = y;
+        while (lo > 0 && s_road[lo - 1].painted && s_road[lo - 1].band == s_road[y].band) --lo;
+        while (hi + 1 < native_h && s_road[hi + 1].painted &&
+               s_road[hi + 1].band == s_road[y].band) ++hi;
+        for (int at = lo; at <= hi; ++at) {
+            s_road[at].fit_l = fit_edge(at, lo, hi, 0);
+            s_road[at].fit_r = fit_edge(at, lo, hi, 1);
+            if (s_road[at].fit_r < s_road[at].fit_l + 1.0) {
+                s_road[at].fit_l = s_road[at].raw_l;
+                s_road[at].fit_r = s_road[at].raw_r;
+            }
+        }
+        y = hi;
+    }
+}
+
+/* Two rows whose road shows the same sequence of texel kinds: their interior
+ * boundaries (border, lane marks) correspond one to one. */
+static int same_structure(const RoadRuns *a, const RoadRuns *b) {
+    if (a->last - a->first != b->last - b->first)
+        return 0;
+    for (int i = 0; i <= a->last - a->first; ++i)
+        if ((a->index[a->first + i] & 15) != (b->index[b->first + i] & 15))
+            return 0;
+    return 1;
 }
 
 /* Terrain mask: one entry per 1x canvas column of a road row, true where the
- * native picture shows this row's plane B (sky/ground/road) rather than a
- * sprite, the HUD, the car or a plane-A effect. The comparison is exact
- * against the plane-B colour the row's own captured state produces, so any
- * overlay pixel is preserved by construction; a sprite texel whose colour
- * coincides with the scenery underneath is the one false positive. */
+ * native picture shows this row's plane B (road/verge) rather than a sprite,
+ * the HUD, the car or a plane-A effect. The comparison is exact against the
+ * colour the row's own captured atlas runs produce, so any overlay pixel is
+ * preserved by construction; a sprite texel whose colour coincides with the
+ * scenery underneath is the one false positive. */
 static unsigned char s_terrain[4096];
-
-static void build_terrain(const GVDP *v, const Tg2RowState *r, int src,
-                          int origin, int native_w, int w1, int scale,
-                          const uint32_t *row) {
-    int vb = r->vsram[1] & 511;
-    int y = src + vb;
-    int hb = r->hscroll[1] & 1023;
-    uint32_t pal[64];
-    for (int i = 0; i < 64; ++i)
-        pal[i] = genesis_dac_cram_to_argb(r->cram[i], 0);
-    uint32_t backdrop = pal[r->reg[7] & 63];
-    for (int u = 0; u < w1; ++u) {
-        int nx = u - origin, ax;
-        if (nx >= 0 && nx < native_w) {
-            ax = nx - (int)hb;              /* the VDP's own plane-B fetch */
-        } else {
-            /* tg2_video's margin continuation: same row, clamped exterior. */
-            int py = y & 511;
-            if (py >= 448) ax = nx - (int)hb;
-            else if (py >= 432) ax = (nx < 0 ? 0 : nx > 255 ? 255 : nx) - (int)hb;
-            else {
-                int center = road_centre(hb);
-                int x = nx - center;
-                ax = x < -256 ? -256 : x > 255 ? 255 : x;
-            }
-        }
-        unsigned attr;
-        unsigned index = row_plane_pixel(v, r, ax, y, &attr);
-        uint32_t colour = index ? pal[index] : backdrop;
-        s_terrain[u] = row[u * scale] == colour;
-    }
-}
+/* The colour the row's own atlas runs put at each 1x column (audit only). */
+static uint32_t s_model[4096];
 
 /* ── N x road audit (qualification stream, docs/HIGHRES.md §8 S3) ─────────
- * One record per presented picture under TG2_ROAD_AUDIT_DIR, at native row
- * granularity (lines 140..212, last sub-row of each). The checker verifies the
- * built silhouette against the two authored neighbours, the stripe phase, and
- * row-to-row continuity. Only written when a qualification run asks for it. */
-#define NX_AUDIT_FIRST 140
-#define NX_AUDIT_ROWS  73
+ * One file per presented picture under TG2_ROAD_AUDIT_DIR: one record per
+ * presented row of every redrawn road row, with the authored geometry, the
+ * edges the builder aimed for and what the BUILT pixels show (edges, lane
+ * marks, holes, and pixels the native row cannot explain). Only written when
+ * a qualification run asks for it. */
 typedef struct {
-    uint32_t line, py_src, py_next;
-    int32_t centre_src, centre_next, left_src, right_src, left_next, right_next;
-    int32_t el_x256, er_x256;          /* interpolated strip edges           */
-    int32_t measured_left, measured_right;
-    uint32_t stripes, stripes_src, flags;
+    int32_t line, sub, py, flags, neighbour;
+    int32_t own_l, own_r, nb_l, nb_r;   /* authored silhouettes, canvas x   */
+    int32_t el_x256, er_x256;           /* edges drawn, canvas x * 256      */
+    int32_t seen_l, seen_r;             /* road pixels found, output x      */
+    int32_t lanes, lanes_src, holes;
+    int32_t outliers, margin_outliers, band;
 } NxAuditRow;
-enum { NX_FLAG_ROAD = 1, NX_FLAG_INTERPOLATED = 2, NX_FLAG_FULL = 4 };
+enum { NX_FLAG_INTERPOLATED = 1, NX_FLAG_FULL = 2, NX_FLAG_STRUCTURE = 4,
+       NX_FLAG_AMBIGUOUS = 8 };
 
-static int32_t nx_lane_runs(const GVDP *v, const Tg2RowState *r, int py,
-                            int from, int to) {
-    int runs = 0, prev = 0;
-    for (int x = from; x <= to; ++x) {
-        unsigned attr;
-        unsigned nib = row_plane_pixel(v, r, x, py, &attr) & 15;
-        int lane = nib == 13;
-        if (lane && !prev) ++runs;
-        prev = lane;
-    }
-    return runs;
-}
-
-static void nx_audit_write(const GVDP *v, uint64_t frame, int scale,
-                           const uint32_t *pixels, int stride, int w1,
-                           int native_w, const NxAuditRow *rows) {
+static const char *nx_audit_dir(void) {
     static int checked;
     static const char *dir;
     if (!checked) {
         checked = 1;
         dir = getenv("TG2_ROAD_AUDIT_DIR");
+        if (dir && !*dir) dir = NULL;
     }
-    if (!dir || !*dir) return;
+    return dir;
+}
+
+static NxAuditRow *s_audit;
+static int s_audit_count;
+
+static int colour_distance(uint32_t a, uint32_t b) {
+    int d = 0;
+    for (int shift = 0; shift < 24; shift += 8) {
+        int c = (int)((a >> shift) & 255) - (int)((b >> shift) & 255);
+        d += c * c;
+    }
+    return d;
+}
+
+/* Measure one built row back from its pixels. */
+static void nx_measure(NxAuditRow *a, const RoadRuns *runs, const uint32_t *colour,
+                       const uint32_t *row, const uint32_t *native_row, int scale,
+                       int w1, int origin, int native_w, int reach, int centre) {
+    /* Pixel kinds by nearest run colour: 0 verge, 1 road, 2 lane mark. A lane
+     * colour that equals another road colour (the "off" phase) is plain road. */
+    unsigned char kind[ROAD_MAX_RUNS];
+    int lanes_src = 0, previous = 0;
+    for (int i = 0; i < runs->count; ++i) {
+        int road = i >= runs->first && i <= runs->last;
+        kind[i] = (unsigned char)road;
+        if (road && (runs->index[i] & 15) == 13) {
+            int visible = 1;
+            for (int j = runs->first; j <= runs->last; ++j)
+                if ((runs->index[j] & 15) != 13 && colour[j] == colour[i]) visible = 0;
+            if (visible) kind[i] = 2;
+        }
+        if (road) {
+            if (kind[i] == 2 && previous != 2) ++lanes_src;
+            previous = kind[i];
+        }
+    }
+    a->lanes_src = lanes_src;
+    /* A verge that shares a colour with the road (fades, some palettes) cannot
+     * be told from it in the picture: the row's geometry is not measurable. */
+    for (int i = 0; i < runs->count; ++i)
+        for (int j = runs->first; j <= runs->last; ++j)
+            if (!kind[i] && colour[i] == colour[j]) a->flags |= NX_FLAG_AMBIGUOUS;
+    a->seen_l = a->seen_r = -1;
+    a->lanes = a->holes = a->outliers = a->margin_outliers = 0;
+    int holes_pending = 0, last_kind = 0;
+    for (int u = 0; u < w1; ++u) {
+        if (!s_terrain[u]) { last_kind = 0; continue; }
+        /* What the native row holds near this column bounds what may appear:
+         * its pixels, and the scenery a sprite may be hiding there. */
+        int lo[3] = {255, 255, 255}, hi[3] = {0, 0, 0};
+        for (int n = u - reach; n <= u + reach; ++n) {
+            /* Past the canvas edge only the row's own continuation exists. */
+            uint32_t pair[2];
+            if (n < 0 || n >= w1) {
+                int x = n - centre, run = 0;
+                x = x < -256 ? -256 : x > 255 ? 255 : x;
+                while (run + 1 < runs->count && runs->start[run + 1] <= x) ++run;
+                pair[0] = pair[1] = colour[run];
+            } else {
+                pair[0] = native_row[n * scale];
+                pair[1] = s_model[n];
+            }
+            for (int e = 0; e < 2; ++e)
+                for (int ch = 0; ch < 3; ++ch) {
+                    int value = (int)((pair[e] >> (ch * 8)) & 255);
+                    if (value < lo[ch]) lo[ch] = value;
+                    if (value > hi[ch]) hi[ch] = value;
+                }
+        }
+        for (int k = 0; k < scale; ++k) {
+            int x = u * scale + k;
+            uint32_t c = row[x];
+            int out = 0;
+            for (int ch = 0; ch < 3; ++ch) {
+                int value = (int)((c >> (ch * 8)) & 255);
+                if (value < lo[ch] - 1 || value > hi[ch] + 1) out = 1;
+            }
+            if (out) {
+                ++a->outliers;
+                if (u < origin || u >= origin + native_w) ++a->margin_outliers;
+            }
+            int best = 0, best_d = 1 << 30;
+            for (int i = 0; i < runs->count; ++i) {
+                int d = colour_distance(c, colour[i]);
+                if (d < best_d || (d == best_d && kind[i] > kind[best])) { best_d = d; best = i; }
+            }
+            int kd = kind[best];
+            if (kd) {
+                if (a->seen_l < 0) a->seen_l = x;
+                a->seen_r = x;
+                a->holes += holes_pending;
+                holes_pending = 0;
+                if (kd == 2 && last_kind != 2) ++a->lanes;
+            } else if (a->seen_l >= 0) {
+                ++holes_pending;
+            }
+            last_kind = kd;
+        }
+    }
+}
+
+static void nx_audit_write(uint64_t frame, int scale, int w1, int native_w) {
+    const char *dir = nx_audit_dir();
+    if (!dir || !s_audit) return;
     char path[1024];
     snprintf(path, sizeof path, "%s/frame-%06llu.nxroad", dir, (unsigned long long)frame);
     FILE *f = fopen(path, "wb");
     if (!f) { perror(path); return; }
-    uint32_t header[7] = {0x3152584Eu /* "NXR1" little-endian tag */, (uint32_t)frame,
-                          (uint32_t)scale, (uint32_t)stride, (uint32_t)w1,
-                          (uint32_t)native_w, NX_AUDIT_ROWS};
-    fwrite("TG2NXR01", 1, 8, f);
+    uint32_t header[6] = {(uint32_t)frame, (uint32_t)scale, (uint32_t)w1,
+                          (uint32_t)native_w, (uint32_t)s_audit_count,
+                          (uint32_t)sizeof(NxAuditRow)};
+    fwrite("TG2NXR02", 1, 8, f);
     fwrite(header, sizeof header, 1, f);
-    for (int i = 0; i < NX_AUDIT_ROWS; ++i)
-        fwrite(&rows[i], sizeof rows[i], 1, f);
+    fwrite(s_audit, sizeof *s_audit, (size_t)s_audit_count, f);
     fclose(f);
-    (void)v; (void)pixels;
 }
 
-/* Paint one output row of a road row. `row` is the nearest-expanded 1x row
- * (and the output row); the caller guarantees `row` is writable. */
-static void paint_road_row(const GVDP *v, int src, int j, int scale, int w1,
-                           int native_w, uint32_t *row, const uint32_t *native_row,
-                           NxAuditRow *audit) {
+/* Everything about a road row that does not depend on the sub-row. */
+typedef struct {
+    const RoadRuns *runs;
+    double edge[ROAD_MAX_RUNS + 1];     /* authored run boundaries, canvas x */
+    uint32_t colour[ROAD_MAX_RUNS];
+} RowPlan;
+
+static void plan_row(int src, RowPlan *p) {
     const Tg2RowState *s = &s_rows[src];
-    int origin = (w1 - native_w) / 2;
-    int vb = s->vsram[1] & 511;
-    int py = (src + vb) & 511;
-    int y = src + vb;
-    int hb = s->hscroll[1] & 1023;
-    int centre_s = road_centre(hb);
-    int left_s = s->left, right_s = s->right;
-    int centre_n = centre_s, left_n = left_s, right_n = right_s;
-    int interpolate = 0;
-
-    if (src + 1 < TG2_HIGHRES_ROWS && s_row_serial[src + 1] == s_serial) {
-        const Tg2RowState *t = &s_rows[src + 1];
-        int py_n = (src + 1 + (t->vsram[1] & 511)) & 511;
-        if ((t->flags & TG2_ROW_ROAD) && road_family(py_n) == road_family(py)) {
-            interpolate = 1;
-            centre_n = road_centre(t->hscroll[1] & 1023);
-            left_n = t->left;
-            right_n = t->right;
-        }
-    }
-    double frac = interpolate ? (double)j / (double)scale : 0.0;
-    double el = origin + (centre_s + left_s) + frac * (double)((centre_n + left_n) - (centre_s + left_s));
-    double er = origin + (centre_s + right_s) + frac * (double)((centre_n + right_n) - (centre_s + right_s));
-    double ec = origin + centre_s + frac * (double)(centre_n - centre_s);
-    double own_l = origin + centre_s + left_s;
-    double own_r = origin + centre_s + right_s;
-
+    p->runs = &s_runs[src];
     uint32_t pal[64];
     for (int i = 0; i < 64; ++i)
         pal[i] = genesis_dac_cram_to_argb(s->cram[i], 0);
     uint32_t backdrop = pal[s->reg[7] & 63];
-    int audit_left = -1, audit_right = -1;
-    unsigned audit_lanes = 0, audit_prev_lane = 0;
+    for (int i = 0; i < p->runs->count; ++i) {
+        p->edge[i] = s_road[src].centre + p->runs->start[i];
+        p->colour[i] = p->runs->index[i] ? pal[p->runs->index[i]] : backdrop;
+    }
+    p->edge[p->runs->count] = s_road[src].centre + 256;
+}
 
+static void build_terrain(int src, const RowPlan *p, int origin, int native_w,
+                          int w1, int scale, const uint32_t *row) {
+    const RoadRuns *runs = p->runs;
+    int centre = s_road[src].centre, run = 0;
+    for (int u = 0; u < w1; ++u) {
+        int x = u - centre;                 /* atlas x this column shows */
+        int native = u >= origin && u < origin + native_w;
+        if (x < -256 || x > 255) {
+            /* Inside the native picture the VDP wraps the plane there; the
+             * margins continue the clamped exterior (tg2_video's road_x()). */
+            if (native) { s_terrain[u] = 0; s_model[u] = row[u * scale]; continue; }
+            x = x < -256 ? -256 : 255;
+        }
+        while (run + 1 < runs->count && runs->start[run + 1] <= x) ++run;
+        s_terrain[u] = row[u * scale] == p->colour[run];
+        s_model[u] = p->colour[run];
+    }
+}
+
+/* Paint one presented row of a road row. `row` holds the nearest-expanded
+ * native row and is rewritten where it shows scenery. */
+static void paint_road_row(int src, int j, int scale, int w1, int native_w,
+                           const RowPlan *p, uint32_t *row, const uint32_t *native_row) {
+    const RoadRuns *runs = p->runs;
+    const RoadRow *m = &s_road[src];
+    int origin = (w1 - native_w) / 2;
+    /* Sub-row centre relative to the native row's centre, in rows. */
+    double t = ((double)j + 0.5) / (double)scale - 0.5;
+    int nb = t < 0 ? src - 1 : src + 1;
+    double w = fabs(t);
+    int interpolate = w > 0 && nb >= 0 && nb < TG2_HIGHRES_ROWS &&
+                      s_road[nb].painted && s_road[nb].band == m->band;
+    double el = m->fit_l, er = m->fit_r;
+    if (interpolate) {
+        el += w * (s_road[nb].fit_l - el);
+        er += w * (s_road[nb].fit_r - er);
+    }
+    double own_l = p->edge[runs->first], own_r = p->edge[runs->last + 1];
+    int structure = interpolate && same_structure(runs, &s_runs[nb]);
+    const RoadRuns *other = structure ? &s_runs[nb] : NULL;
+    double nb_l = 0, nb_w = 1;
+    if (other) {
+        nb_l = s_road[nb].raw_l;
+        nb_w = s_road[nb].raw_r - s_road[nb].raw_l;
+    }
+
+    /* Where each run boundary is drawn. Road boundaries keep their relative
+     * place inside the silhouette (moving toward the neighbour's when both
+     * rows show the same structure); verge boundaries travel with the edge. */
+    double q[ROAD_MAX_RUNS + 1];
+    q[0] = -1e30;
+    q[runs->count] = 1e30;
+    for (int i = 1; i < runs->count; ++i) {
+        if (i <= runs->first) {
+            q[i] = p->edge[i] + (el - own_l);
+        } else if (i > runs->last) {
+            q[i] = p->edge[i] + (er - own_r);
+        } else {
+            double place = (p->edge[i] - own_l) / (own_r - own_l);
+            if (other) {
+                double there = (s_road[nb].centre + other->start[other->first + i - runs->first] -
+                                nb_l) / nb_w;
+                place += w * (there - place);
+            }
+            q[i] = el + place * (er - el);
+        }
+    }
+
+    int run = 0;
+    double inv = 1.0 / (double)scale;
     for (int u = 0; u < w1; ++u) {
         if (!s_terrain[u])
             continue;                        /* sprite / HUD / car / plane A */
-        uint32_t native = native_row[u * scale];
         for (int k = 0; k < scale; ++k) {
-            int x = u * scale + k;
-            double u0 = (double)x / (double)scale;
-            double u1 = (double)(x + 1) / (double)scale;
-            double lo = u0 > el ? u0 : el, hi = u1 < er ? u1 : er;
-            double coverage = hi > lo ? (hi - lo) * scale : 0.0;
-            if (coverage > 1.0) coverage = 1.0;
-            int inside_own = u1 > own_l && u0 < own_r;
-            if (coverage <= 0.0) {
-                /* Between the interpolated edge and the row's own (wider)
-                 * silhouette: show the row's verge, not its road art. */
-                if (!inside_own)
-                    continue;
-                unsigned attr;
-                int ax = u0 < ec ? left_s - 1 : right_s + 1;
-                if (ax < -256) ax = -256;
-                if (ax > 255) ax = 255;
-                unsigned c = row_plane_pixel(v, s, ax, y, &attr);
-                row[x] = c ? pal[c] : backdrop;
+            double x0 = u + k * inv, x1 = x0 + inv;
+            while (q[run + 1] <= x0) ++run;
+            if (q[run + 1] >= x1) {
+                row[u * scale + k] = p->colour[run];
                 continue;
             }
-            double ua = 0.5 * (u0 + u1) - ec;
-            int ax = (int)(ua >= 0.0 ? ua + 0.5 : ua - 0.5);
-            if (ax < left_s) ax = left_s;
-            if (ax > right_s) ax = right_s;
-            unsigned attr;
-            unsigned c = row_plane_pixel(v, s, ax, y, &attr);
-            uint32_t road = c ? pal[c] : backdrop;
-            row[x] = coverage >= 1.0 ? road : blend(native, road, coverage);
-            if (k == 0) {
-                /* Audit: the strip this output row actually committed, and the
-                 * lane-mark runs among the sampled texels. */
-                if (audit_left < 0) audit_left = u;
-                audit_right = u;
-                unsigned lane = (c & 15) == 13;
-                if (lane && !audit_prev_lane) ++audit_lanes;
-                audit_prev_lane = lane;
+            /* Analytic coverage of every run this output pixel overlaps. */
+            double red = 0, green = 0, blue = 0, a = x0;
+            for (int r = run; a < x1; ++r) {
+                double b = q[r + 1] < x1 ? q[r + 1] : x1;
+                double part = (b - a) * scale;
+                uint32_t c = p->colour[r];
+                red += part * ((c >> 16) & 255);
+                green += part * ((c >> 8) & 255);
+                blue += part * (c & 255);
+                a = b;
             }
+            row[u * scale + k] = 0xFF000000u | ((uint32_t)(red + 0.5) << 16) |
+                                 ((uint32_t)(green + 0.5) << 8) | (uint32_t)(blue + 0.5);
         }
     }
-    if (audit) {
-        /* Canvas-space edges and geometry, so the checker compares like with
-         * like (the source rows' own edges carry the same origin). */
-        audit->line = (uint32_t)src;
-        audit->py_src = (uint32_t)py;
-        audit->py_next = (uint32_t)py;
-        audit->centre_src = origin + centre_s;
-        audit->centre_next = origin + centre_n;
-        audit->left_src = origin + centre_s + left_s;
-        audit->right_src = origin + centre_s + right_s;
-        audit->left_next = origin + centre_n + left_n;
-        audit->right_next = origin + centre_n + right_n;
-        audit->el_x256 = (int32_t)(el * 256.0 + (el >= 0 ? 0.5 : -0.5));
-        audit->er_x256 = (int32_t)(er * 256.0 + (er >= 0 ? 0.5 : -0.5));
-        audit->measured_left = audit_left;
-        audit->measured_right = audit_right;
-        audit->stripes = audit_lanes;
-        audit->stripes_src = (uint32_t)nx_lane_runs(v, s, py, left_s, right_s);
-        /* "full": every visible column of the strip was scenery and painted,
-         * so its committed geometry is the whole strip. Sprites, the HUD or
-         * the car can cover part of it; those rows are still audited for the
-         * envelope, but not for geometry/stripes/continuity. */
+
+    if (s_audit) {
+        NxAuditRow *a = &s_audit[s_audit_count++];
+        memset(a, 0, sizeof *a);
+        a->line = src;
+        a->sub = j;
+        a->py = road_row_py(src);
+        a->neighbour = interpolate ? nb - src : 0;
+        a->band = m->band;
+        a->own_l = (int32_t)own_l;
+        a->own_r = (int32_t)own_r;
+        a->nb_l = interpolate ? (int32_t)s_road[nb].raw_l : a->own_l;
+        a->nb_r = interpolate ? (int32_t)s_road[nb].raw_r : a->own_r;
+        a->el_x256 = (int32_t)floor(el * 256.0 + 0.5);
+        a->er_x256 = (int32_t)floor(er * 256.0 + 0.5);
+        /* "full": no sprite, HUD or car covers the strip or its two verges,
+         * so the measured geometry is the whole strip. */
         int full = 1;
-        int first = (int)ceil(el - 1e-9), last = (int)floor(er - 1e-9);
+        int first = (int)floor((el < own_l ? el : own_l)) - 1;
+        int last = (int)ceil((er > own_r ? er : own_r)) + 1;
         if (first < 0) first = 0;
         if (last > w1 - 1) last = w1 - 1;
         for (int u = first; u <= last; ++u)
             if (!s_terrain[u]) { full = 0; break; }
-        audit->flags = NX_FLAG_ROAD | (interpolate ? NX_FLAG_INTERPOLATED : 0) |
-                       (full ? NX_FLAG_FULL : 0);
+        a->flags = (interpolate ? NX_FLAG_INTERPOLATED : 0) | (full ? NX_FLAG_FULL : 0) |
+                   (structure ? NX_FLAG_STRUCTURE : 0);
+        /* Scenery may only move as far as the silhouette did. */
+        double moved = fabs(el - own_l) > fabs(er - own_r) ? fabs(el - own_l) : fabs(er - own_r);
+        nx_measure(a, runs, p->colour, row, native_row, scale, w1, origin, native_w,
+                   (int)ceil(moved) + 1, m->centre);
     }
 }
 
-int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int stride,
-                      int width, int native_w, int native_h) {
+int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
+                      int native_w, int native_h) {
     int scale = tg2_highres_present_scale();
-    if (scale <= 1 || !vdp || !pixels || width <= 0 || stride < width)
+    if (scale <= 1 || !pixels || width <= 0 || stride < width)
         return 0;
     if (width % scale || native_h <= 0 || native_h > TG2_HIGHRES_ROWS)
         return 0;
@@ -501,38 +723,37 @@ int tg2_highres_build(const GVDP *vdp, uint64_t frame, uint32_t *pixels, int str
         return 0;
     int timing = highres_timing();
     double started = timing ? highres_now_us() : 0;
+    int origin = (w1 - native_w) / 2;
+
+    if (nx_audit_dir() && !s_audit)
+        s_audit = malloc(sizeof *s_audit * TG2_HIGHRES_ROWS * TG2_HIGHRES_MAX_SCALE);
+    s_audit_count = 0;
+    model_road(origin, native_h);
 
     /* The row renderer produced one row per native line, already expanded
      * horizontally by N; each becomes N presented rows. Walk bottom-up so
      * reading native row `src` is never overwritten by the rows above it. */
     static uint32_t s_src_row[4096];
-    NxAuditRow audit[NX_AUDIT_ROWS];
-    memset(audit, 0, sizeof audit);
+    static RowPlan plan;
     for (int src = native_h - 1; src >= 0; --src) {
         const uint32_t *native = pixels + (size_t)src * stride;
         memcpy(s_src_row, native, (size_t)width * sizeof *s_src_row);
-        int road = s_row_serial[src] == s_serial &&
-                   (s_rows[src].flags & TG2_ROW_ROAD) &&
-                   ((src + s_rows[src].vsram[1]) & 511) < 432;
-        if (road)
-            build_terrain(vdp, &s_rows[src], src, (w1 - native_w) / 2, native_w,
-                          w1, scale, s_src_row);
+        int road = s_road[src].painted;
+        if (road) {
+            plan_row(src, &plan);
+            build_terrain(src, &plan, origin, native_w, w1, scale, s_src_row);
+        }
         for (int j = 0; j < scale; ++j) {
             uint32_t *row = pixels + (size_t)(src * scale + j) * stride;
             /* Vertical nearest expansion first. The road pass then repaints
              * only scenery pixels; sprites, the HUD, the car and plane-A
-             * effects keep this native row's pixels instead of whatever the
-             * framebuffer held from an earlier frame. */
+             * effects keep this native row's pixels. */
             memcpy(row, s_src_row, (size_t)width * sizeof *row);
-            if (!road)
-                continue;
-            NxAuditRow *entry = NULL;
-            if (j == scale - 1 && src >= NX_AUDIT_FIRST && src < NX_AUDIT_FIRST + NX_AUDIT_ROWS)
-                entry = &audit[src - NX_AUDIT_FIRST];
-            paint_road_row(vdp, src, j, scale, w1, native_w, row, s_src_row, entry);
+            if (road)
+                paint_road_row(src, j, scale, w1, native_w, &plan, row, s_src_row);
         }
     }
-    nx_audit_write(vdp, frame, scale, pixels, stride, w1, native_w, audit);
+    nx_audit_write(frame, scale, w1, native_w);
     ++s_build_frames;
     if (timing) {
         double elapsed = highres_now_us() - started - s_clock_overhead;

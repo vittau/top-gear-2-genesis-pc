@@ -64,132 +64,134 @@ def strip(out, audit, start):
 
 
 # ── N x mode (docs/HIGHRES.md §8 S3) ──────────────────────────────────────
-# The S3 builder writes one frame-NNNNNN.nxroad per presented picture: the
-# native-row-granular road geometry it actually drew, measured back from the
-# built picture, next to the two authored neighbours it interpolated between.
-NX_MAGIC = b'TG2NXR01'
-NX_DTYPE = np.dtype([
-    ('line', '<u4'), ('py_src', '<u4'), ('py_next', '<u4'),
-    ('centre_src', '<i4'), ('centre_next', '<i4'),
-    ('left_src', '<i4'), ('right_src', '<i4'),
-    ('left_next', '<i4'), ('right_next', '<i4'),
-    ('el_x256', '<i4'), ('er_x256', '<i4'),
-    ('measured_left', '<i4'), ('measured_right', '<i4'),
-    ('stripes', '<u4'), ('stripes_src', '<u4'), ('flags', '<u4'),
-])
-NX_ROAD, NX_INTERPOLATED, NX_FULL = 1, 2, 4
+# The S3 builder writes one frame-NNNNNN.nxroad per presented picture: one
+# record per presented row of every road row it redrew. Each record carries
+# the authored silhouettes of the row and of the neighbour it leaned on, the
+# edges the builder aimed for, and what the BUILT pixels show (measured back
+# from the finished row, not from the builder's variables): first/last road
+# pixel, lane-mark runs, verge pixels inside the road, and pixels whose colour
+# the native row cannot explain within the distance the silhouette moved.
+NX_MAGIC = b'TG2NXR02'
+NX_DTYPE = np.dtype([(name, '<i4') for name in (
+    'line', 'sub', 'py', 'flags', 'neighbour',
+    'own_l', 'own_r', 'nb_l', 'nb_r', 'el_x256', 'er_x256',
+    'seen_l', 'seen_r', 'lanes', 'lanes_src', 'holes',
+    'outliers', 'margin_outliers', 'band')])
+NX_INTERPOLATED, NX_FULL, NX_STRUCTURE, NX_AMBIGUOUS = 1, 2, 4, 8
+# The fitted silhouette may sit this far from the authored one (FIT_LIMIT in
+# game/tg2_highres.c), in native pixels.
+NX_FIT_LIMIT = 1.5
 
 
 def load_nx(path):
     data = path.read_bytes()
     if data[:8] != NX_MAGIC:
         raise ValueError(f'invalid N x road capture: {path}')
-    header = struct.unpack_from('<7I', data, 8)
-    rows = np.frombuffer(data, dtype=NX_DTYPE, offset=8 + 28)
-    if len(rows) != header[6]:
+    frame, scale, w1, native_w, count, size = struct.unpack_from('<6I', data, 8)
+    if size != NX_DTYPE.itemsize or len(data) != 32 + count * size:
         raise ValueError(f'incomplete N x road capture: {path}')
-    return dict(frame=header[1], scale=header[2], stride=header[3],
-                w1=header[4], native_w=header[5], height=header[6]), rows
+    rows = np.frombuffer(data, dtype=NX_DTYPE, offset=32)
+    rows = rows[np.lexsort((rows['sub'], rows['line']))]
+    return dict(frame=frame, scale=scale, w1=w1, native_w=native_w), rows
 
 
 def main_nx(a):
     audit = a.capture / 'audit'
     paths = sorted(audit.glob('frame-*.nxroad'))
     if not paths:
-        a.capture.joinpath('audit').mkdir(parents=True, exist_ok=True)
-        p.error('no N x road audit files; run with TG2_ROAD_AUDIT_DIR')
-    totals = dict(mode='nx', frames=0, scales=[], tested_rows=0,
-                  envelope_violations=0, max_envelope_violation_px=0.0,
-                  geometry_violations=0, max_geometry_error_px=0.0,
-                  gap_violations=0, stripe_rows_checked=0, stripe_violations=0,
-                  continuity_rows_checked=0,
-                  max_stripe_violation=0, continuity_violations=0,
-                  max_left_step_px=0, max_right_step_px=0, examples=[])
+        raise SystemExit('no N x road audit files; run with TG2_ROAD_AUDIT_DIR')
+    counters = ['envelope_violations', 'gap_violations', 'geometry_violations',
+                'hole_violations', 'stripe_violations', 'continuity_violations',
+                'outlier_rows', 'margin_outlier_rows']
+    totals = dict(mode='nx', frames=0, road_frames=0, scales=[], presented_rows=0,
+                  interpolated_rows=0, full_rows=0, stripe_rows_checked=0,
+                  continuity_pairs_checked=0, band_breaks=0,
+                  max_envelope_violation_px=0.0, max_geometry_error_px=0.0,
+                  max_fit_offset_px=0.0, max_edge_step_px=0.0, examples=[])
+    totals.update({k: 0 for k in counters})
     for path in paths:
-        h, rows = load_nx(path)
+        h, r = load_nx(path)
         totals['frames'] += 1
         if h['scale'] not in totals['scales']:
             totals['scales'].append(h['scale'])
-        road = rows['flags'] & NX_ROAD != 0
-        totals['tested_rows'] += int(road.sum())
-        el = rows['el_x256'] / 256.0
-        er = rows['er_x256'] / 256.0
-        interp = rows['flags'] & NX_INTERPOLATED != 0
-        env_l = np.minimum(rows['left_src'], np.where(interp, rows['left_next'], 1 << 20))
-        env_r = np.maximum(rows['right_src'], np.where(interp, rows['right_next'], -(1 << 20)))
-        envelope = np.maximum.reduce([env_l - 1.0 - el, el - (env_r + 1.0),
-                                      env_l - 1.0 - er, er - (env_r + 1.0),
-                                      np.zeros_like(el)])
-        envelope = np.where(road, envelope, 0.0)
-        totals['envelope_violations'] += int((envelope > 0).sum())
-        if road.any():
-            totals['max_envelope_violation_px'] = max(
-                totals['max_envelope_violation_px'], float(envelope.max()))
-        width = er - el
-        gaps = road & (width < 2.0)
-        totals['gap_violations'] += int(gaps.sum())
-        # The committed strip is what fits on the canvas; a road wider than the
-        # picture is clipped by it, so compare against the clipped geometry.
-        # Only rows the builder reported as fully scenery are compared: a
-        # sprite or the car can cover part of the strip.
-        w1 = h['w1']
-        covered = road & (rows['flags'] & NX_FULL != 0)
-        authored = (covered & (el <= rows['left_src'] + 1) &
-                    (er >= rows['right_src'] - 1) & (rows['left_src'] >= 0) &
-                    (rows['right_src'] < w1 - 1))
-        vis_l = np.clip(el, 0, w1 - 1)
-        vis_r = np.clip(er - 1, 0, w1 - 1)
-        geometry = np.maximum(np.abs(rows['measured_left'] - vis_l),
-                              np.abs(rows['measured_right'] - vis_r))
-        geometry = np.where(covered, geometry, 0.0)
-        totals['geometry_violations'] += int((geometry > 1.5).sum())
-        if road.any():
-            totals['max_geometry_error_px'] = max(totals['max_geometry_error_px'],
-                                                  float(geometry.max()))
-        # Stripe phase on the same fully-scenery rows.
-        stripe_error = np.abs(rows['stripes'].astype(int) - rows['stripes_src'].astype(int))
-        totals['stripe_rows_checked'] += int(authored.sum())
-        totals['stripe_violations'] += int(((stripe_error > 0) & authored).sum())
-        if authored.any():
-            totals['max_stripe_violation'] = max(totals['max_stripe_violation'],
-                                                 int(stripe_error[authored].max()))
-        # Row-to-row continuity: ignore rows whose strip is clipped by the
-        # canvas edge (their measured edge is pinned to 0 / w1-1 by design).
-        free = covered & (rows['measured_left'] > 0) & (rows['measured_right'] < w1 - 1)
-        # A curve legitimately moves the authored edge by many pixels per row,
-        # so the committed edge may only step by as much as the interpolated
-        # one plus antialiasing slop: a bigger step is a tear or a duplicate.
-        left = np.where(free, rows['measured_left'], np.nan)
-        right = np.where(free, rows['measured_right'], np.nan)
-        dleft = np.abs(np.diff(left))
-        dright = np.abs(np.diff(right))
-        d_el = np.abs(np.diff(el))
-        d_er = np.abs(np.diff(er))
-        bad = np.zeros(len(rows), dtype=bool)
-        if len(rows) > 1:
-            bad[1:] = ((dleft > d_el + 2) & ~np.isnan(dleft)) | \
-                      ((dright > d_er + 2) & ~np.isnan(dright))
-        totals['continuity_rows_checked'] += int(free.sum())
-        totals['continuity_violations'] += int(bad.sum())
-        if np.isfinite(dleft).any():
-            totals['max_left_step_px'] = max(totals['max_left_step_px'],
-                                             int(np.nanmax(dleft)))
-            totals['max_right_step_px'] = max(totals['max_right_step_px'],
-                                              int(np.nanmax(dright)))
-        flagged = (envelope > 0) | gaps | (geometry > 1.5) | ((stripe_error > 0) & authored)
-        for line in np.flatnonzero(flagged)[:3]:
-            if len(totals['examples']) < 12:
-                totals['examples'].append(dict(
-                    frame=int(h['frame']) + 1, line=int(rows['line'][line]),
-                    py=int(rows['py_src'][line]), edges=[float(el[line]), float(er[line])],
-                    envelope=[float(env_l[line] - 1), float(env_r[line] + 1)],
-                    measured=[int(rows['measured_left'][line]), int(rows['measured_right'][line])],
-                    stripes=[int(rows['stripes'][line]), int(rows['stripes_src'][line])]))
-    violations = ['envelope_violations', 'geometry_violations', 'gap_violations',
-                  'stripe_violations', 'continuity_violations']
-    totals['passed'] = (totals['frames'] >= a.min_frames and
-                        totals['tested_rows'] > 0 and
-                        not any(totals[k] for k in violations))
+        if not len(r):
+            continue
+        totals['road_frames'] += 1
+        n, w1 = h['scale'], h['w1']
+        el, er = r['el_x256'] / 256.0, r['er_x256'] / 256.0
+        # Rows whose verge shares a colour with the road are not measurable.
+        full = (r['flags'] & NX_FULL != 0) & (r['flags'] & NX_AMBIGUOUS == 0)
+        totals['presented_rows'] += len(r)
+        totals['interpolated_rows'] += int((r['flags'] & NX_INTERPOLATED != 0).sum())
+        totals['full_rows'] += int(full.sum())
+        # 1. The drawn edge stays between the two authored silhouettes it was
+        #    built from, give or take the fit allowance.
+        lo_l, hi_l = np.minimum(r['own_l'], r['nb_l']), np.maximum(r['own_l'], r['nb_l'])
+        lo_r, hi_r = np.minimum(r['own_r'], r['nb_r']), np.maximum(r['own_r'], r['nb_r'])
+        envelope = np.maximum.reduce([lo_l - el, el - hi_l, lo_r - er, er - hi_r]) - NX_FIT_LIMIT
+        bad_env = envelope > 1e-3
+        totals['max_envelope_violation_px'] = max(totals['max_envelope_violation_px'],
+                                                  float(max(envelope.max(), 0)))
+        totals['max_fit_offset_px'] = max(totals['max_fit_offset_px'], float(np.maximum(
+            np.abs(el - r['own_l']), np.abs(er - r['own_r']))[r['neighbour'] == 0].max(initial=0)))
+        # 2. No vanishing road.
+        bad_gap = er - el < 2.0
+        # 3. The built pixels show the road where the builder aimed, on rows
+        #    nothing covers and the canvas does not clip.
+        free = full & (el > 1) & (er < w1 - 1) & (r['seen_l'] >= 0)
+        geometry = np.maximum(np.abs(r['seen_l'] - el * n), np.abs(r['seen_r'] + 1 - er * n))
+        geometry = np.where(free, geometry, 0.0)
+        bad_geo = geometry > 1.5
+        totals['max_geometry_error_px'] = max(totals['max_geometry_error_px'],
+                                              float(geometry.max()))
+        # 4. No verge pixel inside the road, and the lane marks are all there.
+        bad_hole = full & (r['holes'] > 0)
+        bad_stripe = free & (r['lanes'] != r['lanes_src'])
+        totals['stripe_rows_checked'] += int(free.sum())
+        # 5. Nothing the native row cannot explain, margins included.
+        bad_out = r['outliers'] > 0
+        bad_margin = r['margin_outliers'] > 0
+        # 6. Presented row to presented row, inside one band, the edge moves
+        #    by no more than its share of the authored step: a bigger jump is
+        #    a tear, a fan or a duplicated row.
+        consecutive = ((r['line'][1:] * n + r['sub'][1:]) -
+                       (r['line'][:-1] * n + r['sub'][:-1])) == 1
+        same_band = consecutive & (r['band'][1:] == r['band'][:-1])
+        totals['band_breaks'] += int((consecutive & ~same_band).sum())
+        step_l = np.maximum(np.abs(r['own_l'] - r['nb_l'])[1:], np.abs(r['own_l'] - r['nb_l'])[:-1])
+        step_r = np.maximum(np.abs(r['own_r'] - r['nb_r'])[1:], np.abs(r['own_r'] - r['nb_r'])[:-1])
+        row_l = np.abs(r['own_l'][1:] - r['own_l'][:-1])
+        row_r = np.abs(r['own_r'][1:] - r['own_r'][:-1])
+        allow_l = (np.maximum(step_l, row_l) + 2 * NX_FIT_LIMIT) / n + 0.02
+        allow_r = (np.maximum(step_r, row_r) + 2 * NX_FIT_LIMIT) / n + 0.02
+        d_el, d_er = np.abs(np.diff(el)), np.abs(np.diff(er))
+        both = same_band & free[1:] & free[:-1]
+        seen_l = np.abs(np.diff(r['seen_l'])) > d_el * n + 2
+        seen_r = np.abs(np.diff(r['seen_r'])) > d_er * n + 2
+        bad_pair = same_band & ((d_el > allow_l) | (d_er > allow_r)) | both & (seen_l | seen_r)
+        totals['continuity_pairs_checked'] += int(same_band.sum())
+        if same_band.any():
+            totals['max_edge_step_px'] = max(totals['max_edge_step_px'],
+                                             float(np.maximum(d_el, d_er)[same_band].max()))
+        bad_cont = np.zeros(len(r), dtype=bool)
+        bad_cont[1:] = bad_pair
+        for name, bad in zip(counters, [bad_env, bad_gap, bad_geo, bad_hole, bad_stripe,
+                                        bad_cont, bad_out, bad_margin]):
+            totals[name] += int(bad.sum())
+            for i in np.flatnonzero(bad)[:2]:
+                if sum(e['rule'] == name for e in totals['examples']) < 4:
+                    totals['examples'].append(dict(
+                        rule=name, frame=int(h['frame']), line=int(r['line'][i]),
+                        sub=int(r['sub'][i]), py=int(r['py'][i]), flags=int(r['flags'][i]),
+                        edges=[float(el[i]), float(er[i])],
+                        own=[int(r['own_l'][i]), int(r['own_r'][i])],
+                        neighbour=[int(r['nb_l'][i]), int(r['nb_r'][i])],
+                        seen=[int(r['seen_l'][i]), int(r['seen_r'][i])],
+                        lanes=[int(r['lanes'][i]), int(r['lanes_src'][i])],
+                        holes=int(r['holes'][i]), outliers=int(r['outliers'][i]),
+                        margin_outliers=int(r['margin_outliers'][i])))
+    totals['passed'] = (totals['frames'] >= a.min_frames and totals['presented_rows'] > 0
+                        and not any(totals[k] for k in counters))
     target = a.out or (a.capture / 'road-artifacts-nx.json')
     target.write_text(json.dumps(totals, indent=2) + '\n')
     print(json.dumps(totals, indent=2))

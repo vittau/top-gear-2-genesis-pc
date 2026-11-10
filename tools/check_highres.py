@@ -852,6 +852,96 @@ def check_captures(args):
     return 0 if not failures else 1
 
 
+def check_drive(args):
+    """S3 audit on a driven race: password into a track, drive it with the
+    closed-loop controller at a render scale, with the N x road records and
+    the margin audit on, taking a picture every --shot-every frames. The trace
+    carries curvature and slope so curve/hill pictures can be picked."""
+    info = TRACKS[args.track]
+    tag = f'{args.track}-scale{args.scale}' + ('-60' if args.race60 else '')
+    out = args.out / 'drive' / tag
+    audit = out / 'audit'
+    if audit.exists():
+        for old in audit.glob('*.nxroad'):
+            old.unlink()
+    audit.mkdir(parents=True, exist_ok=True)
+    env = {'TG2_HIGHRES_SCALE': str(args.scale),
+           'TG2_RACE_60FPS': '1' if args.race60 else '0',
+           'TG2_HIGHRES_TIMING': '1'}
+    if not args.no_audit:
+        env['TG2_ROAD_AUDIT_DIR'] = str(audit)
+        env['TG2_MARGIN_AUDIT'] = str(out / 'margins.csv')
+    r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+               widescreen=args.mode, max_frames=400000, env_extra=env,
+               extra_args=['--turbo'], timeout=120)
+    item = {'tag': tag, 'track': args.track, 'scale': args.scale, 'mode': args.mode,
+            'race60': bool(args.race60), 'frames': args.frames}
+    trace, shots, failures = [], [], []
+    r.start()
+    try:
+        state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+        item['race_start_frame'] = state.frame
+        pad, previous, last_shot = 0, None, 0
+        start = r.frame()
+        while r.frame() - start < args.frames:
+            st = r.step(pad)
+            lat = st.lat_units
+            d = 0.0 if previous is None else lat - previous
+            u = -1.0 * lat - 4.0 * d
+            pad = 0x10 | (0x08 if u > 9.0 else 0x04 if u < -9.0 else 0)
+            previous = lat
+            trace.append([st.frame, st.speed, round(lat, 2), st.curv, st.slope, st.lap])
+            if st.frame - last_shot >= args.shot_every:
+                last_shot = st.frame
+                path = r.screenshot(f'frame-{st.frame}.png')
+                shots.append({'frame': st.frame, 'path': str(path), 'speed': st.speed,
+                              'curv': st.curv, 'slope': st.slope})
+        video = r.command('tg2_video')
+        item['video'] = {k: video.get(k) for k in
+                         ('highres_scale', 'highres_capture_us', 'highres_build_us',
+                          'highres_build_frames', 'crop_frames')}
+        if video.get('highres_build_frames'):
+            item['build_us_per_frame'] = round(
+                video['highres_build_us'] / video['highres_build_frames'], 1)
+        r.set_input(0)
+    finally:
+        item['exit'] = r.stop()
+    (out / 'trace.json').write_text(json.dumps(trace) + '\n')
+    item.update({'shots': shots, 'manifests': empty_manifests(out),
+                 'moving_frames': sum(1 for t in trace if t[1] > 20)})
+    for name, count in item['manifests'].items():
+        if count:
+            failures.append(f"{tag}: manifest {name} has {count} entries")
+    if item['exit'] != 0:
+        failures.append(f"{tag}: exit {item['exit']}")
+    if args.scale > 1 and not args.no_audit:
+        report = out / 'road-artifacts-nx.json'
+        proc = subprocess.run([sys.executable, str(ROOT / 'tools' / 'check_road_artifacts.py'),
+                               str(out), '--nx', '--out', str(report),
+                               '--min-frames', str(args.min_frames)],
+                              capture_output=True, text=True)
+        item['road_artifacts'] = json.loads(report.read_text()) if report.exists() else None
+        if proc.returncode != 0:
+            failures.append(f"{tag}: road artefacts failed")
+    if args.mode != 'off' and not args.no_audit:
+        proc = subprocess.run([sys.executable, str(ROOT / 'tools' / 'check_margin_artifacts.py'),
+                               str(out / 'margins.csv')], capture_output=True, text=True)
+        item['margins'] = {'exit': proc.returncode, 'stdout': proc.stdout[-1500:]}
+        if proc.returncode != 0:
+            failures.append(f"{tag}: margin audit failed")
+    if not args.keep_audit:
+        # The records are large (AGENTS.md: delete once the numbers are out).
+        for old in audit.glob('*.nxroad'):
+            old.unlink()
+        if (out / 'margins.csv').exists():
+            (out / 'margins.csv').unlink()
+    summary = {'check': 'drive', **item, 'failures': failures, 'ok': not failures}
+    (out / 'drive-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    brief = {k: v for k, v in summary.items() if k not in ('shots',)}
+    print(json.dumps(brief, indent=1))
+    return 0 if not failures else 1
+
+
 def check_nx(args):
     """S3 audit: run the route with the N x road records and the margin audit,
     then check both."""
@@ -902,7 +992,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's3', 'nx', 'captures', 'option', 'route', 'split'):
+    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
@@ -935,6 +1025,16 @@ def main():
     s.add_argument('--end-frame', type=int, default=5600)
     s.add_argument('--min-frames', type=int, default=3000)
     s.add_argument('--margin', action='store_true', default=True)
+    s = sub.choices['drive']
+    s.add_argument('--track', default='auckland', choices=sorted(TRACKS))
+    s.add_argument('--scale', type=int, default=2)
+    s.add_argument('--mode', default='16:9')
+    s.add_argument('--frames', type=int, default=4200)
+    s.add_argument('--shot-every', type=int, default=120)
+    s.add_argument('--min-frames', type=int, default=3000)
+    s.add_argument('--race60', action='store_true')
+    s.add_argument('--no-audit', action='store_true')
+    s.add_argument('--keep-audit', action='store_true')
     args = p.parse_args()
     args.exe = args.exe.resolve()
     args.out = args.out.resolve()
@@ -943,7 +1043,7 @@ def main():
         if not getattr(args, name).exists():
             p.error(f'--{name} not found: {getattr(args, name)}')
     return {'g1': check_g1, 'capture': check_capture, 's3': check_s3,
-            'nx': check_nx, 'captures': check_captures, 'option': check_option,
+            'nx': check_nx, 'drive': check_drive, 'captures': check_captures, 'option': check_option,
             'route': check_route, 'split': check_split}[args.check](args)
 
 
