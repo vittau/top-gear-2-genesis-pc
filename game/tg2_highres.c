@@ -656,16 +656,23 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
     for (int u = 0; u < w1; ++u) {
         if (!s_terrain[u])
             continue;                        /* sprite / HUD / car / plane A */
+        while (q[run + 1] <= u) ++run;
+        uint32_t *out = row + u * scale;
+        if (q[run + 1] >= u + 1) {           /* the whole column is one run */
+            for (int k = 0; k < scale; ++k) out[k] = p->colour[run];
+            continue;
+        }
+        int at = run;
         for (int k = 0; k < scale; ++k) {
             double x0 = u + k * inv, x1 = x0 + inv;
-            while (q[run + 1] <= x0) ++run;
-            if (q[run + 1] >= x1) {
-                row[u * scale + k] = p->colour[run];
+            while (q[at + 1] <= x0) ++at;
+            if (q[at + 1] >= x1) {
+                out[k] = p->colour[at];
                 continue;
             }
             /* Analytic coverage of every run this output pixel overlaps. */
             double red = 0, green = 0, blue = 0, a = x0;
-            for (int r = run; a < x1; ++r) {
+            for (int r = at; a < x1; ++r) {
                 double b = q[r + 1] < x1 ? q[r + 1] : x1;
                 double part = (b - a) * scale;
                 uint32_t c = p->colour[r];
@@ -674,8 +681,8 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
                 blue += part * (c & 255);
                 a = b;
             }
-            row[u * scale + k] = 0xFF000000u | ((uint32_t)(red + 0.5) << 16) |
-                                 ((uint32_t)(green + 0.5) << 8) | (uint32_t)(blue + 0.5);
+            out[k] = 0xFF000000u | ((uint32_t)(red + 0.5) << 16) |
+                     ((uint32_t)(green + 0.5) << 8) | (uint32_t)(blue + 0.5);
         }
     }
 
@@ -711,6 +718,30 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
     }
 }
 
+/* Qualification only: while a path is set, every built picture also writes
+ * its native (1x) canvas there as a binary PPM, so a check can compare the
+ * very same frame at 1x and at N x. Set over TCP (tg2_highres {"dump":"path"});
+ * an empty path stops it. */
+static char s_dump_path[1024];
+
+void tg2_highres_request_native_dump(const char *path) {
+    snprintf(s_dump_path, sizeof s_dump_path, "%s", path ? path : "");
+}
+
+static void native_dump(const uint32_t *pixels, int stride, int scale, int w1, int h) {
+    FILE *f = fopen(s_dump_path, "wb");
+    if (!f) { s_dump_path[0] = 0; return; }
+    fprintf(f, "P6\n%d %d\n255\n", w1, h);
+    for (int y = 0; y < h; ++y)
+        for (int u = 0; u < w1; ++u) {
+            uint32_t c = pixels[(size_t)y * stride + u * scale];
+            unsigned char rgb[3] = {(unsigned char)(c >> 16), (unsigned char)(c >> 8),
+                                    (unsigned char)c};
+            fwrite(rgb, 1, 3, f);
+        }
+    fclose(f);
+}
+
 int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
                       int native_w, int native_h) {
     int scale = tg2_highres_present_scale();
@@ -728,6 +759,8 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
     if (nx_audit_dir() && !s_audit)
         s_audit = malloc(sizeof *s_audit * TG2_HIGHRES_ROWS * TG2_HIGHRES_MAX_SCALE);
     s_audit_count = 0;
+    if (s_dump_path[0])
+        native_dump(pixels, stride, scale, w1, native_h);
     model_road(origin, native_h);
 
     /* The row renderer produced one row per native line, already expanded

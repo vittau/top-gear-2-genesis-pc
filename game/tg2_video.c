@@ -543,7 +543,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         if (path && *path) {
             margin_audit = fopen(path, "w");
             if (!margin_audit) { perror(path); exit(1); }
-            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band,pa_run,pa_extend\n");
+            fprintf(margin_audit, "frame,line,side,native,margin,ap,attr_a,bp,attr_b,backdrop,atlas_y,slope,margin_bp,native_b,edge_solid,window_band,backdrop_band,pa_run,pa_extend,margin_weather\n");
         }
     }
     if (!margin_audit || w <= nw) return;
@@ -570,14 +570,16 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                 (pixel(v, ba, x - ha, line + va, &attr) ||
                  pixel(v, bb, x - hb, line + vb, &attr))) backdrop = 0;
         }
-        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d,%d,%d\n",
+        fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d,%d,%d,%u\n",
                 (unsigned long long)present_frame, line, side, native[edge],
                 out[origin + (side ? nw : -1)], ap, aa, bp, ab,
                 v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0), mb,
                 genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0),
                 solid, window_band_edge(v, line, native, nw, side), backdrop,
                 plane_a_edge_run(v, line, ha, va, ba, nw, side),
-                (pa_extend_mask >> side) & 1);
+                (pa_extend_mask >> side) & 1,
+                /* A rain/snow particle the margin continuation drew there. */
+                weather_pixel(v, line, side ? nw : -1, ha, va, ba));
     }
     if (line == 223) fflush(margin_audit);
 }
@@ -1165,6 +1167,17 @@ void tg2_video_highres_command(int id, const char *json) {
     if (!out) {
         cmd_send_response("{\"ok\":false,\"error\":\"out of memory\"}");
         return;
+    }
+    /* {"dump":"path"}: N x pictures also write their 1x canvas ("" stops). */
+    const char *dump = json ? strstr(json, "\"dump\"") : NULL;
+    if (dump && (dump = strchr(dump + 6, '"')) != NULL) {
+        char path[1024];
+        size_t length = strcspn(dump + 1, "\"");
+        if (length < sizeof path) {
+            memcpy(path, dump + 1, length);
+            path[length] = 0;
+            tg2_highres_request_native_dump(path);
+        }
     }
     const Tg2RowState *captured = tg2_highres_rows();
     const unsigned short *row_serial = tg2_highres_row_serial();

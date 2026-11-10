@@ -852,13 +852,34 @@ def check_captures(args):
     return 0 if not failures else 1
 
 
+def read_ppm(path: Path):
+    data = path.read_bytes()
+    parts = data.split(b'\n', 3)
+    w, h = (int(x) for x in parts[1].split())
+    return w, h, parts[3]
+
+
+def downscale_against(native: Path, shot: Path, scale: int):
+    """Box-downsample the N x screenshot and compare it with the same frame's
+    1x canvas (the builder's own input), cropped like the presented picture."""
+    w, h, pixels = read_ppm(native)
+    cw, ch, cc, cpix, _ = png_pixels(shot)
+    if cw != w * scale or ch % scale:
+        return None
+    rows = ch // scale
+    top = 8 if rows == 200 else (h - rows) // 2
+    reference = pixels[top * w * 3:(top + rows) * w * 3]
+    return compare_downscaled(reference, downsample(cpix, cw, ch, cc, scale))
+
+
 def check_drive(args):
     """S3 audit on a driven race: password into a track, drive it with the
     closed-loop controller at a render scale, with the N x road records and
     the margin audit on, taking a picture every --shot-every frames. The trace
     carries curvature and slope so curve/hill pictures can be picked."""
     info = TRACKS[args.track]
-    tag = f'{args.track}-scale{args.scale}' + ('-60' if args.race60 else '')
+    tag = (f'{args.track}-scale{args.scale}' + ('-60' if args.race60 else '') +
+           ('-cost' if args.no_audit else ''))
     out = args.out / 'drive' / tag
     audit = out / 'audit'
     if audit.exists():
@@ -884,6 +905,10 @@ def check_drive(args):
         pad, previous, last_shot = 0, None, 0
         start = r.frame()
         while r.frame() - start < args.frames:
+            due = args.scale > 1 and last_shot and r.frame() - last_shot >= args.shot_every
+            if due:
+                # The pictures this step builds also leave their 1x canvas.
+                r.command('tg2_highres', dump=str(out / 'native.ppm'))
             st = r.step(pad)
             lat = st.lat_units
             d = 0.0 if previous is None else lat - previous
@@ -891,11 +916,24 @@ def check_drive(args):
             pad = 0x10 | (0x08 if u > 9.0 else 0x04 if u < -9.0 else 0)
             previous = lat
             trace.append([st.frame, st.speed, round(lat, 2), st.curv, st.slope, st.lap])
-            if st.frame - last_shot >= args.shot_every:
+            if due or not last_shot:
                 last_shot = st.frame
-                path = r.screenshot(f'frame-{st.frame}.png')
-                shots.append({'frame': st.frame, 'path': str(path), 'speed': st.speed,
-                              'curv': st.curv, 'slope': st.slope})
+                # One batch is served in one per-frame poll, so the screenshot
+                # and the end of the 1x dump see the same completed picture.
+                path = out / f'frame-{st.frame}.png'
+                batch = [('screenshot', dict(path=str(path)))]
+                if due:
+                    batch.append(('tg2_highres', dict(dump='')))
+                r.command_many(batch)
+                shot = {'frame': st.frame, 'path': str(path), 'speed': st.speed,
+                        'curv': st.curv, 'slope': st.slope}
+                native = out / 'native.ppm'
+                if due and native.exists():
+                    reference = out / f'frame-{st.frame}-1x.ppm'
+                    native.replace(reference)
+                    shot['native'] = str(reference)
+                    shot['downscale'] = downscale_against(reference, Path(path), args.scale)
+                shots.append(shot)
         video = r.command('tg2_video')
         item['video'] = {k: video.get(k) for k in
                          ('highres_scale', 'highres_capture_us', 'highres_build_us',
@@ -908,7 +946,21 @@ def check_drive(args):
         item['exit'] = r.stop()
     (out / 'trace.json').write_text(json.dumps(trace) + '\n')
     item.update({'shots': shots, 'manifests': empty_manifests(out),
-                 'moving_frames': sum(1 for t in trace if t[1] > 20)})
+                 'steps': len(trace),
+                 'moving_steps': sum(1 for t in trace if t[1] > 500)})
+    compared = [s['downscale'] for s in shots if s.get('downscale')]
+    if compared:
+        item['downscale'] = {
+            'pictures': len(compared),
+            'max_mean_abs_diff': max(c['mean_abs_diff'] for c in compared),
+            'max_big_diff_ratio': max(c['big_diff_ratio'] for c in compared)}
+        for shot in shots:
+            c = shot.get('downscale')
+            if c and (c['mean_abs_diff'] > args.max_mean_diff or
+                      c['big_diff_ratio'] > args.max_big_ratio):
+                failures.append(f"{tag}: frame {shot['frame']} downscale {c}")
+    elif args.scale > 1 and shots[1:]:
+        failures.append(f'{tag}: no 1x/N x picture pair was compared')
     for name, count in item['manifests'].items():
         if count:
             failures.append(f"{tag}: manifest {name} has {count} entries")
@@ -1035,6 +1087,8 @@ def main():
     s.add_argument('--race60', action='store_true')
     s.add_argument('--no-audit', action='store_true')
     s.add_argument('--keep-audit', action='store_true')
+    s.add_argument('--max-mean-diff', type=float, default=2.5)
+    s.add_argument('--max-big-ratio', type=float, default=0.02)
     args = p.parse_args()
     args.exe = args.exe.resolve()
     args.out = args.out.resolve()

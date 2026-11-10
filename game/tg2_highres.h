@@ -96,6 +96,11 @@ unsigned tg2_highres_build_frames(void);
 int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
                       int native_w, int native_h);
 
+/* Qualification only: while `path` is not empty, every built picture writes
+ * its native (1x) canvas there as a binary PPM (all native rows, before the
+ * presented-window crop). */
+void tg2_highres_request_native_dump(const char *path);
+
 #ifdef __cplusplus
 }
 #endif
