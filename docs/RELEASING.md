@@ -254,7 +254,7 @@ where the end-user instructions above describe.
   centered HUD and has no effect when widescreen is Off.
 - **Race sound** is also available in the game's own *Sound* menu; both change
   the same setting.
-- **Linear filter** (Graphics) is off by default and avoids edge artifacts at
+- **Linear filter** (VIDEO) is off by default and avoids edge artifacts at
   the picture boundary (see [docs/LINEAR_FILTER.md](LINEAR_FILTER.md) in the source repository).
 - `settings.ini` is hand-editable. Delete it to return every option to its
   default. `TG2_RACE_60FPS=0|1` and `TG2_HUD_MODE=centered|edges` are

@@ -382,6 +382,22 @@ void tg2_options_apply_env(void)
 /* ── In-game overlay rows ─────────────────────────────────────────────────── */
 
 #if RECOMP_LAUNCHER
+/* One player-facing video/audio group across shared and game descriptors.
+ * Settings keys and the descriptor order within each group stay unchanged. */
+static const char *runtime_section_name(const char *section) {
+    if (!section) return NULL;
+    if (!strcmp(section, "Display") || !strcmp(section, "Graphics") || !strcmp(section, "Video"))
+        return "VIDEO";
+    if (!strcmp(section, "Sound") || !strcmp(section, "Audio")) return "AUDIO";
+    if (!strcmp(section, "System")) return "SYSTEM";
+    if (!strcmp(section, "Mods")) return "MODS";
+    if (!strcmp(section, "Save states")) return "SAVE STATES";
+    return section;
+}
+static const char *const runtime_sections[] = {"VIDEO", "AUDIO", "SYSTEM", "MODS", "SAVE STATES"};
+const RecompRuntimeUiLayout tg2_runtime_layout = {
+    runtime_section_name, runtime_sections, sizeof runtime_sections / sizeof runtime_sections[0]
+};
 static const RecompRuntimeUiItem s_runtime_items[] = {
     { "mods.musicvol.level", "Audio", "Music volume",
       "Music level, as a percentage of the stock mix. Only the cartridge's "

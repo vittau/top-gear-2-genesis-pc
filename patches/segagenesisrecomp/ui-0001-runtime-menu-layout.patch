@@ -1,0 +1,83 @@
+From 1d82edf05768336ef8b04985288ae0dd80c657c3 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 12:47:25 -0300
+Subject: [PATCH] Add opt-in runtime menu grouping and explicit section order
+
+---
+ src/common/recomp_runtime_settings.c |  4 ++++
+ src/common/recomp_runtime_ui.c       | 15 +++++++++++++++
+ src/recomp_runtime_ui.h              | 10 ++++++++++
+ 3 files changed, 29 insertions(+)
+
+diff --git a/src/common/recomp_runtime_settings.c b/src/common/recomp_runtime_settings.c
+index 5358de4..8599621 100644
+--- a/src/common/recomp_runtime_settings.c
++++ b/src/common/recomp_runtime_settings.c
+@@ -203,6 +203,10 @@ RecompRuntimeUi *recomp_runtime_ui_create_standard(
+         count += standard->extra_item_count;
+     }
+ 
++    if (standard->menu.layout && standard->menu.layout->section_name)
++        for (size_t i = 0; i < count; ++i)
++            items[i].section = standard->menu.layout->section_name(items[i].section);
++
+     RecompRuntimeUiConfig menu = standard->menu;
+     menu.items = items;
+     menu.item_count = count;
+diff --git a/src/common/recomp_runtime_ui.c b/src/common/recomp_runtime_ui.c
+index 809061c..f6671e2 100644
+--- a/src/common/recomp_runtime_ui.c
++++ b/src/common/recomp_runtime_ui.c
+@@ -238,6 +238,21 @@ RecompRuntimeUi *recomp_runtime_ui_create(const RecompRuntimeUiConfig *config) {
+         name[len] = '\0';
+         ui->sections[ui->section_count++] = name;
+     }
++    /* Explicit host order controls both visible rows and controller focus.
++     * Unlisted sections retain first-seen order after the listed ones. */
++    if (config->layout && config->layout->section_order) {
++        size_t next = 0;
++        for (size_t i = 0; i < config->layout->section_count; ++i) {
++            for (size_t j = next; j < ui->section_count; ++j) {
++                if (!same_text(ui->sections[j], config->layout->section_order[i])) continue;
++                const char *section = ui->sections[j];
++                memmove(ui->sections + next + 1, ui->sections + next,
++                        (j - next) * sizeof(*ui->sections));
++                ui->sections[next++] = section;
++                break;
++            }
++        }
++    }
+     return ui;
+ }
+ 
+diff --git a/src/recomp_runtime_ui.h b/src/recomp_runtime_ui.h
+index 8d7775e..42dc9ad 100644
+--- a/src/recomp_runtime_ui.h
++++ b/src/recomp_runtime_ui.h
+@@ -130,6 +130,15 @@ typedef struct RecompRuntimeUiCallbacks {
+                     const char *value);
+ } RecompRuntimeUiCallbacks;
+ 
++/* Optional host policy over the effective standard + extra descriptors.
++ * The policy and all strings it returns must outlive the menu. */
++typedef struct RecompRuntimeUiLayout {
++    /* Maps effective descriptor sections when create_standard is used. */
++    const char *(*section_name)(const char *section);
++    const char *const *section_order;
++    size_t section_count;
++} RecompRuntimeUiLayout;
++
+ typedef struct RecompRuntimeUiConfig {
+     const char *title;
+     const char *subtitle;
+@@ -161,6 +170,7 @@ typedef struct RecompRuntimeUiConfig {
+      * the default, where every row can take the selection.
+      */
+     uint32_t navigation_flags;
++    const RecompRuntimeUiLayout *layout;
+ } RecompRuntimeUiConfig;
+ 
+ enum {
+-- 
+2.54.0 (Apple Git-157)
+

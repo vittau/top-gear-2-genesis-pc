@@ -8,16 +8,17 @@
 #     `git apply --reverse --check`;
 #   * per-patch reverse-check for a partially applied tree.
 # When a patch file is regenerated, or a new patch is added on top of one that
-# already modified the same lines, rerun with --reset (it restores both engine
+# already modified the same lines, rerun with --reset (it restores the engine, core and UI
 # submodules to their pinned commits, applies everything again and rewrites the
 # stamp).
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 engine="$repo/segagenesisrecomp"
 core="$engine/external/m68k-recomp-core"
+ui="$repo/recomp-ui"
 # The stamp lives in this repository's git dir: a submodule's .git is a
 # file, and a worktree's .git is a pointer file too.
-stamp="$(git -C "$repo" rev-parse --git-dir)/tg2-engine-patches.stamp"
+stamp="$(git -C "$repo" rev-parse --absolute-git-dir)/tg2-engine-patches.stamp"
 
 patch_hash() {
     cat "$repo"/patches/segagenesisrecomp/*.patch | sha256sum | cut -d' ' -f1
@@ -26,13 +27,14 @@ patch_hash() {
 if [ "${1:-}" = "--reset" ]; then
     git -C "$engine" checkout -q -- .
     git -C "$core" checkout -q -- .
+    git -C "$ui" checkout -q -- .
     # Files created by our patches (untracked in the pinned engine).
     git -C "$engine" clean -q -f -- runner
     git -C "$core" clean -q -f
     rm -f "$stamp"
 fi
 
-want="$(patch_hash) $(git -C "$engine" rev-parse HEAD)"
+want="$(patch_hash) $(git -C "$engine" rev-parse HEAD) $(git -C "$ui" rev-parse HEAD)"
 if [ "$(cat "$stamp" 2>/dev/null || true)" = "$want" ]; then
     exit 0
 fi
@@ -42,6 +44,7 @@ for patch in "$repo"/patches/segagenesisrecomp/*.patch; do
     target="$engine"
     case "$(basename "$patch")" in
         core-*) target="$core" ;;
+        ui-*) target="$ui" ;;
     esac
     if git -C "$target" apply --reverse --check "$patch" 2>/dev/null; then
         continue

@@ -1103,7 +1103,8 @@ the single `--windowed` check; one runtime instance at a time.
 complete; the owner approved the five straight, curve, hill, rain and tunnel
 comparisons on 2026-11-10. The render scale is a player option on the shared
 "Internal resolution" row. Sprites, the HUD, the sky and plane-A effects still keep the native
-picture's content (nearest-scaled), as §8 S3 specifies. Detailed sprite, HUD
+picture's detail and size. Linear Off keeps the approved nearest scaling;
+Linear On now applies the opt-in native RGB filter described in LINEAR_FILTER.md. Detailed sprite, HUD
 and plane-A composition belongs to S4/S5.
 
 The five same-frame comparisons below put the native picture, enlarged by
@@ -1120,7 +1121,19 @@ The tunnel opening remains native plane-A art (see §13.5).
 
 ![Road edge zoom](images/highres-edge-zoom.png)
 
+Linear Filter still samples the final N× canvas. At an exact 1:1 canvas/output
+ratio it can produce identical On/Off race pictures while native menus still
+change; see [the S3 filter investigation](LINEAR_FILTER.md#s3-a-correct-final-sampler-can-have-no-visible-effect). The coordinator approved game-owned native-art filtering with Linear On;
+Linear Off retains the accepted nearest art and unchanged analytic road.
+
 ### 13.1 What was built
+
+- **Linear On native-art sampling (task 35 follow-up).** The coordinator
+  approved applying the existing live filter to native RGB at N×. Immutable
+  plane/sprite coverage and the game's margin/HUD ownership determine the
+  native art's premultiplied coverage over the independent analytic road.
+  The road is not downscaled or blurred; Linear Off and all accepted images
+  keep their original pixels. This adds no detail/LOD work from S4/S5.
 
 - **Vertical duplication of the picture.** At a render scale above 1 the row
   renderer still draws the 1× canvas row, exactly as before, into a scratch row;
@@ -1154,7 +1167,7 @@ The tunnel opening remains native plane-A art (see §13.5).
   report on.
 - **Option.** Engine patch `0050` gives the shared "Internal resolution" row a
   game-owned vocabulary: `1x (off)`, `2x`, `3x`, `4x`, an experimental
-  description in the in-game menu and a note in the launcher, still stored as
+  description in the VIDEO menu and a note in the launcher, still stored as
   `settings.ini` `internal_scale`. Default 1×. `TG2_HIGHRES_SCALE` remains the
   capture-only override. The value is read once, so a change applies on the next
   launch (the row says so). NTSC will be refused at scale > 1 when task 28
@@ -1227,6 +1240,13 @@ G1 retained `2A0B972960C5E325` / `1131D937D70234FD`. G3 widescreen retained
 RAM/VRAM/native-centre identity at all five frames in Off/16:9/21:9. The 60 fps
 comparison has 360/360 changed pictures versus stock 186/360, no scalar RAM
 mismatches, identical WAV SHA-256, and four empty manifests in both runs.
+
+A later no-audit native-art Linear On/Off cost pair uses the same 360 baseline
+route frames at 4× / 1280×800, with VSync and deadline pacing disabled. On adds
+4.511 ms of whole-frame thread CPU on this Mac (Off 1.882 / On 6.392 ms); the
+composition+crop CPU phase accounts for 4.367 ms. This short local sample is
+not a Deck or worst-case-track measurement; see LINEAR_FILTER.md's follow-up
+for the method and builder wall-counter limits.
 
 ### 13.3 Evidence
 

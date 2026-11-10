@@ -7,8 +7,8 @@
  * S3  the road strip rasteriser: road rows are redrawn at N x from the game's
  *     own per-line width/centre/atlas/palette numbers: fitted silhouettes,
  *     analytic coverage on every colour boundary of the road.
- *     Everything else in the picture is the native picture's content,
- *     nearest-scaled by N (the row renderer expands it before this runs).
+ *     Everything else keeps the native picture's detail and size. Linear Off
+ *     nearest-expands it; Linear On filters RGB with explicit layer coverage.
  *
  * Everything here is presentation only: it reads the VDP snapshot the row
  * renderer is drawing from and writes host pixels. No guest RAM, VRAM, CRAM, CPU,
@@ -42,6 +42,19 @@ static double highres_now_us(void) {
     return (double)ts.tv_sec * 1e6 + (double)ts.tv_nsec / 1e3;
 }
 #endif
+
+/* Source art and explicit plane/sprite coverage. Only Linear On captures it;
+ * Off keeps the accepted S3 colour-mask and nearest expansion unchanged. */
+static uint32_t s_native_rgb[TG2_HIGHRES_ROWS][4096];
+static unsigned char s_native_foreground[TG2_HIGHRES_ROWS][4096];
+static unsigned s_native_serial[TG2_HIGHRES_ROWS];
+static int s_native_width[TG2_HIGHRES_ROWS];
+static unsigned s_filtered_frames, s_filter_incomplete;
+int tg2_highres_linear_filter(void) {
+    return g_app_config.linear_filter && tg2_highres_present_scale() > 1;
+}
+unsigned tg2_highres_filtered_frames(void) { return s_filtered_frames; }
+unsigned tg2_highres_filter_incomplete(void) { return s_filter_incomplete; }
 
 /* ── Render scale (the one place the port reads it) ──────────────────────── */
 
@@ -204,11 +217,23 @@ static int road_runs(const GVDP *v, const Tg2RowState *r, int py, RoadRuns *runs
     return 1;
 }
 
+void tg2_highres_capture_native(int line, const uint32_t *pixels,
+                                const unsigned char *foreground, int width) {
+    if (!tg2_highres_linear_filter() || line < 0 || line >= TG2_HIGHRES_ROWS ||
+        !pixels || !foreground || width <= 0 || width > 4096) return;
+    memcpy(s_native_rgb[line], pixels, (size_t)width * sizeof *pixels);
+    memcpy(s_native_foreground[line], foreground, (size_t)width);
+    s_native_width[line] = width;
+    s_native_serial[line] = s_serial;
+}
+
 void tg2_highres_reset(void) {
     memset(s_rows, 0, sizeof s_rows);
     memset(s_row_serial, 0, sizeof s_row_serial);
     memset(s_runs, 0, sizeof s_runs);
     s_serial = 0;
+    memset(s_native_serial, 0, sizeof s_native_serial);
+    s_filtered_frames = s_filter_incomplete = 0;
     s_capture_frames = s_capture_rows = 0;
     s_capture_us = s_build_us = 0;
     s_build_frames = 0;
@@ -426,7 +451,9 @@ static uint32_t s_model[4096];
  * presented row of every redrawn road row, with the authored geometry, the
  * edges the builder aimed for and what the BUILT pixels show (edges, lane
  * marks, holes, and pixels the native row cannot explain). Only written when
- * a qualification run asks for it. */
+ * a qualification run asks for it. Linear On records the analytic road
+ * underlay here, before native-art coverage is composited; the coverage
+ * capture separately verifies that uncovered final road pixels stay intact. */
 typedef struct {
     int32_t line, sub, py, flags, neighbour;
     int32_t own_l, own_r, nb_l, nb_r;   /* authored silhouettes, canvas x   */
@@ -661,7 +688,7 @@ static void build_terrain(int src, const RowPlan *p, int origin, int native_w,
 /* Paint one presented row of a road row. `row` holds the nearest-expanded
  * native row and is rewritten where it shows scenery. */
 static void paint_road_row(int src, int j, int scale, int w1, int native_w,
-                           const RowPlan *p, uint32_t *row, const uint32_t *native_row) {
+                           const RowPlan *p, uint32_t *row, const uint32_t *native_row, int filtered) {
     const RoadRuns *runs = p->runs;
     const RoadRow *m = &s_road[src];
     int origin = (w1 - native_w) / 2;
@@ -710,7 +737,7 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
     int run = 0;
     double inv = 1.0 / (double)scale;
     for (int u = 0; u < w1; ++u) {
-        if (!s_terrain[u])
+        if (!s_terrain[u] && !filtered)
             continue;                        /* sprite / HUD / car / plane A */
         while (q[run + 1] <= u) ++run;
         uint32_t *out = row + u * scale;
@@ -798,8 +825,47 @@ static void native_dump(const uint32_t *pixels, int stride, int scale, int w1, i
     fclose(f);
 }
 
+/* Bilinear RGB on native art, with premultiplied binary layer coverage.
+ * The analytic road is the destination, never a source of this filter. A
+ * footprint containing only plane B leaves the road byte-identical. */
+static void filter_native(uint32_t *pixels, int stride, int w1, int scale,
+                          int first, int last, FILE *coverage) {
+    unsigned char mask_row[4096];
+    int den = 2 * scale, area = den * den;
+    for (int y = first * scale; y < last * scale; ++y) {
+        int sy = y / scale, fy = 2 * (y % scale) + 1 - scale;
+        if (fy < 0) { --sy; fy += den; }
+        int y0 = sy < first ? first : sy, y1 = sy + 1 >= last ? last - 1 : sy + 1;
+        const uint32_t *r0 = s_native_rgb[y0], *r1 = s_native_rgb[y1];
+        const unsigned char *a0 = s_native_foreground[y0], *a1 = s_native_foreground[y1];
+        uint32_t *row = pixels + (size_t)y * stride;
+        for (int x = 0; x < w1 * scale; ++x) {
+            int sx = x / scale, fx = 2 * (x % scale) + 1 - scale;
+            if (fx < 0) { --sx; fx += den; }
+            int x0 = sx < 0 ? 0 : sx, x1 = sx + 1 >= w1 ? w1 - 1 : sx + 1;
+            int w00 = (den - fx) * (den - fy) * a0[x0];
+            int w10 = fx * (den - fy) * a0[x1];
+            int w01 = (den - fx) * fy * a1[x0];
+            int w11 = fx * fy * a1[x1];
+            int alpha = w00 + w10 + w01 + w11;
+            if (coverage) mask_row[x] = (unsigned char)((alpha * 255 + area / 2) / area);
+            if (!alpha) continue;
+            uint32_t c00 = r0[x0], c10 = r0[x1], c01 = r1[x0], c11 = r1[x1];
+            uint32_t out = 0xFF000000, under = row[x];
+            for (int shift = 0; shift <= 16; shift += 8) {
+                unsigned c = ((c00 >> shift) & 255) * w00 + ((c10 >> shift) & 255) * w10 +
+                             ((c01 >> shift) & 255) * w01 + ((c11 >> shift) & 255) * w11 +
+                             ((under >> shift) & 255) * (area - alpha);
+                out |= ((c + area / 2) / area) << shift;
+            }
+            row[x] = out;
+        }
+        if (coverage) fwrite(mask_row, 1, (size_t)w1 * scale, coverage);
+    }
+}
+
 int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
-                      int native_w, int native_h) {
+                      int native_w, int native_h, int first, int last) {
     int scale = tg2_highres_present_scale();
     if (scale <= 1 || !pixels || width <= 0 || stride < width)
         return 0;
@@ -818,6 +884,22 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
     if (s_dump_path[0])
         native_dump(pixels, stride, scale, w1, native_h);
     model_road(origin, native_h);
+    int filtered = tg2_highres_linear_filter();
+    if (filtered) {
+        for (int y = 0; y < native_h; ++y)
+            if (s_native_serial[y] != s_serial || s_native_width[y] != w1) {
+                filtered = 0; ++s_filter_incomplete; break;
+            }
+    }
+    if (filtered) {
+        for (int y = 0; y < native_h; ++y) {
+            if (!s_road[y].painted)
+                memset(s_native_foreground[y], 1, (size_t)w1);
+            else for (int u = origin; u < origin + native_w; ++u)
+                if (u - s_road[y].centre < -256 || u - s_road[y].centre > 255)
+                    s_native_foreground[y][u] = 1; /* native plane-B wrap */
+        }
+    }
 
     /* The row renderer produced one row per native line, already expanded
      * horizontally by N; each becomes N presented rows. Walk bottom-up so
@@ -839,8 +921,24 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
              * effects keep this native row's pixels. */
             memcpy(row, s_src_row, (size_t)width * sizeof *row);
             if (road)
-                paint_road_row(src, j, scale, w1, native_w, &plan, row, s_src_row);
+                paint_road_row(src, j, scale, w1, native_w, &plan, row, s_src_row, filtered);
         }
+    }
+    if (filtered) {
+        if (first < 0 || first >= last || last > native_h) { first = 0; last = native_h; }
+        /* Optional one-frame coverage evidence, aligned with the runner's
+         * completed-frame capture number (the simulation tick is zero-based).
+         * Stream rows; no full-frame diagnostic allocation or normal I/O. */
+        FILE *coverage = NULL;
+        const char *mask_frame = getenv("TG2_HIGHRES_FILTER_MASK_FRAME");
+        const char *mask_path = getenv("TG2_HIGHRES_FILTER_MASK_PATH");
+        if (mask_frame && mask_path && strtoull(mask_frame, NULL, 10) == frame + 1) {
+            coverage = fopen(mask_path, "wb");
+            if (coverage) fprintf(coverage, "P5\n%d %d\n255\n", width, (last - first) * scale);
+        }
+        filter_native(pixels, stride, w1, scale, first, last, coverage);
+        if (coverage) fclose(coverage);
+        ++s_filtered_frames;
     }
     nx_audit_write(frame, scale, w1, native_w);
     ++s_build_frames;

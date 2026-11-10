@@ -32,6 +32,7 @@ void tg2_options_apply_env(void);
 int tg2_race60_requested(void);
 
 /* In-game overlay rows appended to the shared recomp-ui menu. */
+extern const struct RecompRuntimeUiLayout tg2_runtime_layout;
 const struct RecompRuntimeUiItem *tg2_options_runtime_items(size_t *count);
 int tg2_options_runtime_get(const char *key, int *out);
 int tg2_options_runtime_set(const char *key, int value);

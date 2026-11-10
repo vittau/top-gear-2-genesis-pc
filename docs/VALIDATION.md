@@ -1221,3 +1221,44 @@ No `v*` tag or published release was created.
 The owner clarified he uses the **extracted tar.gz** on his Deck. This
 draft's real-device result is still pending; CI does not establish Deck GPU,
 gamepad or pacing behaviour. See CONTINUATION.md for the next coordinator.
+
+## Tasks 35/36 — S3 native-art Linear Filter and runtime menu groups
+
+Worker branch `vittau/tg2-linear-filter-s3`, current-main base, pinned SDL2
+2.28.5 and hidden Cocoa/Metal. Investigation proved a correct 1:1 final sampler
+at 4× / 1280×800; the coordinator then approved game-owned native RGB filtering
+with the existing On toggle. Off retains 55/55 pre-fix samples at both 2×/4×.
+The fixed 4× final race changes 124,690 pixels while all 256,928 uncovered road
+pixels remain exact; real in-race toggle output matches saved On. 2× and
+fractional 4× keep identical same-frame guest RAM. Stock hashes remain
+`60=2A0B972960C5E325`, `300=1131D937D70234FD`, all four manifests empty.
+
+Directed Auckland/rain/60-fps underlay and margin audits cover 4,027 pictures
+and 1,016,488 measured sub-rows, zero violations, worst stripe centre 0.4961
+pixel. The 2P 32:9 pair retains all 4,500 hashes at 796×224. No full S3 matrix
+was repeated. The old unfiltered-reference check and a local poller shutdown
+race are documented with their valid retained evidence, not reported as clean
+script exits. See [Linear Filter](LINEAR_FILTER.md) for exact scope and limits.
+
+Runtime UI has exactly VIDEO, AUDIO, SYSTEM, MODS, SAVE STATES in that order;
+all 20 original rows remain, visited with an SDL virtual controller at 1280×800.
+Filter/scale/Music/SFX changes save and reopen correctly. Details and captures:
+[RUNTIME_MENU.md](RUNTIME_MENU.md), `build/linear-s3/menu-after/`. Local evidence
+is qualified; new Deck candidate and owner acceptance remain coordinator work.
+No workflow, tag, release or old draft source identity was changed.
+
+### Portable applicator and no-pacing cost follow-up
+
+The Python Windows path now routes `ui-*` correctly and shares the idempotence
+stamp with the shell twin. Real sequential application of 43 patches on pristine
+pinned fixture clones, second application, relative `--repo`, and shell/Python
+stamp interoperability all pass (exit 0); pins unchanged, no Windows CI run.
+
+One 4× / 1280×800 paired no-audit/no-dump run samples the same baseline route
+and 360 CPU frames (3000–3359). Mean CPU is Off 1.882 ms / On 6.392 ms
+(**+4.511 ms**); composition+crop CPU adds 4.367 ms. Patch 0053 prevents the
+profiling-only uncapped mode from restoring simulated software VSync. Sampled
+pacer waits are all zero, both probes exit 0, all manifests empty. A final stock
+smoke retains the two canonical hashes. Method, auxiliary builder wall timing,
+startup/polling limitations and device-performance boundaries are documented
+in [LINEAR_FILTER.md](LINEAR_FILTER.md#follow-up-portable-patch-application-and-isolated-local-cost).
