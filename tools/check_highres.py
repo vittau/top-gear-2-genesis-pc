@@ -166,6 +166,8 @@ def check_g1(args):
         ('off', 2, False, False, 'off-scale2-stub'),
         ('16:9', 1, False, False, '169-scale1'),
         ('16:9', 2, False, False, '169-scale2-stub'),
+        ('32:9', 1, False, False, '329-native-menus-scale1'),
+        ('32:9', 2, False, False, '329-native-menus-scale2'),
         ('off', 2, True, False, 'off-scale2-testprovider-menus'),
         ('off', 1, False, True, 'off-race60-scale1'),
         ('off', 2, False, True, 'off-race60-scale2-stub'),
