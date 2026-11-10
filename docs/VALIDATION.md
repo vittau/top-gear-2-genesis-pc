@@ -1307,3 +1307,49 @@ then explicitly asked to save the filter/menu work and defer the instrument
 question to another session. Task 37 records the report and known revision/
 configuration facts without asserting a diagnosis. No audio code was changed
 or new audio runtime/capture/worker started in response.
+
+## Task 37 — missing instruments in race-menu music (2026-11-10)
+
+Report reproduced and root-caused: with `[mods.racesound] mode = both` in
+`settings.ini`, `z80_route()` diverted the four Z80 bytes `$A0025E..$A00261` to
+the second core during the *boot* music-driver upload. Those offsets are also
+entries `$37..$3A` of the driver's note → octave table at `$0227` (octave 4,
+G..A♯), so those four note indices played four octaves low — the line vanished.
+See [AUDIO.md](AUDIO.md#the-command-ports-and-the-music-drivers-block-table-task-37)
+for the tables, Z80 disassembly and the mechanism.
+
+Fix (`game/tg2_audio_both.c`): the command ports are routed only while the
+second core actually holds the race SFX image (its `C3 10 04` entry, read from
+guest state), so the boot upload, a cold reset and a quickstate load all land on
+the first core unless a race has uploaded its own image.
+
+Evidence, all headless (SDL dummy, one runtime at a time, controller/input-script
+only apart from one labelled diagnostic RAM poke), fixed build on Linux:
+
+| Check | Result |
+|---|---|
+| First-core Z80 RAM `$25E..$261` after persisted-BOTH boot | `20 20 20 20` (= ROM/MUSIC/SFX); was `00 00 00 00` |
+| Second core at boot | 0 non-zero bytes; was the four `$20` bytes |
+| chip A vs MUSIC, title / main menu / 1P setup / track intro / shop | corr **1.000000**, max sample difference **0** (was 0.973–0.997) |
+| chip A vs MUSIC, race 2000–4500 | 0.995298 (was 0.988310); note stream identical |
+| note-write register diff vs MUSIC | 0 pitch differences (was 24: `$A5=$04` vs `$24`, note `$37`, FM ch 2) |
+| `GENESIS_AUDIO_SFXPCM_TRACE` BOTH vs SOUND EFFECTS, throttle route | byte-identical, 465 commands |
+| chip B (BOTH) vs SOUND EFFECTS, race | 0.999980, RMS 1459.0 both (engine/nitro audible on chip B) |
+| Stock MUSIC / SFX whole-run WAV MD5 vs a `main` d57cffa build | `117d0e45…bdb6` / `e55d0e0b…1e3b`, identical |
+| Frame hashes every 60 frames (stock modes) | 66 lines each, `diff` empty; frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` |
+| Manifests over every capture (8 runs) | 0 / 0 / 0 / 0 |
+
+Regression test: `tools/verify_both_driver_image.py` (exit 0 on the fixed
+build). Not verified: the owner listening to the fixed build, Deck audio, and a
+quickstate saved in an affected session, which keeps the corrupted driver bytes
+until the next boot re-uploads the driver.
+
+Post-fix re-run of the existing boot regression: `tools/verify_both_boot.py`
+reports BOTH vs MUSIC, BOTH vs SFX and MUSIC vs SFX all **1.000000** on its
+400–900 window (the same window that recorded 0.995227 before), exit 0. A
+mid-race BOTH quickstate saved at frame 3004 and loaded back in the same process
+keeps the driver table equal to ROM and keeps issuing SFX commands (174 before
+the save, 610 after the load), so the command-port predicate agrees with the
+machine image after a state load. A cold reset restores the pre-boot machine
+(both cores' RAM zeroed), which the predicate treats as "no image resident"; a
+second race re-runs the same `$0700C8` upload that was verified here.

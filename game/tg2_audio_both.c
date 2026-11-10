@@ -16,9 +16,9 @@
  * instruction only.  Present/restore is therefore re-entrant-safe: the word
  * always ends the instruction with the value the cartridge itself stored.
  *
- * The race-time SFX Z80 image upload is skipped while BOTH is live; that
- * image is never commanded after upload and would overwrite the music
- * driver in Z80 RAM.
+ * The race-time SFX Z80 image upload is routed to a second Z80 core while BOTH
+ * is live (see the second-core section below), so it can never overwrite the
+ * resident music driver in Z80 RAM.
  *
  * The SOUND menu text is rendered from dynamic 8x16 glyph tiles.  While the
  * player is on the RACE SOUND page with BOTH selected, the value row's glyph
@@ -114,6 +114,7 @@ static int race_running(void)
 
 /* Push the applied mode into the engine (routing, second core, Z80 routing). */
 static int z80_route(int access, uint16_t off, uint8_t value);
+static int second_z80_runs_sfx_image(void);
 static void apply_mode(void)
 {
     audio_set_chip_routing(both_active());
@@ -164,8 +165,19 @@ static int z80_route(int access, uint16_t off, uint8_t value)
     if (!both_active()) return 0;
     if (s_sfx_upload) return 1;             /* image upload: RAM + control  */
     if (access != AUDIO_Z80_ACCESS_RAM) return 0;
-    /* The SFX engine's sample-command ports. */
-    return off >= 0x25Eu && off <= 0x261u;
+    if (off < 0x25Eu || off > 0x261u) return 0;
+    /* The sample-command ports are only the SFX engine's while the second core
+     * actually holds the race SFX image. Before a race the second core's RAM
+     * is empty and those four bytes belong to the resident music driver: they
+     * are part of its note -> octave (block) table at Z80 $0227, 96 entries of
+     * 12 semitones, and they are exactly entries $37..$3A (octave 4, the four
+     * semitones G..A#). Diverting them left zeros in the driver's table, which
+     * played those four note indices four octaves low (block 0) - the
+     * "instruments sometimes missing" report (docs/AUDIO.md section 5, task 37).
+     * The test is guest state, not a host flag, so it self-corrects on a cold
+     * reset (both cores' RAM return to the pre-boot image), on a quickstate
+     * load and after any number of races. */
+    return second_z80_runs_sfx_image();
 }
 
 /* ---- Which image is resident on the FIRST Z80 core -----------------------
@@ -185,6 +197,19 @@ static int first_z80_runs_sfx_image(void)
 static void update_z80_role(void)
 {
     audio_set_first_z80_is_sfx(first_z80_runs_sfx_image());
+}
+
+/* ---- Which image is resident on the SECOND Z80 core ----------------------
+ * Empty until a race uploads the race SFX image into it (BOTH). Both known
+ * images have a distinct first instruction: the SFX image starts `JP $0410`
+ * (`C3 10 04`) and the music driver `DI; LD SP,$1FF0; JP $0042`. Reading the
+ * core's own RAM keeps the command-port routing in step with whatever the
+ * machine image actually contains, including after a cold reset or a state
+ * load; no host flag can drift out of sync with a rollback snapshot. */
+static int second_z80_runs_sfx_image(void)
+{
+    const uint8_t *ram = g_machine.bus.z80_sfx_ram;
+    return ram[0] == 0xC3u && ram[1] == 0x10u && ram[2] == 0x04u;
 }
 
 /* ---- Value presentation hooks -------------------------------------------
