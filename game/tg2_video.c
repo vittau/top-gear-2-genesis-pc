@@ -109,7 +109,9 @@ static int width(int dw, int dh, int nw, int nh) {
     double w = h * (mode == 2 ? ratio : dw > 0 && dh > 0 ? (double)dw / dh : 4.0 / 3.0);
     int result = w > 4096 ? 4096 : (int)(w + 0.5);
     result *= scale;
-    if (result > 4096) result = 4096;
+    /* The capped canvas must still contain whole N-pixel columns. At 3x,
+     * 4096 is not divisible by N and would bypass the high-res builder. */
+    if (result > 4096) result = (4096 / scale) * scale;
     return result < nw * scale ? nw * scale : result;
 }
 /* Snapshots match the SAT actually displayed, rather than the CPU's next

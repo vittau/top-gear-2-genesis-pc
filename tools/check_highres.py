@@ -191,7 +191,7 @@ def check_g1(args):
     failures = []
     for item in results:
         for name, count in item['manifests'].items():
-            if count:
+            if count != 0:
                 failures.append(f"{item['tag']}: manifest {name} has {count} entries")
         if item['exit'] != 0:
             failures.append(f"{item['tag']}: exit {item['exit']}")
@@ -375,7 +375,7 @@ def check_route(args):
     for item in results:
         by_mode.setdefault(item['mode'], []).append(item)
         for name, count in item['manifests'].items():
-            if count:
+            if count != 0:
                 failures.append(f"{item['tag']}: manifest {name} has {count} entries")
         if item['exit'] != 0:
             failures.append(f"{item['tag']}: exit {item['exit']}")
@@ -478,7 +478,7 @@ def check_split(args):
         failures.append(f'test provider changed {len(differing)}/{len(common)} 2P frames')
     for item in results:
         for name, count in item['manifests'].items():
-            if count:
+            if count != 0:
                 failures.append(f"{item['tag']}: manifest {name} has {count} entries")
     summary = {'check': 'split', 'runs': results, 'widths': sorted(widths),
                'heights': sorted(heights), 'compared_frames': len(common),
@@ -601,7 +601,7 @@ def check_s3(args):
         results.append(item)
         print(tag, 'exit', item['exit'])
         for name, count in item['manifests'].items():
-            if count:
+            if count != 0:
                 failures.append(f"{tag}: manifest {name} has {count} entries")
         if item['exit'] != 0:
             failures.append(f"{tag}: exit {item['exit']}")
@@ -725,6 +725,9 @@ def check_option(args):
             print(f'internal_scale={value} -> render scale {got} (expect {expect})')
             if got != expect:
                 failures.append(f'settings {value}: reported scale {got}, expected {expect}')
+            for name, count in item['manifests'].items():
+                if count != 0:
+                    failures.append(f'settings {value}: manifest {name} has {count} entries')
             if code != 0:
                 failures.append(f'settings {value}: exit {code}')
         # In-game (Esc) menu: find the row, change it, read settings.ini back.
@@ -760,7 +763,7 @@ def check_option(args):
             for _ in range(abs(index - selected)):
                 tap('down' if index > selected else 'up')
             # Walk the choice list to its end, recording every label.
-            for _ in range(5):
+            for _ in range(3):
                 tap('right')
                 label = r.command('ui_rows')['rows'][index]['value']
                 if label not in menu['labels']:
@@ -771,6 +774,10 @@ def check_option(args):
         finally:
             menu['exit'] = r.stop()
         menu['settings_after'] = settings_read(settings, 'internal_scale')
+        menu['manifests'] = empty_manifests(out)
+        for name, count in menu['manifests'].items():
+            if count != 0:
+                failures.append(f'Esc menu: manifest {name} has {count} entries')
         results.append({'tag': 'esc-menu', **menu})
         print('esc menu', menu)
         if '4x' not in menu['labels']:
@@ -837,7 +844,7 @@ def check_captures(args):
         results.append(item)
         print(tag, item['exit'], [s['size'] for s in shots], item['video'])
         for name, count in item['manifests'].items():
-            if count:
+            if count != 0:
                 failures.append(f"{tag}: manifest {name} has {count} entries")
         if item['exit'] != 0:
             failures.append(f"{tag}: exit {item['exit']}")
@@ -942,6 +949,11 @@ def check_drive(args):
         item['video'] = {k: video.get(k) for k in
                          ('highres_scale', 'highres_capture_us', 'highres_build_us',
                           'highres_build_frames', 'crop_frames')}
+        if args.no_audit:
+            perf = r.command('frame_performance')
+            # Keep the retrospective phase ring so the builder-only timing is
+            # not mistaken for the cost of presenting the whole frame.
+            item['frame_performance'] = perf
         if video.get('highres_build_frames'):
             item['build_us_per_frame'] = round(
                 video['highres_build_us'] / video['highres_build_frames'], 1)
@@ -966,7 +978,7 @@ def check_drive(args):
     elif args.scale > 1 and shots[1:]:
         failures.append(f'{tag}: no 1x/N x picture pair was compared')
     for name, count in item['manifests'].items():
-        if count:
+        if count != 0:
             failures.append(f"{tag}: manifest {name} has {count} entries")
     if item['exit'] != 0:
         failures.append(f"{tag}: exit {item['exit']}")
@@ -1013,7 +1025,7 @@ def check_nx(args):
         print(tag, 'exit', item['exit'], 'audit files',
               len(list((Path(item['out']) / 'audit').glob('*.nxroad'))))
         for name, count in item['manifests'].items():
-            if count:
+            if count != 0:
                 failures.append(f"{tag}: manifest {name} has {count} entries")
         if item['exit'] != 0:
             failures.append(f"{tag}: exit {item['exit']}")
@@ -1044,11 +1056,40 @@ def check_nx(args):
     return 0 if not failures else 1
 
 
+def check_cap(args):
+    """An extreme adaptive output still has whole N-pixel columns at 3x."""
+    out = args.out / 'cap'
+    r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+               widescreen='fit', env_extra={'TG2_HIGHRES_SCALE': '3',
+                                           'TG2_RACE_60FPS': '0'},
+               extra_args=['--turbo'])
+    failures = []
+    try:
+        r.start()
+        enter_race(r, args.port, out)
+        r.command('video_configure', mode='fit', window_width=8192, window_height=224)
+        r.wait_frame(r.frame() + 30)
+        path = r.screenshot('capped-3x.png')
+        w, h, *_ = png_pixels(Path(path))
+        if w != 4095 or h not in (600, 672):
+            failures.append(f'capped 3x picture is {w}x{h}, expected 4095x600/672')
+    finally:
+        code = r.stop()
+    counts = empty_manifests(out)
+    if code != 0 or any(n != 0 for n in counts.values()):
+        failures.append(f'exit {code}, manifests {counts}')
+    summary = dict(check='cap', size=[w, h], exit=code, manifests=counts,
+                   failures=failures, ok=not failures)
+    (out / 'cap-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps(summary, indent=2))
+    return int(bool(failures))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split'):
+    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split', 'cap'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
@@ -1102,7 +1143,7 @@ def main():
             p.error(f'--{name} not found: {getattr(args, name)}')
     return {'g1': check_g1, 'capture': check_capture, 's3': check_s3,
             'nx': check_nx, 'drive': check_drive, 'captures': check_captures, 'option': check_option,
-            'route': check_route, 'split': check_split}[args.check](args)
+            'route': check_route, 'split': check_split, 'cap': check_cap}[args.check](args)
 
 
 if __name__ == '__main__':
