@@ -71,7 +71,7 @@ def notice_shot(r, name):
 
 
 def open_save_section(r, row_label):
-    r.command('ui_open', section='Save states')
+    r.command('ui_open', section='SAVE STATES')
     r.wait_frame(r.frame() + 2)
     target = {'Save state': 1, 'Slot': 0, 'Load state': 2}[row_label]
     for _ in range(target):
@@ -127,11 +127,11 @@ def main():
         report['refusal_lines'] = save_lines(a.out)[-2:]
 
         # ---- rejected load: an empty slot ----
-        r.command('ui_open', section='Save states')
+        r.command('ui_open', section='SAVE STATES')
         r.wait_frame(r.frame() + 2)
         tap_key(r, 'down', settle=5)             # Slot
         tap_key(r, 'right', settle=5)            # slot 2 (empty)
-        r.command('ui_open', section='Save states')
+        r.command('ui_open', section='SAVE STATES')
         r.wait_frame(r.frame() + 2)
         tap_key(r, 'down', settle=5)
         tap_key(r, 'down', settle=5)

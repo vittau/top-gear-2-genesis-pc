@@ -155,13 +155,16 @@ assert after_launcher.get('mods.hud.placement') == 'edges', after_launcher
 # 2. Relaunch and read the values back through the in-game overlay.
 proc, log = start_game(persist)
 try:
-    for action in ['open', 'down', 'down', 'down', 'down', 'accept']:
-        command('tg2_ui', action=action)
-        time.sleep(0.4)
+    # Open the effective group by name rather than depending on root order.
+    command('ui_open', section='MODS')
+    time.sleep(0.4)
     time.sleep(0.6)
     command('screenshot', path=str(a.out / 'overlay-options.png'))
-    for _ in range(3):
-        command('tg2_ui', action='down')
+    rows = command('ui_rows')['rows']
+    hud = next(i for i, row in enumerate(rows) if row['label'] == 'HUD')
+    selected = next(i for i, row in enumerate(rows) if row['selected'])
+    for _ in range(abs(hud - selected)):
+        command('tg2_ui', action='down' if hud > selected else 'up')
         time.sleep(0.35)
     command('screenshot', path=str(a.out / 'overlay-hud.png'))
     command('tg2_ui', action='back')
