@@ -15,7 +15,13 @@ reports/summaries/probe scripts/captures were archived under
 `manifest.json` maps source commits/bundles; `evidence/linear-s3/worker-report.md`
 and `evidence/linear-s3-followup/report.md` replace the now-removed worker
 build paths cited below. Its saved settings and any build saves/states were
-also preserved there. The historical S3 checkout is separate and remains.
+also preserved there. The historical S3 checkout was subsequently removed too,
+at the owner's explicit request. Its source snapshots and final qualification
+evidence are in `~/.cache/tg2-worktree-backups/20261110-highres-s1-s2-close/`:
+`manifest.json` maps the verified Git bundles and `evidence/s3-reverify/`
+contains the report, summaries, captures and cost CSVs. Wide-menu/2P evidence
+is alongside it under `evidence/`. Branch `vittau/tg2-highres-s3` remains at
+`d78e513`. Only the main checkout remains registered for this project.
 No audio investigation or S4 implementation is active. The manual game has closed.
 For a visible manual launch, unset both LNG_SCRIPT and LNG_TEST_HIDDEN:
 setting them to the string 0 still hides the window because the code checks
@@ -84,7 +90,7 @@ new implementation work merely because this checkpoint exists.
   curve, hill, rain, tunnel) in Preview and said **“Está ótimo.”** Approval was
   recorded in `d78e513`, before the merge. Do not ask for that approval again.
 - S3's branch is `vittau/tg2-highres-s3`, at `d78e513` when merged. The old
-  checkout remains at
+  checkout was removed from
   `/Users/vitor/orca/workspaces/top-gear-2-genesis-pc/tg2-highres-s1-s2`.
   Its name reflects its history, not unfinished S1/S2 work. Begin new changes
   from current `main`; the S3 branch lacks the later documentation commits
@@ -142,7 +148,9 @@ new implementation work merely because this checkpoint exists.
 Committed references: `HIGHRES.md` §13, `VALIDATION.md` task 33,
 `tasks/33-highres-s3.md`, and `docs/images/highres-{straight,curve,hill,rain,tunnel}.png`.
 
-Local ignored evidence is in the retained S3 checkout:
+Local ignored evidence from the removed S3 checkout was archived under
+`~/.cache/tg2-worktree-backups/20261110-highres-s1-s2-close/evidence/`.
+Paths below retain their original build-relative spelling for provenance:
 
 - `build/s3-reverify/worker-report.md` — exact changes, commands and exit codes.
 - `build/s3-reverify/final-summary.json`, `qualification-commands.json`,
