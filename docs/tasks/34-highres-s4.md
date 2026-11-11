@@ -1,6 +1,6 @@
 # Task 34: S4 — detailed sprites at N× with sub-pixel positions
 
-**Status: implemented and locally qualified on `vittau/tg2-highres-s4`; owner visual acceptance pending.**
+**Status: complete.** Owner approved after playing the 4× build on 2026-11-11 ("Está aprovado", "Funcionou bem"); merged into `main` as `a8041a2`. His follow-up, smooth continuous growth without pop-in, is [task 39](39-highres-continuous-actor-size.md).
 Read `AGENTS.md` and [CONTINUATION.md](../CONTINUATION.md) first. Handle any
 new S3/Steam Deck playtest defect before starting this step. This brief does
 not start a worker or authorize a release.

@@ -31,6 +31,14 @@ averaging kept for minification). The owner chose to **keep the current plan
 (box filter) and judge it at the S4 visual review**. Raise this option again
 at that review; don't change the worker's brief now.
 
+**S4 approved and merged (2026-11-11).** Sol finished S4 at `727764f`
+(89,085 promoted actors, all-frame anchor/palette/priority errors 0, stock
+hashes unchanged, +0.26/+0.38 ms CPU at 2×/4× on this Mac). The owner played
+it at 4× and approved it, then said objects still pop in. The internal
+continuous switch didn't help him either. Merged into `main` as `a8041a2`.
+Smooth growth is mapped as [task 39](tasks/39-highres-continuous-actor-size.md),
+not started. The poles follow-up is task 38. The S4 worker has finished.
+
 **v0.2.0 published (2026-11-11)** at the owner's explicit request ("está bom
 o suficiente"), from `main` at `a74e308`, with the experimental internal
 resolution row (default 1×, road/background only) included by his decision.
