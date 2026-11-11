@@ -1558,3 +1558,46 @@ road-baseline-comparison.json,worker-report.md}`; per-country evidence under
 Ready build uses saved scale 4 and 60 fps On. Scripts:
 `build/task39/play-continuous.sh`, `build/task39-followup/play-ayers-rock.sh`.
 No visible runtime was launched, no CI/tags/releases/engine or pin changes.
+
+### Seven ordinary kinds after task 39 (2026-11-11)
+
+Branch `vittau/tg2-highres-more-kinds`, based on merged task 39 (`9f8345a`).
+Raw dispatch/mapper instructions and eight track/kind mapping+VRAM records
+verify `$81/$93/$97/$A1/$A2/$A3/$A4` are ordinary model=level ladders, with
+valid ROM headers, matching palette/priority and larger model 0. HIGHRES
+§14.9 has the record/table/header/extent table. None needs task-38 compound
+handling. Only these kinds were added to the promotion allowlist.
+
+Kind `$81` moves laterally using `$A41C`'s per-object slot. Its temporal match
+now uses that original slot plus world depth; exact lateral matching lost
+334 moving endpoint transitions in the first Egypt trace. Egypt and Ayers
+were repeated after that correction; other scenery matching is unchanged.
+
+| Gate | Final evidence |
+|---|---|
+| Directed kinds at 4× /60 fps On | Egypt/Italy/Chile/Las Vegas, 900 frames each; all four final drives exit 0 |
+| New-kind selection and size | 12,767 promoted presentations; 11,176 visible pairs /578 band crossings; every promoted instance uses model 0, asset/model fallbacks 0; max unexplained residual 0.000030% below 0.1% |
+| Native guards retained | Target kinds: R5=24 incomplete-SAT, R6=1,710 fully culled, kept native; R1–R4/R7=0. No culling/allocation bypass |
+| All actors in directed scenes | 42,739 promotions /778,379 native-row replays; anchor/floor/SAT/palette/priority/replay errors 0 |
+| Regression scenes | Auckland/Canada/rain 240 frames each plus Ayers 900 frames; 28,464 promotions /371,149 row replays, errors 0 and all checks exit 0 |
+| Moving `$81` on Ayers | 622 promotions, 578 visible pairs /32 crossings; max residual 0.000025%, actor errors 0 |
+| G1 /manifests | 9 stock configurations pass; frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`; all four manifests empty in every run |
+| Image regions | Existing continuous 80/80/96 group bounds retained; unchanged-region mean max 0.4851 on new-country checks, 0.3086 on regressions, within S3 limits |
+| Play entries | Four hidden 240-frame script launches verify actual race indices 12/36/48/60, exit 0, manifests empty; scene checkpoints remain ignored |
+
+The new-country and Ayers checks explicitly pass `--skip-road-audit` with
+`--actors`: actor/native-row/image-region/margin checks remain enabled,
+while no road qualification is claimed. Original Auckland/Canada/rain keep
+the full road check. The separately mapped Ayers night-road diagnostic was
+not run, changed or waived by this task. No CI, engine/pin changes, generated
+C edits or ROM-derived git artifacts. CPU/real-platform performance and
+later-track/late-race variants are not qualified by these directed checks.
+
+Ignored commands/report: `build/more-kinds/{commands.json,moving81-commands.json,
+rom-asset-evidence.json,growth-summary.json,target-summary.json,
+ayers81-growth.json,play-probe.json,worker-report.md}`. The trace gate's
+`--required-kinds` list explicitly requires all seven kinds, so absent kinds
+cannot silently pass. Initial Egypt/Ayers captures are retained, with the
+latest moving-identity repeats used for final totals. The play script is
+`build/more-kinds/play.sh`, with `egypt` (default), `italy`, `chile`,
+`las-vegas` arguments; saved scale 4 /60-fps races On.

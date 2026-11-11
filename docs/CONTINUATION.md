@@ -1,5 +1,17 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
+**Ordinary-kind extension (2026-11-11):** after the owner confirmed smooth
+Ayers rocks (“Sim”), task 39 merged in `9f8345a`. On new branch
+`vittau/tg2-highres-more-kinds`, all seven remaining ordinary kinds
+`$81/$93/$97/$A1/$A2/$A3/$A4` pass ROM/asset checks and directed 4×/60-fps
+actor qualification. `$81` uses slot identity for its lateral motion.
+Stock G1 and original-track regressions pass; no Ayers road diagnostic was
+run or changed. Read task 39's newest extension handoff and HIGHRES §14.9;
+report `build/more-kinds/worker-report.md`. Play directly with
+`build/more-kinds/play.sh [egypt|italy|chile|las-vegas]`, saved 4×/60 fps On.
+Owner review of this new seven-kind extension remains separate from his
+already accepted continuous/rock work.
+
 **Task 39 approved follow-up (2026-11-11):** owner played continuous and said
 “Está ótimo”. `b151a25` makes it default; `dce0c67` promotes the ordinary
 Ayers Rock `$96` rock ladder. On the same continuous branch, stock/default

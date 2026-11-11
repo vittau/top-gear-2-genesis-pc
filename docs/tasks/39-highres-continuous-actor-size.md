@@ -131,35 +131,54 @@ running at completion.
 
 ## Ordinary-kind extension / progress
 
-The owner confirmed Ayers rocks grow smoothly (“Sim”), and task 39 was
-merged into main as `9f8345a`. Current work is on the new branch
-`vittau/tg2-highres-more-kinds`, based on that merge. Scope: the seven
-ordinary kinds `$81/$93/$97/$A1/$A2/$A3/$A4`; no Ayers night-road work.
+**Implemented and locally qualified** on `vittau/tg2-highres-more-kinds`,
+based on `origin/main` at `9f8345a`. The owner confirmed Ayers rocks grow
+smoothly (“Sim”); main already contains the accepted continuous default and
+rock promotion. This extension adds `$81/$93/$97/$A1/$A2/$A3/$A4` only.
+No work on the separately mapped Ayers night-road diagnostic.
 
-Initial milestone: raw-ROM dispatch/mapper reads and the prior survey's
-mapping/VRAM snapshots verify all seven are ordinary model=level ladders,
-with valid, larger model 0 (sizes 31×24 /31×24 /48×75 /36×21 /31×21 /
-21×64 /29×29 respectively). Kind `$81` gets per-object lateral/height data
-at `$A41C`, but `$A476..$A48C` still selects its model from the normal depth
-table and calls `$B04C`/`$B314`. No additional special handling is required;
-existing height/anchor capture and S4/39 culling/priority guards are retained.
-Only the ordinary-kind allowlist changes in the game code.
+### Verified and implemented
 
-Evidence/checkpoints: ignored `build/more-kinds/`. Short 4×/60-fps actor
-qualification is running on Egypt, Italy, Chile and Las Vegas, followed by
-G1 and short Auckland/Canada/rain/Ayers regressions. `--skip-road-audit`
-explicitly narrows the new-country/Ayers checks to actors, native-row
-replay, image regions and margins; it does not change or rerun the separately
-mapped Ayers road diagnostic. Full road checks remain on the original three
-regressions. Final results and play scripts will be recorded here.
+- Raw ROM `$A43C..$A48C`, `$B04C..$B0A0`, `$B584..$B632` and eight saved
+  track/kind records verify ordinary model=level ladders, valid ROM headers,
+  matching palette/priority and a larger model 0 at every observed level
+  0–10. Model-0 extents: 31×24 /31×24 /48×75 /36×21 /31×21 /21×64 /29×29.
+  All seven pass; none needs compound reconstruction or deferral to task 38.
+- `$81` reads lateral/height from a per-object slot at `$A41C`. Existing
+  height/anchor capture handles it, but lateral equality lost moving-object
+  endpoints. Its temporal match now uses the original slot index in
+  `$FF1800` plus world depth. Other scenery matching is unchanged.
+- Latest Egypt/Italy/Chile/Las Vegas 900-frame 4×/60-fps actor drives exit 0.
+  New kinds: 12,767 promoted presentations, 11,176 visible consecutive pairs,
+  578 band crossings; maximum residual 0.000030% against the 0.1% gate.
+  Model 0 throughout; promoted asset/model fallbacks, floor/SAT/anchor/
+  palette/priority/native-row errors all 0. Native R5/R6 guards stay active
+  (24 incomplete-SAT /1,710 fully culled cases); no R1–R4 or R7 on these kinds.
+- Moving `$81` also passes a 900-frame Ayers actor repeat: 622 promotions,
+  578 pairs /32 crossings, max residual 0.000025%, all actor invariants 0.
+  G1 and short Auckland/Canada/rain/Ayers regressions pass; four manifests
+  empty. Hashes: `60=2A0B972960C5E325`, `300=1131D937D70234FD`.
+- New-country/Ayers qualification explicitly uses `--skip-road-audit`, which
+  requires `--actors` and preserves actor/native-row/image/margin checks.
+  It does not change or qualify the road. Original three regressions keep
+  their full road checks. The Ayers night-road diagnostic was not run.
 
-Second milestone: all seven directed asset promotions and initial actor
-checks pass. Closer temporal review found `$81` moves laterally: matching it
-by lateral coordinate lost 334 endpoint transitions in the first Egypt
-trace. Its slot index is already available in the original `$FF1800` word
-used by `$A41C`; capture now uses that slot with stable world depth when
-matching `$81`. Other scenery matching is unchanged. Egypt was requalified
-at 4×/60 fps (all actor invariants and native-row replay 0), and Ayers is
-being repeated through the later `$81` interval without running its road
-check. The growth gate now accepts an explicit required-kind list so the
-seven-kind directed evidence cannot silently omit a candidate.
+### Ready play build and evidence
+
+`build/more-kinds/play.sh` starts directly in an Egypt race with `$81/$93`.
+Arguments `italy`, `chile`, `las-vegas` select scenes for `$97`, `$A1/$A4`,
+`$A2/$A3`. Saved settings: internal scale 4 /60-fps races On. Close the
+current runtime before selecting another scene. Worker did not launch a
+visible game; checkpoints/scripts were checked headlessly.
+
+Full report: `build/more-kinds/worker-report.md`; raw ROM/asset evidence,
+command ledgers, traces, scalar gates and play checkpoints remain under
+that ignored directory. HIGHRES §14.9 has the per-kind table and exact scope.
+Commits: `98dd51b` (verified ladders), `3ec9cfb` (moving identity/growth gate),
+plus the final documentation commit recorded in the report.
+
+No CI/tags/releases, engine changes, generated C edits or submodule pin
+changes. Existing applied submodule dirt retained. Full all-track/late-race
+and real-platform performance qualification remains outside this extension;
+poles/special pieces retain their task-38/native scope. No worker-owned
+runtime remains at completion.
