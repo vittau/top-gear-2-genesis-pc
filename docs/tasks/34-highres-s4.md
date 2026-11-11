@@ -90,42 +90,135 @@ The experimental scale row remains default 1× and applies after restart.
 
 ## Progress / handoff
 
-Updated 2026-11-11 by the S4 worker (Claude Fable 5.2), branch
-`vittau/tg2-highres-s4`.
+Updated 2026-11-11 (CHECKPOINT at ~75% of the Claude 5 h window) by the S4
+worker (Claude Fable 5.2), branch `vittau/tg2-highres-s4`. A new agent can
+continue from this section plus `HIGHRES.md` §14.
 
-**Done**
+### Decisions already taken (do not reopen)
 
-- Fresh build from `9af8dcb`; stock G1 passes (frame 60 `2A0B972960C5E325`,
-  frame 300 `1131D937D70234FD`, four manifests empty): `build/g1-stock.log`.
-- LOD evidence phase: raw-ROM reading of the selection/projection code, three
-  bounded captures (Auckland, Canada, Bavaria rain; 3,600 frames each, exit 0,
-  manifests empty) and contact sheets. Findings and the derived policy are in
-  `HIGHRES.md` §14. New read-only hooks `$B42E`, `$B4D6`, `$B584` in
-  `game/game.toml`; `game/tg2_actors.c` (evidence log only so far),
-  `tools/check_highres.py lod`, `tools/analyze_actors.py`,
-  `tools/actor_sheet.py`.
+- **Size: stepped by default** (authored 1× size of the guest's band). One
+  internal switch `TG2_ACTOR_SIZE=continuous` (env only, no menu row) for ONE
+  extra stepped-vs-continuous same-frame review pair (approaching car or
+  tree). Spend nothing more on continuous.
+- **Position criterion:** drawn N× anchor vs N × captured sub-pixel anchor
+  (< 1 output pixel), and `floor(anchor)` must equal the 1× SAT position for
+  every promoted actor; report the maximum error.
+- **Poles (`$BD/$83/$84`) and tunnel/special pieces (`$8A/$F8/$F9/$FC/$FD`)
+  stay native** in S4, recorded as a follow-up. Verify native poles and
+  promoted actors occlude correctly where they overlap and put one such case
+  in the review pictures if it occurs on the three tracks.
+- **Untabulated kinds fall back to the guest's own model; count fallbacks per
+  track** in the sprite table.
 
-**In progress / next step**
+### Done (commits)
 
-- Supervision gate: the policy summary was sent to the coordinator; wait for
-  the reply before implementing presentation.
-- Then implement, in this order: (1) actor snapshots in `tg2_actors.c`
-  (projection latch + detailed model resolution at `$B584/$B5FA`, kept with the
-  scene history in `tg2_video.c`); (2) raster-layer capture at N× and an
-  actor-free native row with an explicit foreground/occluder mask;
-  (3) N× actor painter in `tg2_highres.c`; (4) `check_highres.py` sprite
-  position/variant table and coverage checks; (5) gates, cost, six pictures,
-  docs.
+- `e4b4205` — evidence phase: hooks `$B42E`, `$B4D6`, `$B584` in
+  `game/game.toml` (checked against raw ROM), `game/tg2_actors.c` (projection
+  latch + `TG2_ACTOR_LOG` evidence stream only), `check_highres.py lod`,
+  `tools/analyze_actors.py`, `tools/actor_sheet.py`, `HIGHRES.md` §14.
+- Stock G1 on the build **with** the new hooks: exit 0, frame 60
+  `2A0B972960C5E325`, frame 300 `1131D937D70234FD` in all five
+  configurations, four manifests empty (`build/s4/g1-hooks.log`).
+- 1× 16:9 probe: the displayed scene is selected every picture
+  (`displayed == published`, e.g. 350/350 at frame 3500): `build/s4/probe_scene.py`.
 
-**Evidence (ignored build dirs, this worktree)**
+**No presentation code exists yet.** Nothing is half-edited; the tree builds.
 
-- `build/highres-check/lod/{auckland,canada,bavaria-rain}/actors.csv`,
-  `snap.{vram,cram,ram,png}`, `actor-sheet.png`, `actor-sheet.json`,
-  `lod-summary.json`.
-- `build/s4/{auckland,canada,bavaria-rain}.txt` (grouped ladders),
-  `build/s4/sheet-*.txt` (measured art sizes), `build/s4/dis-*.txt`.
+### Exact next step: implement presentation (design already worked out)
 
-**Uncommitted state:** none after the evidence commit. The engine and
-`recomp-ui` submodules show as modified because the project patch stack is
-applied; never commit those pins.
+1. **Snapshots (`game/tg2_actors.c`, storage in `Scene` of `tg2_video.c`).**
+   A draft header with the intended API is in `build/s4/tg2_actors.h.draft`
+   (ignored dir; recreate from this text if missing): `Tg2Actor` (sub-pixel
+   anchor, guest anchor, clip row, `first_piece` depth key, guest/detailed
+   model piece ranges, keys, kind, models, fallback, high), `Tg2ActorSet`
+   inside `Scene`, `tg2_actors_object()` at `$B584` returning the actor index
+   that the `$B5FA` hook stores in each `Piece` (`Piece.actor`, −1 = native).
+   - Not promoted (stay native): no latched projection for the same record and
+     X, `$FF1878` = `$FFFE`/`$FD66`, kinds `$82 $83 $84 $BD $8A $F8 $F9 $FC $FD`,
+     invalid pointers, 2P (`$FF189E`).
+   - Screen coordinates: `gx = D1.w + 128`, `gy = D2.w + $FF2452 − 128`
+     (base line: the object occupies rows `< gy`), clip row
+     `$FF1836 + $FF2452 − 128` (rows ≥ clip hidden). `x = gx + (D1 >> 16)/65536`
+     from the latch. `y`: latched `D2.w` (+ `D2 >> 16`/65536 on the `$B42E`
+     path), clamped to `$FF17BC − 2` like `$B434/$B4DC`, minus
+     `h·scale/65536/2^$FF242A` (`h = $FF17DC`, `scale = $FF17E0`), then clamp
+     into `[gy, gy + 255/256]`.
+   - Model pieces relative to the anchor, per 10-byte header
+     (`set, halfw, height, attr, $8888`): `x0 = attr&$800 ? +halfw : −halfw`;
+     piece `dx = x0 + (attr&$800 ? −xoff − pw : xoff)`, `dy = −height + yoff`,
+     `attr = (((hattr|8(A1)) ^ (pa&$1800)) + (pa&$7FF)) | $FF234E`
+     (+`$8000` when `$FF22E8`); later pieces are in front.
+   - Detailed model: scenery 0; cars per `HIGHRES.md` §14.3 rule 2.
+2. **Per-picture prepare** (first race row, with the displayed `GVDP`):
+   rasterise each distinct guest/detailed model to palette indices from
+   `v->vram`, measure opaque extents, `size = guest/detail` on the detailed
+   model's longer axis; `size > 1` → fallback to the guest's model. If the
+   guest model cannot be rasterised the actor stays native.
+3. **Actor-free native row (`tg2_video.c`).** Enable the raster-row seam
+   whenever the scale is above 1 (`filter_raster_enabled`,
+   `scanline_presented`, and the 60 fps `gvdp_capture_presented_scanline`
+   branch). Per race row: walk the SAT like the engine
+   (`genesis_vdp.c sprite_render_line`: 64 sprites, 16 per line,
+   `x == 0 && on_line > 1` masks the rest, 256-pixel budget), skip SAT entries
+   whose matched scene piece belongs to a promoted actor, and recompose only
+   the pixels an actor covered with the engine's rule
+   (`genesis_vdp_compose.h`: plane byte = index | $40 opaque | $80 priority).
+   Record per 1× canvas pixel: `foreground` (not plane B), `occluder`
+   (high-priority plane pixel; in margins the existing rule: plane-B high,
+   weather pixel, window side) and `front` (0 none, `$FFFF` HUD/player car,
+   else scene piece index + 1 of a native mapper sprite). SAT→piece matching
+   must be done on the endpoint's own unmodified SAT (store `sat_piece[64]` in
+   `Scene` in `select_scene`), because `mix_sprites` moves SAT entries on
+   synthesized 60 fps pictures. In the margin sprite loop skip promoted
+   pieces. `hud_row` (HUD edges mode) re-exposes "ordinary SAT sprites" under
+   vacated HUD pixels: skip promoted SAT entries there too.
+   Self-check to add: with no entry flagged, the recomposed row must equal the
+   engine's native row (count mismatches under an env audit).
+4. **Builder (`tg2_highres.c`).** Terrain mask = colour equality AND NOT
+   `foreground` (removes the S3 same-colour ambiguity without changing other
+   pixels). After the rows (and the Linear On filter), paint actors far → near
+   (capture order): per output pixel map to texel space, box filter of width
+   `max(1, 1/(size·N))` texels in premultiplied RGB after the row's own palette
+   (`Tg2RowState.cram`), skip rows ≥ clip·N, skip where
+   `(occluder && !high) || front == $FFFF || front − 1 >= first_piece`.
+   Rows that did not go through the actor-free path keep native sprites, so
+   paint only rows flagged as actor-free.
+5. **1× reference dump.** `tg2_highres {"dump":…}` reads the 1× canvas back
+   from the framebuffer, which will now lack promoted actors. Keep a true 1×
+   reference row (native centre + promoted margin pieces) for the dump.
+6. **60 fps.** Interpolate actor anchors in `mix_pieces` (match by record,
+   nearest anchor), everything else from the nearer endpoint.
+7. **Checks (`tools/check_highres.py`).** New TCP JSON of the prepared actors
+   (kind, record, guest/detailed model, fallback reason, guest anchor,
+   sub-pixel anchor, size, palette lines, priority, drawn N× box, visible
+   pixels, pieces/inside/matched in SAT). Table: counts by kind per track,
+   fallbacks per track, max `floor(anchor) − guest`, max drawn-anchor error,
+   palette/priority agreement; actor-free row self-check; downscale with
+   actor silhouettes. Then gates G1–G3, 2P split, cap, cost with
+   `TG2_ACTORS=0` vs on (no audit), six review pictures + the stepped vs
+   continuous pair, docs (HIGHRES §14/§13, VALIDATION, STATUS).
 
+### Rebuild / validate
+
+```sh
+git submodule update --init --recursive
+flock ~/.cache/tg2-heavy.lock env JOBS=3 tools/build-linux.sh   # applies patches, regenerates
+python3 -m venv build/venv && build/venv/bin/pip install numpy pillow capstone
+flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py g1
+flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py lod --track canada --frames 3600
+build/venv/bin/python tools/analyze_actors.py build/highres-check/lod/canada/actors.csv
+build/venv/bin/python tools/actor_sheet.py build/highres-check/lod/canada --all
+```
+
+Reduced S3 recipe for the final qualification: `HIGHRES.md` §13.4.
+
+### Evidence (ignored build dirs of this worktree)
+
+- `build/highres-check/lod/{auckland,canada,bavaria-rain}/`: `actors.csv`,
+  `snap.{vram,cram,ram,png}`, `actor-sheet.{png,json}`, `lod-summary.json`.
+- `build/s4/`: `{auckland,canada,bavaria-rain}.txt` (ladders),
+  `sheet-*.txt` (art sizes), `g1-hooks.log`, `dis-*.txt`, `xref.py`,
+  `probe_scene.py`, `tg2_actors.h.draft`.
+
+**Uncommitted state:** none. The engine and `recomp-ui` submodules show as
+modified because the project patch stack is applied; never commit those pins.

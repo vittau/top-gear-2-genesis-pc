@@ -1477,20 +1477,27 @@ separates. Non-actor sprites are therefore always in front of actors.
    same record and X): opponent cars and scenery kinds. Its SAT entries are
    removed from the native sprite layer and the actor is redrawn at N×.
 2. **Which variant.** Scenery: model 0 of the same record, when that table
-   entry is a valid mapping; otherwise the guest's own model. Cars: level 0,
-   keeping the guest's own angle class — straight stays frame 2; a left/right
-   frame of levels 1–3 becomes frame 0/4 when the view band is at the extreme
-   (0–1 / 7–8) and frame 1/3 otherwise; single-frame levels stay straight.
-   A guest that already shows level 0 keeps its exact frame.
-3. **Size.** Uniform scale. Each level's authored size (opaque extent of the
-   guest's model against model 0, measured once per record from the displayed
-   VRAM) is exact at its depth band's centre; between band centres the factor
-   follows the latched projection scale, so growth is continuous and never
-   differs from the guest's size by more than half a ladder step. Objects on
-   the depth-table path use their table scale.
+   entry is a valid mapping and its art is at least as large as the guest's
+   model; otherwise the guest's own model (counted as a fallback). Cars:
+   level 0, keeping the guest's own angle class. The class is read from the
+   ROM table at `$57C8`: find the guest model's row; a level-0 guest keeps its
+   exact frame; a single-frame row becomes the straight frame (`byte[$57C8+4]`
+   = 2); otherwise take the level-0 entry at the column of the guest's run that
+   is nearest to the centre column 4 (left → frame 1, straight → 2, right → 3).
+   The side frames of levels 1–3 have the aspect ratio of the *slight* level-0
+   angle (48×26 = 1.85 against 57×31 = 1.84; the hard angle is 64×31 = 2.06),
+   so frames 0/4 are only ever shown when the guest itself selects them.
+3. **Size (coordinator decision, 2026-11-11): stepped by default.** Uniform
+   scale = the guest model's opaque extent over the detailed model's, measured
+   on the detailed model's longer axis from the displayed VRAM, so each actor
+   has the authored 1× size of the band the guest chose. One internal switch
+   (`TG2_ACTOR_SIZE=continuous`, no menu row) multiplies that by
+   `projection scale / band-centre scale` for one stepped-vs-continuous review
+   pair; the owner decides at visual review whether it becomes the default.
 4. **Position.** Anchor = bottom centre at the latched sub-pixel X (both
-   paths) and sub-pixel Y (interpolated path, including the height term);
-   its floor equals the guest's integer anchor.
+   paths) and sub-pixel Y (interpolated path, including the height term),
+   clamped into `[guest, guest + 1)` so its floor always equals the guest's
+   integer anchor (the 1× SAT position). The check reports the maximum error.
 5. **Occlusion and priority.** Rows at/below the object's own clip line
    (`$FF1836` at `$B584`) are not drawn, which is what the piece cull plus the
    crest sprite mask produce. Per pixel, a low-priority actor is hidden by a
@@ -1513,6 +1520,8 @@ separates. Non-actor sprites are therefore always in front of actors.
   its art exists and was drawn in the sheets.
 - `$FF1894` was never non-zero; a non-zero bias would shift the remap row, so
   the implementation derives the level from the model actually selected.
-- Poles and tunnel pieces are not promoted (rule 7); pole reconstruction needs
-  the `$B99A` stacking logic and is left for a follow-up or S5.
+- **Follow-up (coordinator-approved to leave out of S4):** poles
+  (`$BD/$83/$84`) and tunnel/special pieces (`$8A/$F8/$F9/$FC/$FD`) stay
+  native. Pole reconstruction needs the `$B99A` stacking logic. S4 must still
+  verify that native poles and promoted actors occlude each other correctly.
 
