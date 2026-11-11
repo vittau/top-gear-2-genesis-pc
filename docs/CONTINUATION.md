@@ -11,6 +11,12 @@ as it nears 80%, asks the worker to commit/push its progress and write a
 handoff note so another agent can continue. S4 progress and the handoff state
 are recorded in `docs/tasks/34-highres-s4.md` by the worker.
 
+At 75% of the Claude 5h window the Fable worker checkpointed at `ffc4358`
+(LOD evidence done, no presentation code yet) and was stopped. At the owner's
+request S4 continues on **Codex GPT-6.1 Sol, effort high** in the same
+`tg2-highres-s4` worktree (run `run_47bdb5658e2b`, dispatch `ctx_551d89a0b47b`).
+Before the switch, the trees were saved as `refs/keep/tg2-s4-fable-{worktree,engine,ui}-20261111`.
+
 **v0.2.0 published (2026-11-11)** at the owner's explicit request ("está bom
 o suficiente"), from `main` at `a74e308`, with the experimental internal
 resolution row (default 1×, road/background only) included by his decision.
