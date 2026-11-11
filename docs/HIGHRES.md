@@ -1670,13 +1670,95 @@ mismatch is explicitly mapped in [task 38](tasks/38-highres-poles.md).
 HUD/weather/tunnel-opening art, full N× temporal qualification, live changes
 and Deck/GPU qualification remain outside this step.
 
+### 14.8 Ayers Rock and bounded country inventory (task 39 follow-up)
+
+Owner-approved continuous size is now the N× default (2026-11-11); only
+`TG2_ACTOR_SIZE=stepped` selects the authored ladder. Native 1× is unchanged.
+The owner reported rocks still changing sprites in **Ayers Rock**. Password
+`stage` is difficulty: Ayers is Australasia country **0**, race slot **2**,
+ROM race index **1**, descriptor **`$01BA96`**. The new `ayers-rock` track
+uses the already documented setup-only qualification selector; no race RAM
+or simulation is modified after the real scene loads.
+
+The rock is **kind `$96`**, record `$FF8E08`, art `$FF9C82`, mapping table
+`$011054`, model-0 header `$011090`. The native art sheet shows a normal
+single-piece ladder: model 0 **32×16**, model 10 **2×1**, with model = distance
+level through both ordinary projection paths. Raw `$B04C..$B0A0` and
+`$B584..$B632` confirm the ordinary mapper path. It was missing from the
+allowlist and therefore used guest-model **fallback reason 1**. It is neither
+`$82` nor a compound/pole handler. Adding `$96` to the existing allowlist is
+the only new art-kind promotion in this follow-up; it retains all S4/39 guards.
+
+A 900-frame 4×/60-fps Ayers run records **4,333 rock presentations**, no
+rock fallbacks, 4,015 visible frame pairs /154 band crossings and maximum
+size/projection residual **0.000032%**. Model 0 is selected throughout the
+ladder. All-frame floor/SAT/anchor/palette/priority and native-row replay
+errors are 0. Short 240-frame Auckland/Canada/rain regressions pass; their
+promoted counts are 5,652 /3,832 /4,893, all invariants 0. Default-change
+stock G1 and short actor drive pass; hashes remain frame 60
+`2A0B972960C5E325`, frame 300 `1131D937D70234FD`. All four manifests are empty.
+
+**Separate failed diagnostic, retained:** the complete Ayers drive returns
+1 because its night-road lane-count/centre audit fails (not actor checks).
+A controlled 121-picture comparison with actors disabled also fails: 6,057
+stripe and 3,990 centre violations, with geometry/gap/outlier violations 0.
+The two actor settings have identical final guest RAM. Audit visibility
+flags differ as native sprites are removed, so raw road files are not all
+identical; this is not described as a clean all-road qualification or fixed
+as part of the rock allowlist change. Art, position, occlusion and stock
+regression gates pass; the pre-existing Ayers road diagnostic remains open.
+See `build/task39-followup/road-baseline{,-comparison}.json`.
+
+The **13 remaining countries** each have one validated **900 moving-frame,
+1×, first-race** sample: 11,700 frames /79,487 mapper calls total. Input-only
+scripts type and assert every password word and the actual race index;
+paused attempts are rejected/retried with START rather than counted. All
+selected runs exit 0 and have four empty manifests. Calls are per mapper
+invocation, not unique physical objects; native compound pieces can contribute
+several calls. `car` below denotes native player/unprojected car entries.
+
+| Country / first race | Policy-native mapper calls by kind | Guest-model fallback calls by kind (reason) |
+|---|---|---|
+| 1 Britain / Loch Ness | 83:866, 84:693, 8A:257, car:76 | none |
+| 3 Egypt / Abu Simbel | 8A:390, car:123 | 81:574 (R1), 93:1749 (R1) |
+| 4 France / Bordeaux | 8A:164, car:63 | none |
+| 6 Greece / Athens | 83:454, 8A:292, car:95 | none |
+| 7 India / Amber Port | 8A:221, car:72 | 93:201 (R1) |
+| 8 Ireland / Dublin | 8A:135, car:66 | none |
+| 9 Italy / Florence | 8A:353, car:108 | 97:503 (R1) |
+| 10 Japan / Hiroshima | 82:225, 8A:303, FC:68, FD:48, car:211 | none |
+| 11 Scandinavia / Copenhagen | 8A:191, car:76 | 97:613 (R1) |
+| 12 South America / Chile | 8A:302, BD:114, car:91 | 93:501 (R1), A1:837 (R1), A4:375 (R1) |
+| 13 Spain / Andalusia | 8A:262, car:115 | none |
+| 14 Switzerland / Geneva | 84:126, 8A:374, car:117 | none |
+| 15 U.S.A. / Las Vegas | 83:797, 84:484, 8A:284, car:87 | A2:1114 (R1), A3:1007 (R1) |
+
+R1 = untabulated ordinary kind: it keeps guest art/size through fallback 1.
+These are not promoted by this follow-up. The native column covers special,
+unprojected or player entries, including poles `$83/$84/$BD`, lifting kind
+`$82` and tunnel/special pieces. **No R2/R3/R4** (invalid mapping, empty art,
+smaller detailed extent) was found among eligible kinds by model-0 screening
+against each run's captured mapping/VRAM snapshot; R1 kinds are not approved
+or qualified for a model-0 replacement by this survey. This 1× inventory cannot measure final N×
+SAT/culling fallbacks 5–7; it is a policy/asset screen, not N× qualification.
+Only the first race/first short driving window is covered for each country,
+so later-track/late-race kinds may be absent. Existing Auckland/Canada/Bavaria
+captures cover countries 0/2/5; Ayers adds a second Australasia track.
+
+Tool: `tools/survey_actor_kinds.py --country N --out build/...`, under the
+shared heavy lock. Streams and snapshots stay in ignored build paths;
+`build/task39-followup/{country-summary.json,country-table.md}` consolidate
+selected evidence. `tools/check_highres.py` now accepts `ayers-rock` and
+`country-00`..`country-15` aliases, with password difficulty separate from
+race slot. No other newly observed kind was fixed.
+
 ## 15. Continuous actor growth (task 39)
 
-Implemented and locally qualified on `vittau/tg2-highres-continuous`;
-owner motion review is pending. The owner clarified that exact agreement
+Implemented and owner-approved (“Está ótimo”) on
+`vittau/tg2-highres-continuous`. The owner clarified that exact agreement
 with the hand-drawn small sprites is unnecessary: the goal is continuous
-motion. `TG2_ACTOR_SIZE=continuous` selects the new path; default remains
-stepped until he approves changing it. Native 1×, menus and 2P are unchanged.
+motion. Continuous is now the default at N×; `TG2_ACTOR_SIZE=stepped` selects the
+old path only for internal comparison. Native 1×, menus and 2P are unchanged.
 
 ### Projection and size
 
@@ -1692,7 +1774,7 @@ D4 scale different from `$FF17E0`. No generated C or engine code was edited.
 
 Continuous size = **unrounded projection / fixed model-0 reference**.
 The reference is the geometric centre of model 0's ROM depth interval:
-2270.0837 for kinds `$80/$F0/$94/$85/$99/$9A/$86` (depth interval `[0,2)`),
+2270.0837 for kinds `$80/$F0/$94/$85/$96/$99/$9A/$86` (depth interval `[0,2)`),
 2499.1775 for cars (`[0,1)`). The per-kind art and its model-0 extent still
 come from that record's captured mapping. The current guest band and its
 opaque extent never enter this formula. This deliberately allows a near
@@ -1770,6 +1852,7 @@ not tightly resolved. The same-branch policy pairs and phase timings remain
 in the report, including the reverse-order pair that changed the sign.
 
 Ready play launcher: `build/task39/play-continuous.sh`, with saved internal
-scale 4 and 60-fps races On. Poles/special pieces stay native; guest spawn/
-culling is preserved. Owner approval of the motion and a default-policy
-change, all-country coverage, S6 and real-platform performance remain open.
+scale 4 and 60-fps races On; it now exercises the approved default. Poles/special pieces stay native; guest spawn/
+culling is preserved. The initial three-track motion was approved; the bounded country inventory
+and Ayers rock checks are in §14.8. Full all-track coverage, S6 and real-platform
+performance remain open, along with the separate Ayers night-road diagnostic.

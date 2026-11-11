@@ -1516,3 +1516,45 @@ changes or submodule pin changes. Native poles/special pieces, stock spawn/
 culling and player/HUD/menus/2P remain in scope exactly as before. Default
 continuous, all-country coverage, S6 and real-platform performance await
 their respective owner review/qualification.
+
+### Task 39 approved default / Ayers Rock / bounded survey follow-up
+
+Owner approved the continuous motion (“Está ótimo”). `b151a25` makes it the
+N× default; only `TG2_ACTOR_SIZE=stepped` selects the old size policy.
+Targeted build, G1 and a 300-frame default 4×/60-fps actor drive exit 0,
+stock hashes unchanged, four manifests empty. No new full-matrix repeat.
+
+Ayers Rock (country 0, slot 2, index 1, descriptor `$01BA96`) was captured
+through the documented setup-only track selector. Rocks are ordinary kind
+`$96`, record `$FF8E08`, model 0 32×16 through model 10 2×1; missing allowlist
+entry caused fallback 1. `dce0c67` adds only that kind. A 900-frame 4×/60-fps
+run has 4,333 rock presentations with no rock fallbacks; 4,015 matched size
+pairs /154 band changes, max residual 0.000032%. All actor floor/SAT/anchor/
+palette/priority/native-row replay errors are 0. Short Auckland/Canada/rain
+regressions exit 0 (5,652 /3,832 /4,893 promoted actors, zero invariants).
+
+**Retained failure:** the full Ayers drive exits 1 on road stripe-count and
+centre checks (44,789 /31,138), while geometry/gap/hole/outlier checks and
+actor checks pass. The fixed-input, 121-picture actor-disabled baseline also
+exits 1 on stripe/centre (6,057 /3,990); both settings end with identical
+RAM SHA-256 `b6caf537b95f1b1ea15f61889bad4acdfb884521637908dbd16b5dfc019c1849`.
+Raw audit flags differ with sprite removal, so no bit-identical-road claim
+is made. This is an unresolved night-road diagnostic independent of rock
+sizing, not a passed/waived all-road qualification. No road code changed.
+
+The other 13 countries each have one selected 900-moving-frame first-race
+1× capture: 11,700 frames /79,487 mapper calls, selected runs exit 0 and all
+four manifests empty. Password/race-index assertions verify entry; immobile
+paused attempts are excluded. HIGHRES §14.8 gives per-kind counts. R1-only
+unknown ordinary kinds `$81/$93/$97/$A1/$A2/$A3/$A4` remain unpromoted;
+poles/specials stay native. Snapshot-based model-0 screening finds no R2–R4;
+N× SAT/culling R5–R7 are not measurable by this 1× inventory. This is not
+coverage of all four races or every late-race kind.
+
+Ignored evidence: `build/task39-followup/{default-commands.json,rock-commands.json,
+country-summary.json,country-table.md,rock-growth.json,road-baseline.json,
+road-baseline-comparison.json,worker-report.md}`; per-country evidence under
+`countries/`, initial/resumed valid capture directory named in each summary.
+Ready build uses saved scale 4 and 60 fps On. Scripts:
+`build/task39/play-continuous.sh`, `build/task39-followup/play-ayers-rock.sh`.
+No visible runtime was launched, no CI/tags/releases/engine or pin changes.
