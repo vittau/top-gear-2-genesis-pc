@@ -69,8 +69,8 @@ Poles (task 38) are out of scope unless they share the size code naturally.
 Implementation and local technical gates are complete on
 `vittau/tg2-highres-continuous`, based on `origin/main` at `c56d2fa`. The
 owner clarified during this work that exact matching to hand-drawn original
-heights is unnecessary; prioritize smooth growth. Default remains stepped
-until he reviews the motion and approves making continuous the default.
+heights is unnecessary; prioritize smooth growth. Owner played the continuous build and approved it (“Está ótimo”); continuous
+is now the default, with `TG2_ACTOR_SIZE=stepped` retained internally.
 
 ### Implemented and verified
 
@@ -128,3 +128,20 @@ All-country coverage, S6, live scale changes and real-platform performance
 remain outside this task. No CI, tags, releases, generated C edits, engine
 changes or submodule pin changes. Existing applied submodule dirt is retained.
 No runtime or heavy process is left running at completion.
+
+### Approved default and country follow-up (2026-11-11)
+
+Owner approved the motion (“Está ótimo”). Continuous is now the N× default;
+only `TG2_ACTOR_SIZE=stepped` selects the old ladder. Targeted default-change
+build, stock G1 and 300-frame Auckland 4×/60-fps actor drive all exit 0;
+stock hashes are unchanged, four manifests empty, actor invariants pass.
+Commands: `build/task39-followup/default-commands.json`.
+
+Ayers Rock is Australasia country 0 / race slot 2 / ROM index 1, not password
+`stage=2` (stage means difficulty). Its 900-frame 1× capture verifies index 1
+and descriptor `$01BA96`, with empty manifests. The rock asset is ordinary
+kind `$96`, record `$FF8E08`, model 0 32×16 through model 10 2×1; the
+original allowlist does not include it. Native sheet confirms the rock image;
+next: promote this ordinary ladder with the existing guards, then a bounded
+first-race survey of the other 13 countries. No other country kinds will be
+fixed in this follow-up.

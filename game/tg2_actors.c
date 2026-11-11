@@ -396,13 +396,13 @@ static int raster_model(const GVDP *v, unsigned first, unsigned count) {
     *a = (Art){first,count,x0+lx,y0+ly,cw,ch,texels};
     return art_count++;
 }
-/* The sole size policy switch. Stepped is the authored size by default;
- * continuous awaits owner motion review before becoming the default. */
+/* Owner-approved continuous sizing is the N x default. The old authored
+ * ladder remains available only through TG2_ACTOR_SIZE=stepped. */
 static float actor_size_policy(float stepped, double projected, int *selected) {
     static int continuous=-1;
     if (continuous<0) {
         const char *s=getenv("TG2_ACTOR_SIZE");
-        continuous=s && !strcmp(s,"continuous");
+        continuous=!s || strcmp(s,"stepped");
     }
     *selected = continuous && projected > 0;
     return *selected ? projected : stepped;
