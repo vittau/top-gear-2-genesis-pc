@@ -103,6 +103,11 @@ they reply. The window screenshot used in the form is
 
 ### High-resolution rendering
 
+**Visible follow-up:** [detailed compound poles (task 38)](tasks/38-highres-poles.md).
+The owner highlighted their native-detail mismatch against S4-promoted actors
+in review picture 05; kinds `$BD/$83/$84` need explicit head/shaft reconstruction.
+Mapped, not started.
+
 *Owner request, 2026-11-07.*
 
 Render races above 224p in our renderer. This would also give the

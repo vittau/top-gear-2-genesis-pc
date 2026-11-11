@@ -47,3 +47,4 @@ the machine-resource rules, and never trigger CI.
 | [35](35-linear-filter-highres.md) | Linear Filter has no visible effect in races after S3 (Deck playtest) | Complete; merged `87e926b`, owner approved local macOS playtest. Latest Deck performance remains unmeasured. |
 | [36](36-unify-runtime-menu-groups.md) | Unify Esc menu groups: Display/Graphics/Video → Video; Sound/Audio → Audio | Complete; merged `87e926b`, owner approved local macOS playtest. |
 | [37](37-intermittent-race-menu-instruments.md) | Intermittent missing instruments in race-menu music | Done: BOTH persisted at boot diverted four bytes of the music driver's octave table; fixed, merged, owner approved. |
+| [38](38-highres-poles.md) | Detailed compound poles at N× | Mapped follow-up: owner highlighted the visual mismatch in S4 picture 05. Not started; Opus/Fable/Sol only. |

@@ -1526,6 +1526,8 @@ separates. Non-actor sprites are therefore always in front of actors.
   (`$BD/$83/$84`) and tunnel/special pieces (`$8A/$F8/$F9/$FC/$FD`) stay
   native. Pole reconstruction needs the `$B99A` stacking logic. S4 must still
   verify that native poles and promoted actors occlude each other correctly.
+  The owner highlighted their visible detail mismatch during S4 review;
+  [task 38](tasks/38-highres-poles.md) now maps the compound-pole improvement.
 
 
 ### 14.5 Presentation implementation
