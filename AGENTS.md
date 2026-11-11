@@ -45,6 +45,11 @@ renderer) and adapt it. Don't copy its game-specific addresses.
   selection and fallback rules for these tasks.
 - Never edit generated C. Fix `game.toml`, discovery evidence, or the
   recompiler/runner, then regenerate.
+- To change game behaviour on the owner's request (remove a menu entry, lock a
+  setting, alter a flow), rewrite the responsible ROM routine natively in
+  `game/`: a `game_hook` site whose hook returns 1 replaces the routine. Don't
+  keep the original logic and mask or correct its output afterwards. The
+  generated C stays untouched only because every build regenerates it.
 - Disassembly and runtime evidence are ground truth (engine PRINCIPLES #16).
   Check every new function seed against the raw ROM before adding it.
 - After every run, check `dispatch_misses.toml` / `floor_coverage.toml`
