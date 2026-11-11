@@ -1,6 +1,6 @@
 # Task 41: Ayers Rock road audit failure (S3 road)
 
-**Status: mapped (2026-11-11). Not started.** Read `AGENTS.md`, `HIGHRES.md`
+**Status: mapped (2026-11-11). Low priority, not started.** The owner played Ayers Rock (stage 2) at 4× and found the road correct ("Me parece bom"), so the failure is most likely in the checker. The task is to find why the stripe classifier misidentifies this track's lanes, then fix the checker with evidence, without waiving thresholds. Read `AGENTS.md`, `HIGHRES.md`
 §13 and task 39's handoff. Only Opus, Fable or Sol may change the high-resolution road.
 
 During task 39 the full Ayers Rock drive (Australia, slot 2) failed the S3 road audit on stripe count and stripe-centre checks.
