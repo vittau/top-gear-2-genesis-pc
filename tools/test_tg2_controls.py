@@ -215,6 +215,21 @@ def two_player_checks(r, label):
                        for y in range(y0, y1 + 1) for x in range(101, 211)))
     check(drawn == 8, f'{label}: four rows are still drawn for each player ({drawn}/8)')
 
+    # The kept rows still open the stock pages in two-player mode too (both
+    # players share the native draw routine).
+    for row in (2, 3):
+        for _ in range(4):
+            if r.ram16(CAROUSEL_ROW) == 0:
+                break
+            press(r, 'UP')
+        for _ in range(row):
+            press(r, 'DOWN')
+        press(r, 'START', 700)
+        check(r.ram16(0x2556) == row,
+              f'{label}: 2P row {row} opens the stock page (state {r.ram16(0x2556)})')
+        press(r, 'B', 700)
+        check(r.ram16(0x2556) == 0, f'{label}: 2P page {row} returns to the row list')
+
 
 def run(args):
     out = Path(args.out).resolve()
