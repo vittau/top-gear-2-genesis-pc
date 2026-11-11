@@ -44,12 +44,14 @@ void tg2_controls_state_loaded(void);
  * presenter uses it to leave the removed CONTROL row out of the picture. */
 int tg2_controls_row_list_active(void);
 
-/* Row-list pixel rectangle in the native 256x224 picture (inclusive bounds)
- * covered when the CONTROL row is removed. */
-#define TG2_CONTROLS_ROW_X0  100
-#define TG2_CONTROLS_ROW_X1  211
-#define TG2_CONTROLS_ROW_Y0  136
-#define TG2_CONTROLS_ROW_Y1  151
+/* Row-list pixel rectangles in the native 256x224 picture (inclusive bounds)
+ * covered when the CONTROL row is removed. One-player setup centres a single
+ * five-row list; two-player setup stacks both players' lists, so both
+ * CONTROL buttons move (player 1's to the top half, player 2's lower). */
+typedef struct Tg2ControlsRowRect {
+    int x0, y0, x1, y1;
+} Tg2ControlsRowRect;
+int tg2_controls_row_rects(Tg2ControlsRowRect *out, int max);
 
 #ifdef __cplusplus
 }

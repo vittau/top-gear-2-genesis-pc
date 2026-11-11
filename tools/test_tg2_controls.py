@@ -39,6 +39,9 @@ TYPE1 = [5, 6, 0, 1, 3, 2, 4]          # UP DOWN LEFT RIGHT B A C
 P1_TABLE, P2_TABLE = 0x19AE, 0x1E06      # 16-bit WRAM offsets
 P1_TYPE, P2_TYPE = 0x1BC6, 0x201E
 CAROUSEL_ROW = 0x255A
+P2_CAROUSEL_ROW = 0x25C8
+TWO_PLAYER = 0x189E
+CONTROL_RECT_2P = ((100, 80, 211, 95), (100, 192, 211, 207))
 
 
 def wram(off):
@@ -177,6 +180,48 @@ def picture_rect_black(path, rect):
                for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)), im.size
 
 
+def two_player_checks(r, label):
+    """Both players' carousels lose the CONTROL row in the stacked 2P layout."""
+    print(f'[{label}] two-player carousel', flush=True)
+    press(r, 'START', 500)          # title -> main menu
+    press(r, 'START', 300)          # 1P GAME -> 2P GAME
+    for _ in range(4):
+        press(r, 'DOWN')
+    press(r, 'START', 700)          # -> 2P setup screen
+    check(r.ram16(TWO_PLAYER) != 0, f'{label}: two-player setup is active')
+
+    p1, p2 = [], []
+    for _ in range(8):
+        p1.append(r.ram16(CAROUSEL_ROW))
+        press(r, 'UP')
+    check(max(p1) <= 3 and 3 in p1, f'{label}: player 1 rows stay within 0..3 (saw {p1})')
+
+    attach(r, 2)
+    button(r, 2, 'down', 0)
+    for _ in range(8):
+        p2.append(r.ram16(P2_CAROUSEL_ROW))
+        button(r, 2, 'down', 1)
+        r.wait_frame(r.frame() + 4)
+        button(r, 2, 'down', 0)
+        r.wait_frame(r.frame() + 6)
+    check(max(p2) <= 3 and 0 in p2,
+          f'{label}: player 2 rows stay within 0..3 with its own pad (saw {p2})')
+    shot = out_shot = Path(r.out) / 'carousel-2p.png'
+    r.screenshot(shot)
+    for i, rect in enumerate(CONTROL_RECT_2P):
+        black, size = picture_rect_black(shot, rect)
+        check(black, f'{label}: player {i + 1} CONTROL button is not drawn')
+    from PIL import Image
+    im = Image.open(shot).convert('RGB')
+    px = im.load()
+    rows = ((18, 33), (34, 49), (50, 65), (66, 81),
+            (130, 145), (146, 161), (162, 177), (178, 193))
+    drawn = sum(1 for (y0, y1) in rows
+                if any(px[x, y] != (0, 0, 0)
+                       for y in range(y0, y1 + 1) for x in range(101, 211)))
+    check(drawn == 8, f'{label}: four rows are still drawn for each player ({drawn}/8)')
+
+
 def run(args):
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -199,6 +244,11 @@ def run(args):
             attach(r, 1)
             attach(r, 2)
             r.wait_frame(r.frame() + 30)
+            if args.two_player:
+                two_player_checks(r, args.label)
+                r.stop()
+                gate_checks(r, out, args.label)
+                return finish()
             trigger_checks(r, args.label, args.b_face)
 
             # --- TYPE 1 lock -------------------------------------------
@@ -315,20 +365,7 @@ def run(args):
 
             # --- stock gates ------------------------------------------
             r.stop()
-            err = (out / 'stderr.log').read_text(errors='replace')
-            hashes = {}
-            for line in err.splitlines():
-                if line.startswith('[FBHASH]'):
-                    fields = dict(part.split('=', 1) for part in line.split()[1:])
-                    hashes[int(fields['frame'])] = int(fields['hash'], 16)
-            check(hashes.get(60) == HASH60,
-                  f'{args.label}: frame 60 hash 0x{hashes.get(60, 0):016X} == 0x{HASH60:016X}')
-            check(hashes.get(300) == HASH300,
-                  f'{args.label}: frame 300 hash 0x{hashes.get(300, 0):016X} == 0x{HASH300:016X}')
-            counts = manifest_counts(out)
-            check(all(v == 0 for v in counts.values()),
-                  f'{args.label}: manifests empty ({counts})')
-            # stdout/manifests copy happens in stop()
+            gate_checks(r, out, args.label)
         finally:
             r.stop()
     finally:
@@ -337,6 +374,26 @@ def run(args):
         if original is not None:
             settings.write_text(original)
 
+    return finish()
+
+
+def gate_checks(r, out, label):
+    err = (out / 'stderr.log').read_text(errors='replace')
+    hashes = {}
+    for line in err.splitlines():
+        if line.startswith('[FBHASH]'):
+            fields = dict(part.split('=', 1) for part in line.split()[1:])
+            hashes[int(fields['frame'])] = int(fields['hash'], 16)
+    check(hashes.get(60) == HASH60,
+          f'{label}: frame 60 hash 0x{hashes.get(60, 0):016X} == 0x{HASH60:016X}')
+    check(hashes.get(300) == HASH300,
+          f'{label}: frame 300 hash 0x{hashes.get(300, 0):016X} == 0x{HASH300:016X}')
+    counts = manifest_counts(out)
+    check(all(v == 0 for v in counts.values()),
+          f'{label}: manifests empty ({counts})')
+
+
+def finish():
     print()
     if failures:
         print(f'{len(failures)} FAILED:')
@@ -360,6 +417,8 @@ def main():
                    help='settings.ini to install for the run')
     p.add_argument('--b-face', default='a',
                    help='probe name of the face button bound to Genesis B')
+    p.add_argument('--two-player', action='store_true',
+                   help='check the stacked two-player carousel instead')
     return run(p.parse_args())
 
 

@@ -769,14 +769,18 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
  * on the one screen that draws it: the row-list draw leaf sets the flag, and
  * everything outside this native rectangle is the stock picture. */
 static void mask_removed_control_row(int line, uint32_t *out, int nw, int w) {
-    if (nw != 256 || line < TG2_CONTROLS_ROW_Y0 || line > TG2_CONTROLS_ROW_Y1)
+    Tg2ControlsRowRect rects[2];
+    int n;
+    if (nw != 256 || !tg2_controls_row_list_active())
         return;
-    if (!tg2_controls_row_list_active())
-        return;
+    n = tg2_controls_row_rects(rects, 2);
     int origin = (w - nw) / 2;
-    for (int x = TG2_CONTROLS_ROW_X0; x <= TG2_CONTROLS_ROW_X1; ++x) {
-        int ox = origin + x;
-        if (ox >= 0 && ox < w) out[ox] = 0xFF000000u;
+    for (int i = 0; i < n; ++i) {
+        if (line < rects[i].y0 || line > rects[i].y1) continue;
+        for (int x = rects[i].x0; x <= rects[i].x1; ++x) {
+            int ox = origin + x;
+            if (ox >= 0 && ox < w) out[ox] = 0xFF000000u;
+        }
     }
 }
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,

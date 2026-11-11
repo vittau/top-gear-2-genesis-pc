@@ -1485,7 +1485,9 @@ the launcher) and lock TYPE 1 for both players. Details in
   (`tg2_controls_state_loaded`).
 * **CONTROL row.** The carousel wraps 0..3 (UP from RACE goes to SPEED, DOWN
   from SPEED goes to RACE), the removed button's rectangle is backdrop in the
-  presented picture, and the other four rows are drawn. Before/after:
+  presented picture, and the other four rows are drawn. The two-player setup
+  stacks both lists; player 2's virtual pad drives its own carousel, both
+  CONTROL buttons are absent and each player keeps four rows. Before/after:
   `build/trigger-pedals/carousel-before-after.png` (ignored).
 * **Stock gates.** Frame 60 `2A0B972960C5E325`, frame 300
   `1131D937D70234FD`, all four manifests empty, in all three test runs.

@@ -81,9 +81,11 @@ page has no meaning, so it is gone:
 * the button art is part of the page bitmap the cartridge streams into tiles,
   so the port omits the row in the presented picture on the one screen that
   draws it: the row-list draw hook marks the frame and
-  `game/tg2_video.c` paints the button's native rectangle with the screen's
-  backdrop colour. Navigation, the game's own palette fades and every other
-  screen are untouched.
+  `game/tg2_video.c` paints the button's native rectangle(s) with the screen's
+  backdrop colour. A one-player setup has one centred list; a two-player setup
+  stacks both players' lists, so both CONTROL buttons are covered at their own
+  coordinates. Navigation, the game's own palette fades and every other screen
+  are untouched.
 
 `build/trigger-pedals/carousel-before-after.png` (ignored build output) shows
 the stock five-row list next to the port's four-row list. The stock
@@ -99,6 +101,7 @@ build/venv/bin/python tools/test_tg2_controls.py --label "existing settings.ini"
     --settings tools/test-data/settings-existing.ini
 build/venv/bin/python tools/test_tg2_controls.py --label "B remapped to Y" \
     --settings tools/test-data/settings-override.ini --b-face y
+build/venv/bin/python tools/test_tg2_controls.py --label "two-player" --two-player
 ```
 
 The test attaches two synthetic SDL controllers through the engine's dev
@@ -108,7 +111,8 @@ Genesis pad mask over TCP. In a race it also reads the cartridge's own remapped
 control byte (`$FF18FA`): RT alone sets ACCEL (bit 3) and LT alone sets BRAKE
 (bit 2). It also proves the carousel rows, the removed button's pixels, the
 TYPE 1 clamp, the quickstate correction, the stock framebuffer hashes and empty
-dispatch/floor manifests.
+dispatch/floor manifests. The two-player pass drives player 2's pad too, so
+both stacked carousels wrap 0..3.
 
 Not verified in CI: real Steam Deck / DualSense / Xbox hardware. The trigger
 axes are read through `SDL_GameControllerGetAxis`, which is the same call the

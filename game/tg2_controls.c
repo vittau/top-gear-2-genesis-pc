@@ -186,3 +186,19 @@ int tg2_controls_row_list_active(void)
 {
     return s_row_list_drawn;
 }
+
+int tg2_controls_row_rects(Tg2ControlsRowRect *out, int max)
+{
+    if (!out || max < 1) return 0;
+    if (glue_peek16(0xFF189Eu)) {
+        /* Two-player setup stacks both lists: player 1's rows sit in the top
+         * half and player 2's in the bottom half, so both CONTROL buttons
+         * move. */
+        out[0] = (Tg2ControlsRowRect){ 100, 80, 211, 95 };
+        if (max < 2) return 1;
+        out[1] = (Tg2ControlsRowRect){ 100, 192, 211, 207 };
+        return 2;
+    }
+    out[0] = (Tg2ControlsRowRect){ 100, 136, 211, 151 };
+    return 1;
+}
