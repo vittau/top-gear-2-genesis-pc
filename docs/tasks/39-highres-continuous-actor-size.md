@@ -152,3 +152,14 @@ explicitly narrows the new-country/Ayers checks to actors, native-row
 replay, image regions and margins; it does not change or rerun the separately
 mapped Ayers road diagnostic. Full road checks remain on the original three
 regressions. Final results and play scripts will be recorded here.
+
+Second milestone: all seven directed asset promotions and initial actor
+checks pass. Closer temporal review found `$81` moves laterally: matching it
+by lateral coordinate lost 334 endpoint transitions in the first Egypt
+trace. Its slot index is already available in the original `$FF1800` word
+used by `$A41C`; capture now uses that slot with stable world depth when
+matching `$81`. Other scenery matching is unchanged. Egypt was requalified
+at 4×/60 fps (all actor invariants and native-row replay 0), and Ayers is
+being repeated through the later `$81` interval without running its road
+check. The growth gate now accepts an explicit required-kind list so the
+seven-kind directed evidence cannot silently omit a candidate.

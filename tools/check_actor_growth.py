@@ -79,7 +79,10 @@ def measure(path):
             for i, p in enumerate(previous):
                 if i in used or p['record'] != a['record']:
                     continue
-                if not a['car'] and p['lateral'] != a['lateral']:
+                moving = a['kind']==0x81 and 'object' in a
+                if moving and p.get('object') != a['object']:
+                    continue
+                if not a['car'] and not moving and p['lateral'] != a['lateral']:
                     continue
                 if 'identity' in a and p.get('identity') != a['identity']:
                     continue
@@ -135,6 +138,8 @@ def main():
     a.add_argument('--out', type=Path, required=True)
     a.add_argument('--continuous', action='store_true',
                    help='gate residuals and independent ROM reference to 0.1%%')
+    a.add_argument('--required-kinds', default='car,94,99,F0',
+                   help='comma-separated kinds required by the directed motion gate')
     args = p.parse_args()
     if args.action == 'record':
         return record(args)
@@ -142,8 +147,10 @@ def main():
     failures = []
     if args.continuous:
         kinds = {kind for run in result.values() for kind in run}
-        if not {'car', '94', '99', 'F0'} <= kinds:
-            failures.append('missing car/tree/barrel/sign motion samples')
+        required={k.strip() if k.strip()=='car' else k.strip().upper()
+                  for k in args.required_kinds.split(',') if k.strip()}
+        if not required <= kinds:
+            failures.append(f'missing directed motion samples: {sorted(required-kinds)}')
         for path, run in result.items():
             for kind, values in run.items():
                 if values['residual_over_threshold'] or values['max_reference_error'] > .001:
