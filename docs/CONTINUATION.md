@@ -332,12 +332,12 @@ to `dispatch:ctx_57e6e08d6e0a` to finish the rocks diagnosis, the survey write-u
 and the Ayers Rock rocks (kind `$96`) are promoted; the owner approved both. Next:
 Sol (dispatch `ctx_8ecb75cf3bf5`, branch `vittau/tg2-highres-more-kinds`)
 promotes the untabulated ordinary kinds `$81/$93/$97/$A1–$A4`. The pre-existing
-Ayers night-road audit failure is mapped as task 41. Task 40 (gamepad triggers,
+Ayers road audit failure is mapped as task 41. Task 40 (gamepad triggers,
 removal of the in-game CONTROL TYPE menu) is running on OpenCode in the
 `tg2-trigger-pedals` worktree (dispatch `ctx_9eebeaa6e88e`).
 
 **Seven more kinds merged (2026-11-11, `06335bd`).** `$81/$93/$97/$A1–$A4`
 are promoted with continuous growth. The owner played Egypt at 4×/60 fps and said
-"Está ótimo". Still open: poles/specials (task 38), the Ayers night-road audit
+"Está ótimo". Still open: poles/specials (task 38), the Ayers road audit
 (task 41), task 40 (triggers + CONTROL TYPE removal, OpenCode), S5–S7, and
 Deck/GPU performance at N×.
