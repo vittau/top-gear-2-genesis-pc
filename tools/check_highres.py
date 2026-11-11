@@ -1077,6 +1077,9 @@ def check_drive(args):
     the margin audit on, taking a picture every --shot-every frames. The trace
     carries curvature and slope so curve/hill pictures can be picked."""
     if args.actors and args.no_audit: raise ValueError('--actors cannot be combined with --no-audit')
+    if args.skip_road_audit and not args.actors:
+        raise ValueError('--skip-road-audit requires --actors; it narrows the qualification scope')
+    road_audit = not args.no_audit and not args.skip_road_audit
     info = TRACKS[args.track]
     tag = (f'{args.track}-scale{args.scale}' + ('-60' if args.race60 else '') +
            ('-cost' if args.no_audit else ''))
@@ -1093,7 +1096,7 @@ def check_drive(args):
     if args.no_audit:
         env['GENESIS_FRAME_STATS'] = str(out / 'frame-stats.csv')
     if not args.no_audit:
-        env['TG2_ROAD_AUDIT_DIR'] = str(audit)
+        if road_audit: env['TG2_ROAD_AUDIT_DIR'] = str(audit)
         env['TG2_MARGIN_AUDIT'] = str(out / 'margins.csv')
     extra_args = [] if args.no_audit else ['--turbo']
     if args.uncapped:
@@ -1112,7 +1115,8 @@ def check_drive(args):
                widescreen=args.mode, max_frames=0 if args.uncapped else 400000,
                env_extra=env, extra_args=extra_args, timeout=120)
     item = {'tag': tag, 'track': args.track, 'scale': args.scale, 'mode': args.mode,
-            'race60': bool(args.race60), 'frames': args.frames}
+            'race60': bool(args.race60), 'frames': args.frames,
+            'road_audit_enabled': road_audit}
     trace, shots, failures = [], [], []
     actor_table = dict(actors=0, native=0, fallbacks=0, kinds={}, max_floor_error=0,
                        max_drawn_anchor_error=0, position_mismatches=0, palette_mismatches=0,
@@ -1274,7 +1278,7 @@ def check_drive(args):
             failures.append(f"{tag}: manifest {name} has {count} entries")
     if item['exit'] != 0:
         failures.append(f"{tag}: exit {item['exit']}")
-    if args.scale > 1 and not args.no_audit:
+    if args.scale > 1 and road_audit:
         report = out / 'road-artifacts-nx.json'
         proc = subprocess.run([sys.executable, str(ROOT / 'tools' / 'check_road_artifacts.py'),
                                str(out), '--nx', '--out', str(report),
@@ -1547,6 +1551,7 @@ def main():
     s.add_argument('--min-frames', type=int, default=3000)
     s.add_argument('--race60', action='store_true')
     s.add_argument('--actors', action='store_true', help='S4: independent sprite-position/variant and native-row coverage table')
+    s.add_argument('--skip-road-audit', action='store_true', help='Actor-only scope: retain actor/native-row/image/margin checks without qualifying the road')
     s.add_argument('--load-state', type=Path, help='ignored local race checkpoint; republish 30 frames before sampling')
     s.add_argument('--save-state', type=Path, help='save an ignored local race checkpoint before driving')
     s.add_argument('--no-audit', action='store_true', help='CPU timing with no road/margin audits, screenshots or native dumps')

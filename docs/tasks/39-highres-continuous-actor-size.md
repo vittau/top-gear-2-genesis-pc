@@ -128,3 +128,27 @@ changes. Existing applied submodule dirt is retained. All-country **first
 race** inventory is complete; later tracks/late-race kinds, S6, poles/special
 art and real-platform performance remain unqualified. No runtime is left
 running at completion.
+
+## Ordinary-kind extension / progress
+
+The owner confirmed Ayers rocks grow smoothly (“Sim”), and task 39 was
+merged into main as `9f8345a`. Current work is on the new branch
+`vittau/tg2-highres-more-kinds`, based on that merge. Scope: the seven
+ordinary kinds `$81/$93/$97/$A1/$A2/$A3/$A4`; no Ayers night-road work.
+
+Initial milestone: raw-ROM dispatch/mapper reads and the prior survey's
+mapping/VRAM snapshots verify all seven are ordinary model=level ladders,
+with valid, larger model 0 (sizes 31×24 /31×24 /48×75 /36×21 /31×21 /
+21×64 /29×29 respectively). Kind `$81` gets per-object lateral/height data
+at `$A41C`, but `$A476..$A48C` still selects its model from the normal depth
+table and calls `$B04C`/`$B314`. No additional special handling is required;
+existing height/anchor capture and S4/39 culling/priority guards are retained.
+Only the ordinary-kind allowlist changes in the game code.
+
+Evidence/checkpoints: ignored `build/more-kinds/`. Short 4×/60-fps actor
+qualification is running on Egypt, Italy, Chile and Las Vegas, followed by
+G1 and short Auckland/Canada/rain/Ayers regressions. `--skip-road-audit`
+explicitly narrows the new-country/Ayers checks to actors, native-row
+replay, image regions and margins; it does not change or rerun the separately
+mapped Ayers road diagnostic. Full road checks remain on the original three
+regressions. Final results and play scripts will be recorded here.
