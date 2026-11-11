@@ -16,6 +16,11 @@ At 75% of the Claude 5h window the Fable worker checkpointed at `ffc4358`
 request S4 continues on **Codex GPT-6.1 Sol, effort high** in the same
 `tg2-highres-s4` worktree (run `run_47bdb5658e2b`, dispatch `ctx_551d89a0b47b`).
 Before the switch, the trees were saved as `refs/keep/tg2-s4-fable-{worktree,engine,ui}-20261111`.
+Sprite filtering: the owner asked whether nearest would look more faithful.
+The coordinator proposed nearest magnification under Linear Off (area
+averaging kept for minification). The owner chose to **keep the current plan
+(box filter) and judge it at the S4 visual review**. Raise this option again
+at that review; don't change the worker's brief now.
 
 **v0.2.0 published (2026-11-11)** at the owner's explicit request ("está bom
 o suficiente"), from `main` at `a74e308`, with the experimental internal
