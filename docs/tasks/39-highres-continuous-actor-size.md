@@ -1,6 +1,6 @@
 # Task 39: continuous actor growth without pop-in at N×
 
-**Status: mapped (owner, 2026-11-11). Not started.** Read `AGENTS.md`,
+**Status: in progress (Sol, 2026-11-11).** Read `AGENTS.md`,
 `HIGHRES.md` §14 and [task 34](34-highres-s4.md) (its "Progress / handoff"
 section) first. Only Opus, Fable or Sol may implement this S4 extension. Use supervised Orca
 orchestration, the shared heavy lock, at most 3 jobs, headless probes, one runtime and no worker CI.
@@ -63,3 +63,28 @@ of its projection, with no visible steps at band boundaries:
 - The CPU cost increment, measured as in task 34.
 
 Poles (task 38) are out of scope unless they share the size code naturally.
+
+## Progress / handoff
+
+Branch `vittau/tg2-highres-continuous`, based on `origin/main` at `c56d2fa`.
+Existing build and patched submodules retained; no CI or engine edits.
+
+First milestone: raw-ROM inspection verifies `$B314` (`3744 93D4`) as
+the common projection entry with unsigned D2 fraction intact on both paths.
+`$B410` stores the integer row scale into `$FF17E0`; `$B416..$B428`
+interpolates D4 separately, truncating to an integer before ×4. The distant
+path discards D2 at `$B480`. A new read-only entry hook preserves that
+fraction and reconstructs the unrounded table interpolation, for evidence
+only at this milestone. No generated C was edited.
+
+`tools/check_actor_growth.py` records deterministic 4×/60-fps input-script
+runs and streams per-frame sizes. The instrumented old policy is retained
+locally as `build/task39/TG2Recomp-instrumented-s4`. Initial Auckland old
+continuous run: exit 0, four manifests empty; measured boundary jumps up to
+66.50% (tree), with up to 46.49% unexplained by the precise projection.
+Artifacts and raw-ROM disassembly are under ignored `build/task39/`.
+
+Next: replace band-relative sizing with model-0 projection calibration,
+interpolate its size between guest pictures, qualify traces on three tracks,
+and produce the motion comparison, cost measurements and stock gates.
+Default stays stepped until owner approval, as requested by the spec.

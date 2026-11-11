@@ -143,6 +143,12 @@ kind = "game_hook"
 addr = 0x00B5FA
 kind = "game_hook"
 # S4 actor snapshots (game/tg2_actors.c), read-only. $B42E and $B4D6 are the
+# $B314 (3744 93D4) is the shared projection entry: D0 depth and D2's
+# unsigned 16-bit fraction are still intact on BOTH paths (task 39).
+[[widescreen_site]]
+addr = 0x00B314
+kind = "game_hook"
+# Existing projection endpoints:
 # instruction after the projection's `swap d1` on the interpolated and the
 # depth-table path (raw ROM 3C2B 93B4 at both, after 4841): the upper word of
 # D1 still holds the discarded X fraction. $B584 (426B A046) is the mapper

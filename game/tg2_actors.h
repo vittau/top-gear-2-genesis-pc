@@ -27,10 +27,12 @@ typedef struct Tg2ModelPiece {
 typedef struct Tg2Actor {
     double x, y;                 /* sub-pixel anchor, screen coordinates      */
     float continuous;           /* projection scale / band-centre scale      */
+    double projection, depth;   /* unrounded scale and depth + fraction      */
+    short lateral;              /* projection input, for temporal matching   */
     unsigned record, art, guest_key, model_key;
     short gx, gy, clip;         /* guest integer anchor, first hidden row    */
     unsigned short first_piece; /* scene piece index when it started (depth) */
-    unsigned short rattr, scale;
+    unsigned short rattr, scale, scale4;
     unsigned short guest_first, guest_count, model_first, model_count;
     unsigned char kind, guest_model, model, level, path, high, fallback, car;
 } Tg2Actor;

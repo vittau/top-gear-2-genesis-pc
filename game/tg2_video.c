@@ -180,7 +180,7 @@ void tg2_video_reset(void) {
 }
 int tg2_video_hook(uint32_t pc) {
     int actors = tg2_actors_active();
-    if (pc == 0xB42E || pc == 0xB4D6) {
+    if (pc == 0xB314 || pc == 0xB42E || pc == 0xB4D6) {
         if (actors || tg2_actors_logging()) tg2_actors_latch(pc);
     } else if (pc == 0xB584) {
         current_actor = (actors || tg2_actors_logging()) ?

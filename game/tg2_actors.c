@@ -36,6 +36,8 @@ static int valid_pointer(unsigned a) {
 typedef struct {
     int path;                 /* 0 none, 1 interpolated, 2 depth table */
     unsigned d1, d2, d3, d4, depth2, type_in, record;
+    unsigned fraction;
+    int lateral;
 } Projection;
 static Projection pending;
 static struct {
@@ -139,7 +141,11 @@ void tg2_actors_reset(void) {
 static void evidence_hook(uint32_t pc) {
     if (ram16(0x189E))
         return; /* 2P split-screen stays native */
-    if (pc == 0xB42E || pc == 0xB4D6) {
+    if (pc == 0xB314) {
+        pending.path = 0;
+        pending.fraction = g_cpu.D[2] & 65535;
+        pending.lateral = (int16_t)g_cpu.D[1];
+    } else if (pc == 0xB42E || pc == 0xB4D6) {
         pending.path = pc == 0xB42E ? 1 : 2;
         pending.d1 = g_cpu.D[1];
         pending.d2 = g_cpu.D[2];
@@ -267,6 +273,18 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     a.model = a.car ? car_model(a.guest_model, &level) : tabulated(kind) ? 0 : a.guest_model;
     a.fallback = !a.car && !tabulated(kind) ? 1 : 0;
     a.level = level; a.rattr = mem16(record + 8); a.scale = ram16(0x17E0);
+    a.scale4 = pending.d4 & 65535;
+    a.lateral = pending.lateral;
+    /* $B3A2 halves D2 before signed multiplication, then $B422 doubles
+     * that product. Preserve the full original unsigned fraction; the far
+     * path has the same input but discards it. D0 at both endpoints = 2*row.
+     * Read the same table the ROM uses at $B40C/$B4C4, without integer
+     * truncation or dependence on the selected art band. */
+    unsigned scales = mem32(0xFF221E), row = pending.depth2 / 2;
+    a.depth = row + pending.fraction / 65536.0;
+    a.projection = valid_pointer(scales) && row < 127 ?
+        mem16(scales + 2*row) + (mem16(scales + 2*row + 2) - (double)mem16(scales + 2*row)) *
+        pending.fraction / 65536.0 : a.scale;
     a.gx = (int16_t)g_cpu.D[1] + 128;
     a.gy = (int16_t)g_cpu.D[2] + (int16_t)ram16(0x2452) - 128;
     a.x = a.gx + (pending.d1 >> 16) / 65536.0;
@@ -417,11 +435,20 @@ void tg2_actors_note_sat(int index, unsigned pieces, unsigned inside, unsigned m
     }
 }
 void tg2_actors_paint(const Tg2ActorCanvas *c) {
+    static int trace_checked;
+    static FILE *trace;
+    if (!trace_checked) {
+        const char *path=getenv("TG2_ACTOR_TRACE"); trace_checked=1;
+        if(path && *path) {
+            trace=fopen(path,"w");
+            if(trace) fprintf(trace,"frame,index,record,kind,car,level,model,path,x,y,lateral,depth,guest_scale,scale4,projection,size,promoted,fallback,pixels\n");
+        }
+    }
     for (unsigned i=0;i<prepared_count;++i) {
         Prepared *p=&prepared[i]; p->pixels=p->native_blocked=p->pole_blocked=p->pole_overpaint=0;
         const Tg2Actor *a=&p->actor;
         if(a->fallback) {++totals.fallbacks;if(a->fallback<8)++totals.reasons[a->fallback];}
-        if (!p->promoted) {++totals.native;continue;}
+        if (!p->promoted) {++totals.native;goto traced;}
         ++totals.actors;++totals.kinds[a->kind];
         totals.positions+=p->position_mismatches;
         totals.palettes+=p->palettes!=p->guest_palettes;
@@ -471,6 +498,10 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
                 *out=color;++p->pixels;
             }
         }
+traced:
+        if(trace) fprintf(trace,"%llu,%u,%u,%u,%u,%u,%u,%u,%.8f,%.8f,%d,%.8f,%u,%u,%.8f,%.8f,%d,%u,%u\n",
+            (unsigned long long)log_frame,i,a->record,a->kind,a->car,a->level,a->model,a->path,
+            a->x,a->y,a->lateral,a->depth,a->scale,a->scale4,a->projection,p->size,p->promoted,a->fallback,p->pixels);
     }
 }
 int tg2_actors_json(char *out,int cap) {
