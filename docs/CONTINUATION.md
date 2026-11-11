@@ -285,3 +285,13 @@ is actually needed, follow his global red-callout, ping and Telegram
 `6660765`, connection `11751065` (“Claudão”), organization `9317102`, team
 `3207272`; discover and verify its current interface before use, never write
 credentials into this repository.
+
+**Task 39 approved (2026-11-11).** Sol delivered continuous growth on
+`vittau/tg2-highres-continuous` at `b43af85`, with fractional projection size
+and 60 fps size interpolation. The owner played it and said "Está ótimo". Still
+pending on that branch: make continuous the default (the default is still stepped), and
+investigate the Ayers Rock (Australia, stage 2) rocks that still swap sprites.
+That track was never in the evidence; it may be an excluded kind such as `$82`, an
+untabulated kind or a fallback. A survey of the other countries is also pending. The follow-up to the
+same worker (`ctx_f1e2d6292f22`) failed with `agent-update-prompt`. The owner
+must update Codex, then resend it. Merge into `main` after that.
