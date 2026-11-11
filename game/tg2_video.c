@@ -1149,7 +1149,8 @@ static void mix_pieces(const Scene *a, const Scene *b) {
             const Tg2Actor *q=&b->actors.actors[j];
             double d=fabs(p->x-q->x)+fabs(p->y-q->y);
             int same = p->record==q->record && p->kind==q->kind &&
-                p->identity==q->identity && (p->car || p->lateral==q->lateral);
+                p->identity==q->identity && (p->car ||
+                    (p->kind==0x81 ? p->object==q->object : p->lateral==q->lateral));
             if(!actor_used[j] && same && d<distance){best=j;distance=d;}
         }
         if(best>=0){

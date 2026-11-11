@@ -1752,6 +1752,83 @@ selected evidence. `tools/check_highres.py` now accepts `ayers-rock` and
 `country-00`..`country-15` aliases, with password difficulty separate from
 race slot. No other newly observed kind was fixed.
 
+### 14.9 Seven more ordinary kinds (post-task-39 extension)
+
+The owner confirmed Ayers rocks grow smoothly (“Sim”); task 39 is merged
+in `9f8345a`. On the separate `vittau/tg2-highres-more-kinds` branch, the
+seven R1 kinds in §14.8 now use the same detailed model-0/continuous-size
+path. The inventory above records the earlier policy and is not rewritten
+as though those earlier captures already promoted them.
+
+Raw ROM `$A43C..$A48C`, `$B04C..$B0A0` and `$B584..$B632`, plus the saved
+survey mappings/VRAM, verify model = distance level, valid ROM mapping
+headers ending at `$8888`, and a larger model 0 for every observed level
+0–10. All audited headers use palette line 2 and low priority. `$93` was
+checked in Egypt and Chile (different RAM records, same ROM mapping).
+
+| Kind | Evidence track | Record | Mapping table → model-0 header | Opaque model 0 → model 10 | Model-0 pieces |
+|---|---|---|---|---|---:|
+| `$81` | Egypt / Abu Simbel | `$FF8E12` | `$0110EA` → `$011126` | 31×24 → 2×1 | 1 |
+| `$93` | Egypt / Chile | `$FF8E1C` / `$FF8DFE` | `$0110EA` → `$011126` | 31×24 → 2×1 | 1 |
+| `$97` | Italy / Florence | `$FF8DAE` | `$011220` → `$01125C` | 48×75 → 4×8 | 6 |
+| `$A1` | South America / Chile | `$FF8DEA` | `$0115A4` → `$0115E0` | 36×21 → 3×1 | 2 |
+| `$A2` | U.S.A. / Las Vegas | `$FF8E08` | `$01163A` → `$011676` | 31×21 → 2×1 | 1 |
+| `$A3` | U.S.A. / Las Vegas | `$FF8E12` | `$0116D0` → `$01170C` | 21×64 → 2×6 | 2 |
+| `$A4` | South America / Chile | `$FF8E1C` | `$011766` → `$0117A6` | 29×29 → 3×2 | 1 |
+
+`$81` uses `$A41C` to read per-object lateral/height data from a 16-byte
+slot (`$FF2736 + 16*low_byte($FF1800)`), then still takes its model from the
+ordinary depth table. Existing S4 height/anchor capture handles that data.
+Because it moves laterally, its temporal match must use slot + stable world
+depth, rather than exact lateral equality. The first Egypt trace exposed
+334 lost lateral transitions; the corrected match covers these moving
+endpoints while retaining the native synthesized SAT cell. Other scenery
+matching, simulation, culling, palette/priority and clip rules are unchanged.
+None of these seven needs compound reconstruction or deferral to task 38.
+
+Four directed 900-frame 4×/60-fps drives (Egypt, Italy, Chile, Las Vegas),
+using the latest Egypt repeat, give:
+
+| Kind | Promoted presentations | Visible frame pairs /band crossings | Promoted model/asset fallbacks |
+|---|---:|---:|---:|
+| `$81` | 1,137 | 990 /42 | 0 |
+| `$93` | 4,067 | 3,457 /163 | 0 |
+| `$97` | 1,469 | 1,307 /61 | 0 |
+| `$A1` | 1,635 | 1,448 /88 | 0 |
+| `$A2` | 2,052 | 1,874 /109 | 0 |
+| `$A3` | 1,722 | 1,441 /80 | 0 |
+| `$A4` | 685 | 659 /35 | 0 |
+
+Across **12,767 promotions /11,176 visible pairs /578 band crossings**,
+model selection is always 0; anchor/SAT/palette/priority and native-row replay
+errors are 0. Maximum unexplained size/projection residual is **0.000030%**,
+below the 0.1% gate, including band crossings. Native guards are retained:
+24 incomplete-SAT instances (R5) and 1,710 fully culled instances (R6) stay
+native; these are not asset fallbacks or failed promotions. R1–R4 and R7 are
+0 for the directed new-kind records. `check_actor_growth.py` now accepts an
+explicit required-kind list so a directed gate fails if a candidate is absent.
+
+All final directed drives, stock G1, and short Auckland/Canada/rain/Ayers
+actor regressions exit 0, with the four manifests empty. The moving `$81`
+was also exercised in a 900-frame Ayers repeat: 622 promotions, 578 pairs,
+32 crossings, max residual 0.000025%, all actor invariants 0. Stock hashes
+remain `60=2A0B972960C5E325`, `300=1131D937D70234FD`.
+
+Qualification scope is explicit: `--skip-road-audit` requires `--actors` and
+retains actor, native-row replay, native/N× image-region and margin checks;
+it does not qualify or change the road. It was used for the new countries
+and Ayers, as requested. Original Auckland/Canada/rain regressions retain the
+full road check. The separately mapped Ayers night-road diagnostic was not
+run or modified. No engine patch/pin change, generated C edit or CI run.
+
+Ignored evidence: `build/more-kinds/{rom-asset-evidence.json,target-summary.json,
+growth-summary.json,ayers81-growth.json,commands.json,moving81-commands.json,
+worker-report.md}`. `build/more-kinds/play.sh` defaults to Egypt (`$81/$93`);
+arguments `italy`, `chile`, `las-vegas` select the other demonstration races.
+The saved settings use 4× with 60-fps races On; no visible game was launched
+by the worker. Later tracks/late-race art and real-platform performance are
+not qualified by this directed extension.
+
 ## 15. Continuous actor growth (task 39)
 
 Implemented and owner-approved (“Está ótimo”) on

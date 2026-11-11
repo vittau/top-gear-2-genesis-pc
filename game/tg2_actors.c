@@ -227,7 +227,9 @@ static int capture_model(Tg2ActorSet *set, unsigned record, unsigned model,
 }
 static int tabulated(unsigned kind) {
     return kind == 0x80 || kind == 0xF0 || kind == 0x94 || kind == 0x85 ||
-           kind == 0x99 || kind == 0x9A || kind == 0x86 || kind == 0x96;
+           kind == 0x99 || kind == 0x9A || kind == 0x86 || kind == 0x96 ||
+           kind == 0x81 || kind == 0x93 || kind == 0x97 || kind == 0xA1 ||
+           kind == 0xA2 || kind == 0xA3 || kind == 0xA4;
 }
 static unsigned car_model(unsigned guest, unsigned *level) {
     for (unsigned row = 0; row < 24; ++row) {
@@ -280,7 +282,9 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     a.fallback = !a.car && !tabulated(kind) ? 1 : 0;
     a.level = level; a.rattr = mem16(record + 8); a.scale = ram16(0x17E0);
     a.scale4 = pending.d4 & 65535;
-    a.object = ram16(0x1878);
+    /* $A41C indexes kind $81's moving-object slot with the original low
+     * byte at $FF1800. Its projected lateral changes, its slot does not. */
+    a.object = kind == 0x81 ? ram16(0x1800) & 255 : ram16(0x1878);
     a.lateral = pending.lateral;
     /* $B3A2 halves D2 before signed multiplication, then $B422 doubles
      * that product. Preserve the full original unsigned fraction; the far
@@ -462,7 +466,7 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
         const char *path=getenv("TG2_ACTOR_TRACE"); trace_checked=1;
         if(path && *path) {
             trace=fopen(path,"w");
-            if(trace) fprintf(trace,"frame,index,record,kind,car,level,model,path,x,y,lateral,depth,guest_scale,scale4,projection,size,promoted,fallback,pixels,identity\n");
+            if(trace) fprintf(trace,"frame,index,record,kind,car,level,model,path,x,y,lateral,depth,guest_scale,scale4,projection,size,promoted,fallback,pixels,identity,object\n");
         }
     }
     for (unsigned i=0;i<prepared_count;++i) {
@@ -520,9 +524,9 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
             }
         }
 traced:
-        if(trace) fprintf(trace,"%llu,%u,%u,%u,%u,%u,%u,%u,%.8f,%.8f,%d,%.8f,%u,%u,%.8f,%.8f,%d,%u,%u,%u\n",
+        if(trace) fprintf(trace,"%llu,%u,%u,%u,%u,%u,%u,%u,%.8f,%.8f,%d,%.8f,%u,%u,%.8f,%.8f,%d,%u,%u,%u,%u\n",
             (unsigned long long)log_frame,i,a->record,a->kind,a->car,a->level,a->model,a->path,
-            a->x,a->y,a->lateral,a->depth,a->scale,a->scale4,a->projection,p->size,p->promoted,a->fallback,p->pixels,a->identity);
+            a->x,a->y,a->lateral,a->depth,a->scale,a->scale4,a->projection,p->size,p->promoted,a->fallback,p->pixels,a->identity,a->object);
     }
 }
 int tg2_actors_json(char *out,int cap) {

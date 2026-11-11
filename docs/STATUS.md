@@ -25,6 +25,13 @@ regressions pass; the separate Ayers night-road stripe audit fails even with
 actors disabled and remains unresolved. See HIGHRES §§14.8/15 and task 39's
 handoff for the ready 4×/60-fps play scripts. Poles remain native (task 38).
 
+The accepted continuous/rock work is merged in `9f8345a`. Its seven remaining
+ordinary survey kinds are now locally qualified on
+`vittau/tg2-highres-more-kinds`: `$81/$93/$97/$A1/$A2/$A3/$A4`, with model-0
+art and continuous growth. All directed actor/stock regressions pass;
+HIGHRES §14.9 records the checks and `build/more-kinds/play.sh` offers four
+direct race scenes for review. The Ayers road diagnostic was left untouched.
+
 **v0.1.0 is out** (published 2026-11-08, tag on `f1cb093`; release notes in
 `release/v0.1.0.md`). It is a native Top Gear 2 for Windows, Linux/Steam Deck
 and macOS, with widescreen, true 60 fps, music and SFX together, save states
@@ -48,7 +55,7 @@ Where to look:
 | Native 4:3 baseline | Boot → menus → full 4-lap race → results/shop/next race; 2P split-screen; 33.7-min soak, plus a 43.7-min soak with all options on (16:9 + Edges + 60 fps + Hide overscan, 13 races, SP stable). 0 dispatch misses. | `BRINGUP.md`, `VALIDATION.md` |
 | All 64 races | Password codec reversed (`PASSWORDS.md`, `tools/tg2_password.py`). All 16 countries raced for 62 s in Off and 16:9+Edges, 0 manifest entries; rain, night, fog and snow covered. Task 25 drove the last 19 races (index selected from the ROM table on the setup screen) to the finish: 64/64. Nitro = C button. | `VALIDATION.md` |
 | Widescreen | Adaptive / 16:9 / 21:9 race renderer: road, background, sprites in the margins. HUD Centered or Edges. Off is byte-identical to stock. | `WIDESCREEN.md` |
-| High-resolution S3/S4 | Road/background and detailed actors at 2×/3×/4×, default 1×, restart required. S3/S4 approved and merged; owner-approved continuous growth is now default on the task 39 branch, including Ayers Rock rocks. Other unpromoted country kinds are inventoried; HUD/effects/poles retain native detail. | `HIGHRES.md` §§13–15, `CONTINUATION.md` |
+| High-resolution S3/S4 | Road/background and detailed actors at 2×/3×/4×, default 1×, restart required. Continuous growth and Ayers rocks are accepted/merged in `9f8345a`. Seven further ordinary kinds are locally qualified on `vittau/tg2-highres-more-kinds`; HUD/effects/poles retain native detail. | `HIGHRES.md` §§13–15, `CONTINUATION.md` |
 | Widescreen fixes from playtests | Black bands on downhills, the top-window line, tunnel margins (now follow the walls), and the motion-only flicker in 60 fps synthesized frames. Full-presented-frame margin audit: 1019 → 0. | `WIDESCREEN.md` |
 | Hide overscan | Default On: crops the 8 top and 16 bottom empty race lines (the top band's stock red marks go with them), so the picture fills the window. Menus, results and split-screen keep their full height. | `WIDESCREEN.md` |
 | 60 fps | Stock simulation plus host-only interpolation. Identical WRAM over 16000 frames; 60 pictures/s; no road artefacts; adds 50 ms display latency. | `FRAMERATE.md` |
