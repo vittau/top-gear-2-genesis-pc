@@ -1,10 +1,11 @@
-# Controls: fixed TYPE 1 and analog pedals
+# Controls: four-row carousel and analog pedals
 
 The port owns controller remapping. The launcher's binding table
 (`[input.pN]` in `settings.ini`) and the in-game runtime menu are the only
 places a player changes which physical input drives a Genesis button. The
-cartridge's own CONTROL TYPE choice is therefore removed, and the two features
-below are game-side policy on top of the shared runner's input path.
+cartridge's own CONTROL TYPE choice is gone, and the two features below are
+native game code on top of the shared runner's input path — the recompiled
+routine itself is replaced, not painted over.
 
 ## What the player gets
 
@@ -33,66 +34,75 @@ The mapping is in the game adapter, not the engine:
 passes LT/RT already compared against the player's deadzone, and
 `game/tg2_controls.c` returns `GPAD_B` for RT and `GPAD_A` for LT.
 
-## Why TYPE 1
+## The four-row carousel
 
-The cartridge maps raw pad bits to car actions through a per-player table.
-Raw-ROM evidence:
+The setup screen's carousel is a native replacement of two cartridge routines
+in `game/tg2_controls.c` (one `[[widescreen_site]]` game hook each, returning 1
+to replace the routine):
+
+* **`$021A62`, the input handler.** Stock moves a cursor over five rows
+  (RACE, PLAYER, GEARS, SPEED, CONTROL) and wraps 0..4. The native version
+  keeps every START and row rule and wraps 0..3.
+* **`$021F54`, the row/page draw.** Stock reads the state's record at
+  `$21F40 {block, value adjust, d6 adjust, d7 adjust}`, emits the page block
+  and then the selected row's highlight block through `$0206AE`/`$001CE0`.
+  The native version does exactly that, except that for the row list (state 0)
+  it emits only the first four rows — entries 0..7 of the page's block 0
+  (`RACE+PLAYER` and `GEARS+SPEED`) instead of all twelve, so the CONTROL
+  pieces (`$2157`/`$215F`/`$2167`/`$216F`, 32x16 each) never enter the
+  descriptor stack, the SAT or the picture. States 2..4 (the GEARS/SPEED/
+  CONTROL pages) keep the stock emission byte for byte, and the page 1
+  (PLAYER) draw at `$021F96` is untouched.
+
+The row list's page table (`$FF53A0`) has block 0 = 12 pieces and blocks 1..5
+= the per-row highlight; the native draw clamps the highlight to the last kept
+row for the row list, so a snapshot that restored the old fifth selection
+cannot leave a border over the removed row.
+
+There is no presentation mask and no per-frame correction pass: the button is
+never drawn, so no frame timing can expose it.
+
+Raw-ROM evidence for the whole chain:
 
 | Address | Meaning |
 |---|---|
-| `$007942` | Four 7-word presets; row 0 is TYPE 1. Read as `[LEFT, RIGHT, UP, DOWN, A, B, C]` → output bit |
-| `$00797A` | Applier: reads the player's type word, copies that preset into the raw-pad table |
-| `$FF1BC6` / `$FF201E` | Player 1 / player 2 type word (0 = TYPE 1) |
-| `$FF19AE` / `$FF1E06` | Applied table: `UP, DOWN, LEFT, RIGHT, B, A, C` = `5, 6, 0, 1, 3, 2, 4` for TYPE 1 |
-| `$FF18FA` | Remapped controls produced from that table (bit 3 ACCEL, bit 2 BRAKE, bit 4 NITRO) |
-| `$FF2554` | Setup carousel's menu-controller struct |
-| `$FF2562` / `$FF25D0` | TYPE 1..4 value word the CONTROL page edits (P1 / P2) |
-| `$021860` | Leaving the setup screen copies the menu fields into `$FF1BC6`/`$FF201E` and the player config |
-| `$021A62` | Carousel input handler: rows 0..4 = RACE, PLAYER, GEARS, SPEED, CONTROL, wrapping 0..4 |
-| `$021E14` | Carousel row-list draw leaf (also runs the palette fade) |
-| `$021CB2` | CONTROL page value handler: clamps the edited type to 0..3 |
+| `$007942` | Four 7-word control presets; row 0 is TYPE 1, read as `[LEFT, RIGHT, UP, DOWN, A, B, C]` |
+| `$FF1BC6` / `$FF201E` | Applied type words (0 = TYPE 1); boot writes 0, the setup screen's copy at `$021860` is the only other writer |
+| `$FF19AE` / `$FF1E06` | Applied raw-pad tables; TYPE 1 = `5,6,0,1,3,2,4` |
+| `$FF18FA` | Remapped controls (bit 3 ACCEL, bit 2 BRAKE, bit 4 NITRO) |
+| `$FF2554` | Setup carousel menu-controller base (`$FF2556` P1 state, `$FF25C4` P2 state) |
+| `$21F2C` | State → draw routine (`0,2,3,4` → `$21F54`; `1` → `$21F96`) |
+| `$21F40` | State → record (`block`, value adjust, d6 adjust, d7 adjust) |
+| `$21E6E` | Per-player SAT linker: player number, both blocks, SAT DMA |
+| `$FF48BA` | Descriptor stack (count, free list, 8-byte pieces at +`$56`) |
+| `$FF53A0` | Page table: 6-byte directory at +8, payload pieces `{y,size,tile,x}` |
+| `$001CE0` / `$0206AE` | Append one descriptor / emit one page block |
+| `$021CB2` | CONTROL page value handler (page unreachable now) |
 
-TYPE 1 is the cartridge default and the mapping the launcher's face-button
-bindings already describe (B = accelerate, A = brake, C = nitro). The port
-holds it for both players:
+Passwords do not encode a control type (`docs/PASSWORDS.md`), and with the
+selector unreachable and boot writing 0, the applied type is TYPE 1 for both
+players. The port deliberately has no correction pass.
 
-* `$FF1BC6` and `$FF201E` are clamped to 0 on every VBlank and again at the
-  applier (`$00797A`), so the CONTROL page's value can never reach the car;
-* a quickstate load forces both players' applied tables back to TYPE 1
-  (`tg2_controls_state_loaded`), because a restored RAM image may carry a
-  table built from another type;
-* the first time a non-zero type word or table is corrected, one line is
-  written to stderr (`[tg2] control type ... holding TYPE 1`), which is the
-  debug assertion for the lock.
+## Verifying the picture
 
-Passwords do not encode a control type (`docs/PASSWORDS.md`), and a saved
-2P setup only reaches the game through the same menu fields, which are
-clamped. The only real hole would be a directly written table, and the
-quickstate path covers that.
+Every presented frame is captured from the presentation provider
+(`TG2_CONTROL_CAPTURE`) with the CONTROL rectangles' non-backdrop pixel
+counts, the carousel state and the number of CONTROL tiles in the live SAT:
 
-## The removed CONTROL row
+```sh
+build/venv/bin/python tools/tg2_carousel_capture.py --out build/carousel-capture/after-1p
+build/venv/bin/python tools/tg2_carousel_capture.py --two-player \
+    --out build/carousel-capture/after-2p
+```
 
-The carousel used to offer a fifth row, CONTROL, whose page is a static pad
-diagram plus a `TYPE 1 2 3 4` selector. With remapping owned by the port the
-page has no meaning, so it is gone:
+The run spans frames before the menu opens, entry, 14 cursor moves each way
+(with wraps) and leaving, in one- and two-player layouts. The fixed build
+reports 0 frames with any CONTROL pixel and 0 frames with a CONTROL tile in
+the display list. The same capture on the previous mask-based build shows 238
+offending frames in one-player (14 at entry, then 8 per cursor move) and 14 at
+two-player entry, which is the owner's flicker.
 
-* the carousel input handler is replaced (`$021A62`, same START/row rules as
-  stock) with four rows: RACE, PLAYER, GEARS, SPEED, wrapping 0..3;
-* the button art is part of the page bitmap the cartridge streams into tiles,
-  so the port omits the row in the presented picture on the one screen that
-  draws it: the row-list draw hook marks the frame and
-  `game/tg2_video.c` paints the button's native rectangle(s) with the screen's
-  backdrop colour. A one-player setup has one centred list; a two-player setup
-  stacks both players' lists, so both CONTROL buttons are covered at their own
-  coordinates. Navigation, the game's own palette fades and every other screen
-  are untouched.
-
-`build/trigger-pedals/carousel-before-after.png` (ignored build output) shows
-the stock five-row list next to the port's four-row list. The stock
-framebuffer gates at frames 60 and 300 do not include the carousel, so they
-stay identical.
-
-## Verifying it
+## Verifying the controls
 
 ```sh
 flock ~/.cache/tg2-heavy.lock env JOBS=3 tools/build-linux.sh
@@ -107,12 +117,12 @@ build/venv/bin/python tools/test_tg2_controls.py --label "two-player" --two-play
 The test attaches two synthetic SDL controllers through the engine's dev
 probes (`virtual_pad` / `virtual_axis`), drives RT/LT through SDL's real
 gamecontroller axis path and the player's deadzone, and checks the resulting
-Genesis pad mask over TCP. In a race it also reads the cartridge's own remapped
-control byte (`$FF18FA`): RT alone sets ACCEL (bit 3) and LT alone sets BRAKE
-(bit 2). It also proves the carousel rows, the removed button's pixels, the
-TYPE 1 clamp, the quickstate correction, the stock framebuffer hashes and empty
-dispatch/floor manifests. The two-player pass drives player 2's pad too, so
-both stacked carousels wrap 0..3.
+Genesis pad mask over TCP. In a race it also reads the cartridge's own
+remapped control byte (`$FF18FA`): RT alone sets ACCEL (bit 3) and LT alone
+sets BRAKE (bit 2), and the applied table is TYPE 1 for both players. It also
+proves the four carousel rows, the removed button's pixels, the stock
+framebuffer hashes and empty dispatch/floor manifests. The two-player pass
+drives player 2's pad too, so both stacked carousels wrap 0..3.
 
 Not verified in CI: real Steam Deck / DualSense / Xbox hardware. The trigger
 axes are read through `SDL_GameControllerGetAxis`, which is the same call the

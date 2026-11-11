@@ -1479,16 +1479,27 @@ the launcher) and lock TYPE 1 for both players. Details in
   (recorded pad/key bindings, P2 enabled) and with B remapped to another face
   button (`tools/test-data/settings-existing.ini`,
   `tools/test-data/settings-override.ini`).
-* **TYPE 1 lock.** A non-zero `$FF1BC6`/`$FF201E` is clamped within a frame
-  and logged once; a race applies `[5,6,0,1,3,2,4]` to both players; a
-  tampered table + type words saved into a quickstate are corrected on load
-  (`tg2_controls_state_loaded`).
-* **CONTROL row.** The carousel wraps 0..3 (UP from RACE goes to SPEED, DOWN
-  from SPEED goes to RACE), the removed button's rectangle is backdrop in the
-  presented picture, and the other four rows are drawn. The two-player setup
-  stacks both lists; player 2's virtual pad drives its own carousel, both
-  CONTROL buttons are absent and each player keeps four rows. Before/after:
-  `build/trigger-pedals/carousel-before-after.png` (ignored).
+* **TYPE 1.** The carousel no longer offers the cartridge's type selector, so
+  the type stays at boot's 0 and a race applies `[5,6,0,1,3,2,4]` to both
+  players. There is no correction pass.
+* **CONTROL row, native.** The carousel's input handler (`$021A62`) and
+  row/page draw (`$021F54`) are native replacements: four rows wrapping 0..3,
+  and only the first four rows of the row-list block are emitted, so the
+  CONTROL sprites never reach the descriptor stack, the SAT or the picture.
+  No presentation mask is involved.
+* **Every presented frame.** `tools/tg2_carousel_capture.py` records one line
+  per presented picture from before the menu opens, through entry, 14 cursor
+  moves each way with wraps, and leaving, in 1P and 2P, from the presentation
+  provider (`TG2_CONTROL_CAPTURE`). Fixed build: 1P 10,962 presented frames
+  (8,169 between entry and leave, 8,131 with the row list up, 28 moves); 2P
+  11,573 frames (8,465 between entry and leave, 8,428 row-list, 14+14 P1 moves
+  plus 8 P2 moves). Frames whose CONTROL rectangle differs from the
+  background: **0** in 1P and **0** in 2P; frames with a CONTROL tile in the
+  SAT: **0** (8192/8193).
+  The previous mask build, captured the same way, shows 238 offending 1P
+  frames (entry 2312-2325, then 8 frames at each of the 28 moves, e.g.
+  2997-3004, 3263-3270, ...) and 14 offending 2P frames (2626-2639) — the
+  owner's flicker, reproduced before the fix.
 * **Stock gates.** Frame 60 `2A0B972960C5E325`, frame 300
   `1131D937D70234FD`, all four manifests empty, in all three test runs.
 * **Builds.** `tools/build-linux.sh` exit 0 after applying the patch stack

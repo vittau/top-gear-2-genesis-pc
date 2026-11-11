@@ -8,8 +8,8 @@ Covers, against the real executable over its TCP probe server:
     work, and a remapped face button keeps working alongside them;
   * a fresh install, an existing settings.ini (no trigger key exists) and a
     user-overridden B binding all behave the same;
-  * the applied control table is TYPE 1, a non-zero type word is clamped, and
-    a quickstate that carries another type is corrected on load;
+  * the applied control table is TYPE 1 for both players (the carousel no
+    longer offers the cartridge's type selector at all);
   * the setup carousel has four rows (no CONTROL), wraps 0..3, and the removed
     button is absent from the presented picture;
   * the stock framebuffer gates (frames 60 and 300) and empty manifests.
@@ -37,16 +37,10 @@ GPAD_B, GPAD_C, GPAD_A, GPAD_START = 0x10, 0x20, 0x40, 0x80
 
 TYPE1 = [5, 6, 0, 1, 3, 2, 4]          # UP DOWN LEFT RIGHT B A C
 P1_TABLE, P2_TABLE = 0x19AE, 0x1E06      # 16-bit WRAM offsets
-P1_TYPE, P2_TYPE = 0x1BC6, 0x201E
 CAROUSEL_ROW = 0x255A
 P2_CAROUSEL_ROW = 0x25C8
 TWO_PLAYER = 0x189E
 CONTROL_RECT_2P = ((100, 80, 211, 95), (100, 192, 211, 207))
-
-
-def wram(off):
-    """Full 24-bit address (the write_memory probe takes a bus address)."""
-    return 0xFF0000 | off
 CONTROL_RECT = (100, 136, 211, 151)    # native 256x224, inclusive
 
 HASH60 = 0x2A0B972960C5E325
@@ -251,16 +245,6 @@ def run(args):
                 return finish()
             trigger_checks(r, args.label, args.b_face)
 
-            # --- TYPE 1 lock -------------------------------------------
-            print(f'[{args.label}] control type', flush=True)
-            r.write_memory(wram(P1_TYPE), '0002')
-            r.write_memory(wram(P2_TYPE), '0003')
-            r.wait_frame(r.frame() + 3)
-            check(r.ram16(P1_TYPE) == 0 and r.ram16(P2_TYPE) == 0,
-                  f'{args.label}: non-zero type words are clamped to TYPE 1')
-            log = (out / 'stderr.log').read_text(errors='replace')
-            check('holding TYPE 1' in log, f'{args.label}: the correction is logged once')
-
             # --- carousel ----------------------------------------------
             print(f'[{args.label}] setup carousel', flush=True)
             to_carousel(r)
@@ -293,6 +277,28 @@ def run(args):
                        for y in range(y0, y1 + 1) for x in range(101, 211)))
             check(rows_nonblack == 4,
                   f'{args.label}: RACE, PLAYER, GEARS and SPEED are still drawn')
+            # The kept rows still open the stock pages: state N for row N.
+            for row in (1, 2, 3):
+                for _ in range(4):
+                    if r.ram16(CAROUSEL_ROW) == 0:
+                        break
+                    press(r, 'UP')
+                for _ in range(row):
+                    press(r, 'DOWN')
+                press(r, 'START', 700)
+                check(r.ram16(0x2556) == row,
+                      f'{args.label}: row {row} opens the stock page (state {r.ram16(0x2556)})')
+                page = out / f'page{row}.png'
+                r.screenshot(page)
+                from PIL import Image
+                im = Image.open(page).convert('RGB')
+                px = im.load()
+                lit = sum(1 for y in range(40, 190, 4) for x in range(20, 240, 4)
+                          if px[x, y] != (0, 0, 0))
+                check(lit > 100, f'{args.label}: page {row} is drawn ({lit} sampled pixels)')
+                press(r, 'B', 600)
+                check(r.ram16(0x2556) == 0,
+                      f'{args.label}: leaving page {row} returns to the row list')
 
             # --- triggers in menus stay additive -----------------------
             axis(r, 1, 'rt', 9000)
@@ -303,9 +309,8 @@ def run(args):
                   f'{args.label}: a face-button menu press still navigates with RT held')
             axis(r, 1, 'rt', 0)
 
-            # --- quickstate with another type -------------------------
-            print(f'[{args.label}] quickstate type correction', flush=True)
-            # Leave the carousel through the RACE row and wait for the clock.
+            # --- leave the carousel through RACE ----------------------
+            print(f'[{args.label}] race start', flush=True)
             for _ in range(4):
                 if r.ram16(CAROUSEL_ROW) == 0:
                     break
@@ -343,25 +348,6 @@ def run(args):
                   f'{args.label}: LT alone sets the game BRAKE bit (0x18FA={brake:#04x})')
             axis(r, 1, 'lt', 0)
             reset_pads(r)
-            # Tamper, save the tampered state, then load it: the adapter must
-            # correct the restored type and table.
-            r.write_memory(wram(P1_TYPE), '0002')
-            r.write_memory(wram(P2_TYPE), '0001')
-            for addr, values in ((P1_TABLE, [0, 1, 2, 3, 4, 5, 6]),
-                                 (P2_TABLE, [1, 0, 5, 6, 2, 3, 4])):
-                hexbytes = ''.join('%04x' % v for v in values)
-                r.write_memory(wram(addr), hexbytes)
-            r.wait_frame(r.frame() + 3)
-            state = out / 'tampered.state'
-            r.command('save_state', path=str(state))
-            r.wait_frame(r.frame() + 120)
-            r.command('load_state', path=str(state))
-            r.wait_frame(r.frame() + 120)
-            check(read_table(r, P1_TABLE) == TYPE1 and read_table(r, P2_TABLE) == TYPE1,
-                  f'{args.label}: a loaded quickstate is corrected to TYPE 1 '
-                  f'(p1={read_table(r, P1_TABLE)} p2={read_table(r, P2_TABLE)})')
-            check(r.ram16(P1_TYPE) == 0 and r.ram16(P2_TYPE) == 0,
-                  f'{args.label}: restored type words are clamped after the load')
 
             # --- stock gates ------------------------------------------
             r.stop()

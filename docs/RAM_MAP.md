@@ -162,9 +162,12 @@ Its required-country word is therefore `$FF260E`, not `$FF2594`.
 | `$021E14` | code | Carousel row-list draw leaf (palette fade included) | state 0 sub 2 |
 | `$021CB2` | code | CONTROL page value handler, clamps the edited type to 0..3 | state 4 sub 1 |
 
-The port fixes the type at TYPE 1 (the cartridge default) for both players and
-removes the CONTROL carousel row; see `docs/CONTROLS.md` for the clamp sites,
-the quickstate correction and the trigger mapping.
+The port removes the CONTROL carousel row by replacing the carousel's input
+handler (`$021A62`, four rows wrapping 0..3) and its row/page draw (`$021F54`,
+which emits only the first four rows of the row-list block) as native game
+code; the type therefore stays at its TYPE 1 boot value. See
+`docs/CONTROLS.md` for the native routines, the page/descriptor structures and
+the trigger mapping.
 
 **Nitro input.** Canonical bit 4, which the default CONTROL TYPE 1 maps from
 the raw `C` button. Holding `C` with throttle on an unmodified car drains the
