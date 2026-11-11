@@ -888,6 +888,79 @@ def downscale_against(native: Path, shot: Path, scale: int, native_filter: bool 
     return compare_downscaled(reference, downsample(cpix, cw, ch, cc, scale))
 
 
+def actor_regions(native, shot, scale, info, native_filter=False):
+    """Same-frame RGB comparison including actor silhouette edges. Two native
+    pixels of padding include subpixel shifts and differing authored short
+    axes. Boxes include occlusion/background, not guessed colour ownership."""
+    import math
+    import numpy as np
+    from PIL import Image
+    ref = Image.open(native).convert('RGB')
+    candidate = Image.open(shot).convert('RGB')
+    top = 8 if candidate.height // scale == 200 else 0
+    ref = ref.crop((0, top, ref.width, top + candidate.height // scale))
+    if native_filter:
+        ref = ref.resize(candidate.size, Image.Resampling.BILINEAR).resize(ref.size, Image.Resampling.BOX)
+    candidate = candidate.resize(ref.size, Image.Resampling.BOX)
+    diff = np.abs(np.asarray(ref, dtype=np.int16) - np.asarray(candidate, dtype=np.int16)).max(axis=2)
+    mask = np.zeros(diff.shape, dtype=bool)
+    regions = []
+    for a in info['actors']:
+        if not a['promoted'] or not a['pixels']: continue
+        x0, y0, x1, y1 = a['box']
+        x0, x1 = max(0, math.floor(x0/scale)-2), min(ref.width, math.ceil(x1/scale)+2)
+        y0 = max(0, math.floor(y0/scale)-top-2)
+        y1 = min(ref.height, math.ceil(min(y1/scale, a['clip']))-top+2)
+        if x1 <= x0 or y1 <= y0: continue
+        mask[y0:y1, x0:x1] = True
+        region = diff[y0:y1, x0:x1]
+        distance = 'near' if a['size'] >= .5 else 'middle' if a['size'] >= .15 else 'far'
+        # The smaller native bands contain only a few authored pixels: their
+        # internal colours need not match a filtered detailed asset. Position,
+        # size axis, palette, priority and SAT ownership have separate gates.
+        tolerance = dict(near=64, middle=80, far=96)[distance]
+        regions.append(dict(kind=a['kind'], guest_model=a['guest_model'], model=a['model'],
+                            distance=distance, box=[x0,y0,x1,y1],
+                            mean_abs_diff=round(float(region.mean()), 4), tolerance=tolerance))
+    outside = diff[~mask]
+    return dict(outside_mean_abs_diff=round(float(outside.mean()), 4) if outside.size else 0,
+                outside_big_diff_ratio=round(float((outside>64).mean()), 6) if outside.size else 0,
+                actor_box_pixels=int(mask.sum()), regions=regions)
+
+
+def actor_region_failures(result, mean=2.5, big=.02):
+    failures = []
+    if result['outside_mean_abs_diff'] > mean or result['outside_big_diff_ratio'] > big:
+        failures.append(f"outside actor boxes: {result}")
+    for r in result['regions']:
+        if r['mean_abs_diff'] > r['tolerance']: failures.append(f"actor silhouette/detail box: {r}")
+    return failures
+
+
+def check_sprite_pairs(args):
+    """Recheck captured pairs without rerunning the guest. Always retain the
+    global S3 metric, while S4's bounded box tolerances handle changed assets."""
+    root = args.capture.resolve()
+    pairs, failures = [], []
+    for f in sorted(root.glob('frame-*-actors.json')):
+        stem = f.name.replace('-actors.json', '')
+        native, shot = root / (stem+'-1x.ppm'), root / (stem+'.png')
+        if not native.exists(): continue
+        info = json.loads(f.read_text())
+        result = actor_regions(native, shot, args.scale, info, bool(info.get("native_filter")))
+        pairs.append(dict(frame=stem, **result))
+        failures.extend(f'{stem}: {e}' for e in actor_region_failures(result))
+    if not pairs: failures.append('no actor/native image pairs')
+    result = dict(check='sprite-pairs', pairs=pairs, failures=failures, ok=not failures)
+    (root/'sprite-pairs-summary.json').write_text(json.dumps(result, indent=1))
+    brief = dict(ok=not failures, failures=failures, pairs=len(pairs),
+                 max_outside_mean=max((p['outside_mean_abs_diff'] for p in pairs),default=0),
+                 max_outside_big_ratio=max((p['outside_big_diff_ratio'] for p in pairs),default=0),
+                 max_actor_box_mean=max((r['mean_abs_diff'] for p in pairs for r in p['regions']),default=0))
+    print(json.dumps(brief,indent=1))
+    return int(bool(failures))
+
+
 def actor_table_sample(table, info, rom, failures, strict=True):
     """Check captured guest pieces independently of the painter's anchors,
     and the chosen car frame against the raw ROM remap, not a second copy of
@@ -1035,7 +1108,7 @@ def check_drive(args):
                 actor_info = r.command('tg2_highres')
                 if actor_info['serial'] != actor_serial:
                     actor_serial = actor_info['serial']
-                    actor_table_sample(actor_table, actor_info, actor_rom, failures, strict=not args.race60)
+                    actor_table_sample(actor_table, actor_info, actor_rom, failures)
             if not args.no_audit and (due or not last_shot):
                 last_shot = st.frame
                 # One batch is served in one per-frame poll, so the screenshot
@@ -1055,14 +1128,16 @@ def check_drive(args):
                     native.replace(reference)
                     shot['native'] = str(reference)
                     shot['downscale'] = downscale_against(reference, Path(path), args.scale, item['native_filter'])
+                    if args.actors:
+                        shot['actor_regions'] = actor_regions(reference, Path(path), args.scale, batch_result[1], item['native_filter'])
+                        failures.extend(f"{tag}: frame {st.frame} {e}" for e in actor_region_failures(shot['actor_regions'], args.max_mean_diff, args.max_big_ratio))
                 shots.append(shot)
         builder_end, builder_end_frame = r.command_many([('tg2_highres', {}), ('frame_info', {})])
         item['highres_filter'] = builder_end
         if args.actors and 'all_actors' in builder_end:
             all_actors = builder_end['all_actors']
             item['sprite_table_all'] = all_actors
-            keys = ['palette_mismatches', 'priority_mismatches']
-            if not args.race60: keys += ['position_mismatches', 'max_floor_error']
+            keys = ['palette_mismatches', 'priority_mismatches', 'position_mismatches', 'max_floor_error']
             if any(all_actors[k] for k in keys) or all_actors['max_drawn_anchor_error'] >= 1:
                 failures.append(f'all-frame actor checks: {all_actors}')
         item['builder_end_frame'] = builder_end_frame['current_frame']
@@ -1129,7 +1204,7 @@ def check_drive(args):
             'max_big_diff_ratio': max(c['big_diff_ratio'] for c in compared)}
         for shot in shots:
             c = shot.get('downscale')
-            if c and (c['mean_abs_diff'] > args.max_mean_diff or
+            if not args.actors and c and (c['mean_abs_diff'] > args.max_mean_diff or
                       c['big_diff_ratio'] > args.max_big_ratio):
                 failures.append(f"{tag}: frame {shot['frame']} downscale {c}")
     elif args.scale > 1 and shots[1:]:
@@ -1360,12 +1435,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split', 'cap', 'launcher'):
+    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split', 'cap', 'launcher', 'sprite-pairs'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
         s.add_argument('--out', type=Path, default=ROOT / 'build/highres-check')
         s.add_argument('--port', type=int, default=4494)
+    s = sub.choices['sprite-pairs']
+    s.add_argument('--capture', type=Path, required=True)
+    s.add_argument('--scale', type=int, required=True)
     s = sub.choices['split']
     s.add_argument('--mode', default='16:9', choices=['16:9', '32:9'])
     s.add_argument('--scale', type=int, default=4, choices=[2,3,4])
@@ -1433,7 +1511,7 @@ def main():
     return {'g1': check_g1, 'capture': check_capture, 's3': check_s3,
             'nx': check_nx, 'drive': check_drive, 'captures': check_captures, 'option': check_option,
             'route': check_route, 'split': check_split, 'cap': check_cap,
-            'launcher': check_launcher, 'lod': check_lod}[args.check](args)
+            'launcher': check_launcher, 'lod': check_lod, 'sprite-pairs': check_sprite_pairs}[args.check](args)
 
 
 if __name__ == '__main__':

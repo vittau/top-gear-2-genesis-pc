@@ -270,3 +270,22 @@ incomplete final SAT ownership: all promoted in-screen pieces match the SAT,
 position/palette/priority mismatches are 0, maximum drawn-anchor error
 2.1e-8 output px including JSON rounding. Added all-frame cumulative totals so
 unsampled scenes are also covered by the final directed checks.
+
+Final guard refinements: never promote an actor whose guest pieces were all
+vertically culled; keep a native fallback for inconsistent mixed pieces; derive
+60-fps integer anchors from the actual synthesized SAT before clamping their
+fraction. The directed 60-fps repeat now passes, including all-frame floor,
+guest-piece, palette/priority and row-replay checks (`build/s4/smoke60-fixed`).
+Plane-A margin extensions and centered HUD now explicitly contribute to actor
+occlusion. A final three-track run of these guards is queued in
+`build/s4/final_core.py` / `final-commands.json`.
+
+The old S3 global downscale limit rejected one Canada snowy-tree frame
+(mean 3.211). Its expected new internal snow detail is now reported separately
+from unchanged pixels: outside actor boxes maximum mean is 0.264, and every
+padded actor-box mean stays within the explicit distance-dependent bounds in
+HIGHRES §14.6. `sprite-pairs` rechecks old pairs with this S4 criterion; Linear
+On uses a matching filtered reference. Do not suppress the original global
+metric. The first follow-up driver accidentally resolved the venv Python
+symlink and lost NumPy; repeat its two offline `sprite-pairs` commands with
+`build/venv/bin/python`, retaining the successful route captures.

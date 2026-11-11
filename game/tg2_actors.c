@@ -40,7 +40,7 @@ typedef struct {
 static Projection pending;
 static struct {
     uint64_t actors, native, fallbacks, positions, palettes, priorities;
-    uint64_t kinds[256], reasons[6];
+    uint64_t kinds[256], reasons[8];
     double floor_error, anchor_error;
 } totals;
 
@@ -409,18 +409,18 @@ void tg2_actors_note_sat(int index, unsigned pieces, unsigned inside, unsigned m
     if (index<0 || (unsigned)index>=prepared_count) return;
     prepared[index].position_mismatches=position_mismatches;
     prepared[index].pieces=pieces; prepared[index].inside=inside; prepared[index].matched=matched;
-    if (inside != matched) {
+    if (!pieces || position_mismatches || inside != matched) {
         /* Respect the guest emitter's final culling/SAT allocation. A piece
          * captured before that decision is insufficient to replace an actor. */
         prepared[index].promoted=0;
-        prepared[index].actor.fallback=5;
+        prepared[index].actor.fallback=!pieces?6:position_mismatches?7:5;
     }
 }
 void tg2_actors_paint(const Tg2ActorCanvas *c) {
     for (unsigned i=0;i<prepared_count;++i) {
         Prepared *p=&prepared[i]; p->pixels=p->native_blocked=p->pole_blocked=p->pole_overpaint=0;
         const Tg2Actor *a=&p->actor;
-        if(a->fallback) {++totals.fallbacks;if(a->fallback<6)++totals.reasons[a->fallback];}
+        if(a->fallback) {++totals.fallbacks;if(a->fallback<8)++totals.reasons[a->fallback];}
         if (!p->promoted) {++totals.native;continue;}
         ++totals.actors;++totals.kinds[a->kind];
         totals.positions+=p->position_mismatches;
@@ -488,7 +488,7 @@ int tg2_actors_stats_json(char *out,int cap) {
     int n=snprintf(out,cap,"{\"actors\":%llu,\"native\":%llu,\"fallbacks\":%llu,\"position_mismatches\":%llu,\"palette_mismatches\":%llu,\"priority_mismatches\":%llu,\"max_floor_error\":%.8f,\"max_drawn_anchor_error\":%.8f,\"fallback_reasons\":[",
         (unsigned long long)totals.actors,(unsigned long long)totals.native,(unsigned long long)totals.fallbacks,
         (unsigned long long)totals.positions,(unsigned long long)totals.palettes,(unsigned long long)totals.priorities,totals.floor_error,totals.anchor_error);
-    for(int i=0;i<6 && n>0 && n<cap;++i) n+=snprintf(out+n,cap-n,"%s%llu",i?",":"",(unsigned long long)totals.reasons[i]);
+    for(int i=0;i<8 && n>0 && n<cap;++i) n+=snprintf(out+n,cap-n,"%s%llu",i?",":"",(unsigned long long)totals.reasons[i]);
     if(n>0 && n<cap)n+=snprintf(out+n,cap-n,"],\"kinds\":{");
     int comma=0;
     for(int i=0;i<256 && n>0 && n<cap;++i) if(totals.kinds[i]) n+=snprintf(out+n,cap-n,"%s\"%02X\":%llu",comma++?",":"",i,(unsigned long long)totals.kinds[i]);

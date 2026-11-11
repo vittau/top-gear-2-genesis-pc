@@ -1565,5 +1565,38 @@ all-frame actor totals and independent guest-piece/SAT position checks. TCP
 `tg2_highres` reports `actors`, `all_actors`, native-row audit counts and
 fallback reasons: 1 untabulated kind, 2 invalid detailed mapping, 3 empty/
 unrasterisable detailed art, 4 detailed extent smaller than guest, 5 incomplete
-final SAT ownership. `TG2_ACTORS=0` disables actor promotion for CPU A/B tests;
+final SAT ownership, 6 all guest pieces vertically culled, 7 inconsistent
+synthesized-piece anchors. Guards 5–7 keep the native picture; they do not
+substitute a different asset. Fully culled actors are never resurrected by
+the more detailed artwork. `TG2_ACTORS=0` disables actor promotion for CPU A/B tests;
 that baseline retains the same explicit foreground infrastructure.
+
+### 14.6 Downscale tolerance and review scope
+
+S4 intentionally replaces the authored small-band pixels. The original S3
+whole-image metric remains in every report, but cannot by itself reject
+changed internal detail: a near snowy Canada tree yields a whole-image mean
+3.211/255, exceeding S3's 2.5 while preserving size, anchor and silhouette.
+The same frame has mean 0.214 outside padded actor boxes. `sprite-pairs`
+rechecks retained same-frame native/N× pairs without another guest run.
+
+The S4 check includes each visible actor's silhouette edges in a box padded
+by two native pixels, clipped to its own horizon. It reports per-box RGB
+error (including background/occlusion, never inferred by colour equality).
+Outside those boxes the existing S3 limits remain mean ≤2.5/255 and ≤2% of
+pixels with a channel error above 64. Inside, changed detail/antialiasing is
+bounded by a mean maximum-channel error of 64 (size ≥0.5), 80 (0.15..0.5), or
+96 (size <0.15). Tiny bands need more tolerance because the original asset
+may contain only one or two opaque texels. These photometric limits accompany
+independent anchor, guest-piece, SAT, palette and priority gates; visual
+acceptance still belongs to the owner. Linear On compares with the same
+bilinear-expanded, box-reduced native RGB footprint used by the S3 check.
+No screenshot or metric is hidden when the whole-image S3 number is larger.
+
+At 60 fps the raw interpolated anchor is clamped into the integer cell of the
+actual synthesized SAT anchor, derived from the endpoint's own model pieces.
+This retains subpixel motion where compatible with the existing 1× rounding
+policy and keeps `floor(anchor)` equal to that picture's native position.
+A non-rigid piece mix falls back to native rather than promoting an
+inconsistent object. This is a directed combined-mode guard, not S6's full
+N× temporal qualification.

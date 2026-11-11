@@ -908,7 +908,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     }
     unsigned window_mask = window_margins(v, line, native, nw, out, w);
     plane_a_margins(v, line, native, nw, pal, out, w, ha, va, ba);
-    if (actor_occluder) for(int x=0;x<w;++x) if((x<origin && (window_mask&1)) || (x>=origin+nw && (window_mask&2))) actor_occluder[x]=1;
+    if (actor_occluder) for(int x=0;x<w;++x) if((x<origin && ((window_mask|pa_extend_mask)&1)) || (x>=origin+nw && ((window_mask|pa_extend_mask)&2))) actor_occluder[x]=1;
     if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
     /* Reverse allocation order matches the native backward SAT builder. */
     static unsigned char covered[4096];
@@ -957,6 +957,21 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         int offset = ((int)filter_layers->width - nw) / 2;
         for (int x = 0; x < nw; ++x)
             filter_foreground[origin + x] = foreground_at(filter_layers, offset + x);
+    }
+    if (actor_front && !tg2_video_get_hud_mode()) {
+        int offset=((int)filter_layers->width-nw)/2;
+        for(int x=0;x<nw;++x) {
+            int k=x+offset;
+            unsigned ap=filter_layers->plane_a[k],bp=filter_layers->plane_b[k];
+            int sprite=filter_layers->opaque[k],sprite_high=sprite && filter_layers->high[k];
+            int a_wins=!sprite_high && ((ap&0xC0)==0xC0 ||
+                ((bp&0xC0)!=0xC0 && !sprite && (ap&0x40)));
+            if(!a_wins)continue;
+            unsigned attr;
+            pixel(v,ba,x-ha,line+va,&attr);
+            int side=hud_tile(attr);
+            if(side && hud_region(line,x,side)) actor_front[origin+x]=65535;
+        }
     }
     hud_row(v, line, ha, hb, va, vb, ba, bb, pal, nw, out, w);
 }
@@ -1127,10 +1142,10 @@ static void mix_pieces(const Scene *a, const Scene *b) {
     mixed_scene = *a;
     unsigned char actor_used[TG2_MAX_ACTORS]={0};
     for(unsigned i=0;i<a->actors.count;++i) {
-        const Tg2Actor *p=&a->actors.actors[i]; int best=-1;float distance=96;
+        const Tg2Actor *p=&a->actors.actors[i]; int best=-1;double distance=96;
         for(unsigned j=0;j<b->actors.count;++j) {
             const Tg2Actor *q=&b->actors.actors[j];
-            float d=fabsf(p->x-q->x)+fabsf(p->y-q->y);
+            double d=fabs(p->x-q->x)+fabs(p->y-q->y);
             if(!actor_used[j] && p->record==q->record && d<distance){best=j;distance=d;}
         }
         if(best>=0){
@@ -1156,6 +1171,29 @@ static void mix_pieces(const Scene *a, const Scene *b) {
             mixed_scene.pieces[i].y = mix(p->y, b->pieces[best].y);
         }
     }
+    /* The 1x synthesized SAT rounds piece positions. Derive each actor's
+     * integer reference from those same pieces, then retain the interpolated
+     * fraction inside that integer cell, as on native projection endpoints. */
+    for(unsigned i=0;i<a->actors.count;++i) {
+        const Tg2Actor *original=&a->actors.actors[i];
+        Tg2Actor *actor=&mixed_scene.actors.actors[i];
+        int found=0;
+        for(unsigned j=0;j<a->count && !found;++j) if(a->pieces[j].actor==(int)i) {
+            const Piece *p=&a->pieces[j];
+            for(unsigned k=0;k<original->guest_count;++k) {
+                const Tg2ModelPiece *q=&a->actors.pieces[original->guest_first+k];
+                if(p->attr==q->attr && p->size==q->size &&
+                   p->x==original->gx+q->dx && p->y==original->gy+q->dy) {
+                    actor->gx=mixed_scene.pieces[j].x-q->dx;
+                    actor->gy=mixed_scene.pieces[j].y-q->dy;
+                    found=1;break;
+                }
+            }
+        }
+        actor->x=fmax(actor->gx,fmin(actor->gx+255.0/256,actor->x));
+        actor->y=fmax(actor->gy,fmin(actor->gy+255.0/256,actor->y));
+    }
+
 }
 static void presentation_begin(const GVDP *v) {
     from_picture = to_picture = NULL;
