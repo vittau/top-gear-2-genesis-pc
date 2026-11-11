@@ -17,7 +17,7 @@ already accepted continuous/rock work.
 Ayers Rock `$96` rock ladder. On the same continuous branch, stock/default
 and short Auckland/Canada/rain actor gates pass. A bounded 900-moving-frame
 1× inventory of the remaining 13 countries is in HIGHRES §14.8; no other
-new kind was fixed. The full Ayers drive still returns 1 on a night-road
+new kind was fixed. The full Ayers drive still returns 1 on a road
 lane/centre diagnostic that also fails with actors disabled; actor invariants
 and road geometry checks pass, and this separate road issue remains open.
 Read task 39's latest handoff and `build/task39-followup/worker-report.md`.
