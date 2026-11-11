@@ -227,7 +227,7 @@ static int capture_model(Tg2ActorSet *set, unsigned record, unsigned model,
 }
 static int tabulated(unsigned kind) {
     return kind == 0x80 || kind == 0xF0 || kind == 0x94 || kind == 0x85 ||
-           kind == 0x99 || kind == 0x9A || kind == 0x86;
+           kind == 0x99 || kind == 0x9A || kind == 0x86 || kind == 0x96;
 }
 static unsigned car_model(unsigned guest, unsigned *level) {
     for (unsigned row = 0; row < 24; ++row) {

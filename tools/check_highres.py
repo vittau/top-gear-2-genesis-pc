@@ -646,10 +646,18 @@ TRACKS = {
     'auckland': dict(country=0, stage=0, note='straight, curve and hill frames; the tunnel is here'),
     'bavaria-rain': dict(country=5, stage=0, note='Germany slot 1, rainy from the start (docs/PASSWORDS.md)'),
     'canada': dict(country=2, stage=0, note='a dry second track with its own atlas'),
+    'ayers-rock': dict(country=0, stage=0, slot=1,
+                       note='Australasia race 2 (index 1); stage is difficulty, not slot'),
 }
+# Bounded country inventory uses each country's first race; explicit names
+# remain available for the directed actor checks above.
+from tg2_qual_coverage import COUNTRIES, NAMES
+for _country, _name in enumerate(COUNTRIES):
+    TRACKS[f'country-{_country:02d}'] = dict(country=_country, stage=0,
+        note=f'{_name}, first race: {NAMES[(_country, 0)]}')
 
 
-def enter_race_password(r, port, out, country, stage):
+def enter_race_password(r, port, out, country, stage, slot=0):
     args = SimpleNamespace(country=country, stage=stage, mode='off', port=port,
                            out=out, kp=1.0, kd=4.0, kc=0.0, deadband=9.0,
                            target_lat=0.0, nitro=False, nitro_at=10 ** 9,
@@ -658,6 +666,18 @@ def enter_race_password(r, port, out, country, stage):
     coverage.ui.to_password_screen()
     coverage.ui.type_symbols(tg2_password.encode(country=country, stage=stage)['symbols'])
     coverage.ui.submit()
+    if slot:
+        # Existing qualification-only selector (tg2_progress --start-slot):
+        # passwords do not encode slots. Set ONLY the two setup selections
+        # before the guest loads the real scene; race execution stays stock.
+        # ROM table $1B8E8 and stores $1E58/$1E5E: docs/PASSWORDS.md.
+        index = country * 4 + slot
+        descriptor = struct.unpack_from('>I', r.rom.read_bytes(), 0x1B8E8 + index*4)[0]
+        r.wait_frame(r.frame() + 200)
+        r.write_memory(0xFF16BE, f'{index:04X}')
+        r.write_memory(0xFF241C, f'{descriptor:08X}')
+        (out / 'track-selector.json').write_text(json.dumps(dict(
+            index=index, descriptor=descriptor, setup_only=True)))
     state = coverage.press_until_race()
     if state is None:
         raise RuntimeError('never reached a race')
@@ -821,7 +841,7 @@ def check_captures(args):
                            'country': info['country'], 'note': info['note']}
         r.start()
         try:
-            state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            state = enter_race_password(r, args.port, out, info['country'], info['stage'], info.get('slot', 0))
             r.set_input(0x10)
             for offset in args.offsets:
                 r.wait_frame(state.frame + offset)
@@ -1115,7 +1135,7 @@ def check_drive(args):
                 r.wait_frame(r.frame()+30)  # republish immutable scene history after reset
                 state = r.state_and_frame()
             else:
-                state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+                state = enter_race_password(r, args.port, out, info['country'], info['stage'], info.get('slot', 0))
             if args.save_state: r.command('save_state', path=str(args.save_state.resolve()))
             start = r.frame()
         item['race_start_frame'] = state.frame
@@ -1300,7 +1320,11 @@ def check_lod(args):
     item = {'track': args.track, 'frames': args.frames, 'log': str(log)}
     r.start()
     try:
-        state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+        state = enter_race_password(r, args.port, out, info['country'], info['stage'], info.get('slot', 0))
+        item['race_index'] = r.ram16(0x16BE)
+        item['descriptor'] = r.ram32(0x241C)
+        if args.save_state:
+            r.command('save_state', path=str(args.save_state.resolve()))
         start = r.frame()
         item['race_start_frame'] = state.frame
         pad, previous, snapped = 0, None, False
@@ -1541,6 +1565,7 @@ def main():
     s.add_argument('--mode', default='16:9')
     s.add_argument('--frames', type=int, default=3600)
     s.add_argument('--snapshot-at', type=int, default=1500)
+    s.add_argument('--save-state', type=Path, help='save local checkpoint after actual track entry')
     args = p.parse_args()
     args.exe = args.exe.resolve()
     args.out = args.out.resolve()

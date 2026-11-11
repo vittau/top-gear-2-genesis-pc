@@ -145,3 +145,19 @@ original allowlist does not include it. Native sheet confirms the rock image;
 next: promote this ordinary ladder with the existing guards, then a bounded
 first-race survey of the other 13 countries. No other country kinds will be
 fixed in this follow-up.
+
+Rock follow-up milestone: `$96` is now promoted through the ordinary path.
+Ayers 4×/60-fps 900-frame actor check: 4,333 rock presentations, zero model
+fallbacks, 4,015 matched rock-size pairs /154 band changes, maximum residual
+0.000032%; floor/SAT/palette/priority errors 0. Short Auckland/Canada/rain
+regressions pass. The full Ayers drive exits 1 on road lane/stripe diagnostics,
+not actor checks: a fixed-input comparison with `TG2_ACTORS=0` also fails
+(6,057 stripe /3,990 centre violations), with identical final RAM and zero
+geometry/gap/outlier violations. This newly exposed Ayers road-audit issue is
+not fixed or counted as a pass; it is separate from rock promotion.
+
+The remaining 13-country first-race survey is complete: 900 moving frames
+each, 11,700 total, 79,487 mapper calls, four manifests empty throughout.
+All selected runs exit 0. Native specials and untabulated kinds remain;
+model-0 screening finds no reasons 2–4. Country counts and scope are being
+consolidated into HIGHRES §14; no other kinds were promoted.
