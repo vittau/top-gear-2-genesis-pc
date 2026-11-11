@@ -1,6 +1,17 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
-Latest owner decision (2026-11-10): [task 37](tasks/37-intermittent-race-menu-instruments.md)
+Latest owner decision (2026-11-11): he tested the
+`deck-instruments-20261110` draft on the Steam Deck and said **“Está ótimo no
+Deck.”** Task 37 is accepted on the Deck too; do not ask again. He then asked to
+start **S4** ([task 34](tasks/34-highres-s4.md)) with a supervised **Claude
+Fable 5.2** worker (`--agent claude --model claude-fable-5-2`). Because Fable
+consumes a lot, the coordinator watches the Claude 5-hour session usage
+(`orca account list --json` → `rateLimits.claude.session.usedPercent`) and,
+as it nears 80%, asks the worker to commit/push its progress and write a
+handoff note so another agent can continue. S4 progress and the handoff state
+are recorded in `docs/tasks/34-highres-s4.md` by the worker.
+
+Previous owner decision (2026-11-10): [task 37](tasks/37-intermittent-race-menu-instruments.md)
 is done. A supervised OpenCode worker confirmed the coordinator's static
 diagnosis (BOTH persisted at boot diverted Z80 `$025E..$0261`, four entries of
 the music driver's octave table, to the second Z80), fixed `z80_route()`, and
