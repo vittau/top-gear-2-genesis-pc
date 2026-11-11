@@ -295,3 +295,11 @@ That track was never in the evidence; it may be an excluded kind such as `$82`, 
 untabulated kind or a fallback. A survey of the other countries is also pending. The follow-up to the
 same worker (`ctx_f1e2d6292f22`) failed with `agent-update-prompt`. The owner
 must update Codex, then resend it. Merge into `main` after that.
+
+**12:00 update.** The follow-up (dispatch `ctx_57e6e08d6e0a`) committed
+`b151a25`, which makes continuous the default. It then stopped when Codex hit its
+5-hour usage limit (resets 14:48). The country survey
+(`tools/survey_actor_kinds.py`, under the heavy lock) kept running in the
+background. Its uncommitted tree is saved at
+`refs/keep/tg2-t39-followup-limit-20261111` (`21e1c71`). After 14:48, resend
+to `dispatch:ctx_57e6e08d6e0a` to finish the rocks diagnosis, the survey write-up and `worker_done`.
