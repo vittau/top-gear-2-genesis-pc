@@ -50,10 +50,10 @@ macOS (Apple Silicon and Intel).
 
 With every option off, the picture is byte-identical to the original game.
 
-It has been played on Linux (x86_64) and macOS (Apple Silicon). Windows, macOS
-on Intel and the Steam Deck are built in CI and pass headless smoke tests, but
-they still need play on real hardware; treat those builds as release
-candidates until they are. See [docs/STATUS.md](docs/STATUS.md) for the current state and
+It has been played on Linux (x86_64), macOS (Apple Silicon) and the Steam
+Deck. Windows and macOS on Intel are built in CI and pass headless smoke
+tests, but they still need play on real hardware; treat those builds as
+release candidates until they are. See [docs/STATUS.md](docs/STATUS.md) for the current state and
 [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
 
 ### Widescreen
@@ -145,8 +145,7 @@ and run it.
 3. In Steam: *Games → Add a Non-Steam Game → Browse*, select the AppImage,
    then *Add Selected Programs*.
 4. Return to Game Mode. The game is in your library. It is designed for
-   controller-only play in Game Mode, but the Steam Deck build still needs play
-   on real hardware; no terminal is needed after setup.
+   controller-only play in Game Mode; no terminal is needed after setup.
 
 In Game Mode (gamescope) the game starts fullscreen at the panel's own size, so
 **Widescreen → Adaptive** fills the Deck's 16:10 screen instead of showing a

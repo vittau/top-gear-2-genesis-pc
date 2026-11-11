@@ -14,7 +14,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 build="$repo/build-release/macos"
 out="$repo/build-release/dist/macos"
-version="0.1.0"
+version="0.2.0"
 jobs="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 architectures="arm64;x86_64"
 rom=""

@@ -13,7 +13,7 @@ param(
     [Parameter(Mandatory = $true)][string]$SdlSource,
     [string]$BuildDir = 'build-release\windows',
     [string]$OutDir = 'build-release\dist\windows',
-    [string]$Version = '0.1.0',
+    [string]$Version = '0.2.0',
     [int]$Jobs = 8
 )
 $ErrorActionPreference = 'Continue'   # CMake warnings on stderr must not throw
