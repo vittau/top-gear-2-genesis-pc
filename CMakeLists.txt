@@ -50,7 +50,7 @@ file(RELATIVE_PATH TG2_ROM_REL "${CMAKE_SOURCE_DIR}/game" "${TG2_ROM}")
 genesisrecomp_add_generated_sources(GENERATED tg2 "${CMAKE_SOURCE_DIR}/game" "${TG2_ROM_REL}"
     REVERSE_DEBUG "${SONIC_REVERSE_DEBUG}")
 genesisrecomp_runner_sources(RUNNER TRACE "${GEN_ENABLE_TRACE}" REVERSE_DEBUG "${SONIC_REVERSE_DEBUG}")
-add_executable(TG2Recomp ${RUNNER} ${GENERATED} game/tg2_spec.c game/tg2_video.c game/tg2_highres.c game/tg2_options.c game/tg2_audio_both.c)
+add_executable(TG2Recomp ${RUNNER} ${GENERATED} game/tg2_spec.c game/tg2_video.c game/tg2_highres.c game/tg2_actors.c game/tg2_options.c game/tg2_audio_both.c)
 add_dependencies(TG2Recomp ${GENERATED_TARGET})
 # Embed the approved small icon from the checked-in ICO. Only the Python
 # standard library is needed for builds; Pillow is artwork tooling only.

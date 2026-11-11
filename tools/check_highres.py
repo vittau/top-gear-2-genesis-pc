@@ -1086,6 +1086,53 @@ def check_drive(args):
     return 0 if not failures else 1
 
 
+def check_lod(args):
+    """S4 evidence: drive one track at 1x with the read-only actor log on
+    (TG2_ACTOR_LOG, game/tg2_actors.c). The stream stays under the ignored
+    build directory; tools/analyze_actors.py summarises it."""
+    info = TRACKS[args.track]
+    out = args.out / 'lod' / args.track
+    out.mkdir(parents=True, exist_ok=True)
+    log = out / 'actors.csv'
+    r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+               widescreen=args.mode, max_frames=400000,
+               env_extra={'TG2_ACTOR_LOG': str(log), 'TG2_HIGHRES_SCALE': '1'},
+               extra_args=['--turbo'], timeout=120)
+    item = {'track': args.track, 'frames': args.frames, 'log': str(log)}
+    r.start()
+    try:
+        state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+        start = r.frame()
+        item['race_start_frame'] = state.frame
+        pad, previous, snapped = 0, None, False
+        while r.frame() - start < args.frames:
+            st = r.step(pad)
+            lat = st.lat_units
+            d = 0.0 if previous is None else lat - previous
+            u = -1.0 * lat - 4.0 * d
+            pad = 0x10 | (0x08 if u > 9.0 else 0x04 if u < -9.0 else 0)
+            previous = lat
+            if not snapped and st.frame - start >= args.snapshot_at:
+                # One art snapshot for tools/actor_sheet.py (ignored build dir).
+                snapped = True
+                (out / 'snap.vram').write_bytes(b''.join(
+                    r.vram(a, 0x1000) for a in range(0, 0x10000, 0x1000)))
+                (out / 'snap.cram').write_bytes(bytes.fromhex(r.command('read_cram')['hex']))
+                r.dump_ram_file(out / 'snap.ram')
+                r.screenshot(out / 'snap.png')
+                item['snapshot_frame'] = st.frame
+        item['end_frame'] = r.frame()
+    finally:
+        item['exit'] = r.stop()
+    item['manifests'] = empty_manifests(out)
+    item['log_bytes'] = log.stat().st_size if log.exists() else 0
+    item['ok'] = (item['exit'] == 0 and item['log_bytes'] > 0 and
+                  all(v == 0 for v in item['manifests'].values()))
+    (out / 'lod-summary.json').write_text(json.dumps(item, indent=1))
+    print(json.dumps(item, indent=1))
+    return 0 if item['ok'] else 1
+
+
 def check_nx(args):
     """S3 audit: run the route with the N x road records and the margin audit,
     then check both."""
@@ -1280,6 +1327,15 @@ def main():
     s.add_argument('--keep-audit', action='store_true')
     s.add_argument('--max-mean-diff', type=float, default=2.5)
     s.add_argument('--max-big-ratio', type=float, default=0.02)
+    s = sub.add_parser('lod')
+    s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
+    s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
+    s.add_argument('--out', type=Path, default=ROOT / 'build/highres-check')
+    s.add_argument('--port', type=int, default=4494)
+    s.add_argument('--track', default='auckland', choices=sorted(TRACKS))
+    s.add_argument('--mode', default='16:9')
+    s.add_argument('--frames', type=int, default=3600)
+    s.add_argument('--snapshot-at', type=int, default=1500)
     args = p.parse_args()
     args.exe = args.exe.resolve()
     args.out = args.out.resolve()
@@ -1290,7 +1346,7 @@ def main():
     return {'g1': check_g1, 'capture': check_capture, 's3': check_s3,
             'nx': check_nx, 'drive': check_drive, 'captures': check_captures, 'option': check_option,
             'route': check_route, 'split': check_split, 'cap': check_cap,
-            'launcher': check_launcher}[args.check](args)
+            'launcher': check_launcher, 'lod': check_lod}[args.check](args)
 
 
 if __name__ == '__main__':

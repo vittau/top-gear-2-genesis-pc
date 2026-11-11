@@ -1,6 +1,6 @@
 # Task 34: S4 — detailed sprites at N× with sub-pixel positions
 
-**Status: prepared for the next session; implementation not started.**
+**Status: in progress (worker on `vittau/tg2-highres-s4`); see "Progress / handoff" at the end.**
 Read `AGENTS.md` and [CONTINUATION.md](../CONTINUATION.md) first. Handle any
 new S3/Steam Deck playtest defect before starting this step. This brief does
 not start a worker or authorize a release.
@@ -26,7 +26,8 @@ Off/1× and 2P must keep existing behaviour; N× remains off in 2P.
 
 ## Resolve the missing evidence first
 
-`HIGHRES.md` §3 maps the mapper at `$B584`, the remap table at ROM `$10D42`,
+`HIGHRES.md` §3 maps the mapper at `$B584`, the remap table at ROM `$10D42`
+(**corrected by the evidence: `$57C8`, see `HIGHRES.md` §14**),
 the existing pre-cull hook `$B5FA`, and relevant object records and registers.
 Recheck addresses against raw ROM/disassembly before adding hooks/seeds.
 The per-object-type LOD ladders and scene biases are **partially mapped**;
@@ -86,3 +87,45 @@ The experimental scale row remains default 1× and applies after restart.
   manifest counts, capture paths and limitations with `worker_done`.
   Update HIGHRES/VALIDATION/status. Owner visual acceptance is still required
   for S4; the existing S3 approval does not approve future sprite changes.
+
+## Progress / handoff
+
+Updated 2026-11-11 by the S4 worker (Claude Fable 5.2), branch
+`vittau/tg2-highres-s4`.
+
+**Done**
+
+- Fresh build from `9af8dcb`; stock G1 passes (frame 60 `2A0B972960C5E325`,
+  frame 300 `1131D937D70234FD`, four manifests empty): `build/g1-stock.log`.
+- LOD evidence phase: raw-ROM reading of the selection/projection code, three
+  bounded captures (Auckland, Canada, Bavaria rain; 3,600 frames each, exit 0,
+  manifests empty) and contact sheets. Findings and the derived policy are in
+  `HIGHRES.md` §14. New read-only hooks `$B42E`, `$B4D6`, `$B584` in
+  `game/game.toml`; `game/tg2_actors.c` (evidence log only so far),
+  `tools/check_highres.py lod`, `tools/analyze_actors.py`,
+  `tools/actor_sheet.py`.
+
+**In progress / next step**
+
+- Supervision gate: the policy summary was sent to the coordinator; wait for
+  the reply before implementing presentation.
+- Then implement, in this order: (1) actor snapshots in `tg2_actors.c`
+  (projection latch + detailed model resolution at `$B584/$B5FA`, kept with the
+  scene history in `tg2_video.c`); (2) raster-layer capture at N× and an
+  actor-free native row with an explicit foreground/occluder mask;
+  (3) N× actor painter in `tg2_highres.c`; (4) `check_highres.py` sprite
+  position/variant table and coverage checks; (5) gates, cost, six pictures,
+  docs.
+
+**Evidence (ignored build dirs, this worktree)**
+
+- `build/highres-check/lod/{auckland,canada,bavaria-rain}/actors.csv`,
+  `snap.{vram,cram,ram,png}`, `actor-sheet.png`, `actor-sheet.json`,
+  `lod-summary.json`.
+- `build/s4/{auckland,canada,bavaria-rain}.txt` (grouped ladders),
+  `build/s4/sheet-*.txt` (measured art sizes), `build/s4/dis-*.txt`.
+
+**Uncommitted state:** none after the evidence commit. The engine and
+`recomp-ui` submodules show as modified because the project patch stack is
+applied; never commit those pins.
+

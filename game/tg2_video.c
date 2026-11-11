@@ -1,6 +1,7 @@
 /* TG2 USA presentation. Guest raster state is authoritative on every row. */
 #include "tg2_video.h"
 #include "tg2_highres.h"
+#include "tg2_actors.h"
 #include "cmd_server.h"
 #include "genesis_runtime.h"
 #include "video/genesis_dac.h"
@@ -156,6 +157,7 @@ static unsigned read32(unsigned a) { return (read16(a) << 16) | read16(a + 2); }
 void tg2_video_reset(void) {
     presentation_clear();
     tg2_highres_reset();
+    tg2_actors_reset();
     highres_wanted = 0;
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
@@ -165,6 +167,8 @@ void tg2_video_reset(void) {
     crop_frames = crop_withheld = 0;
 }
 int tg2_video_hook(uint32_t pc) {
+    if (tg2_actors_logging())
+        tg2_actors_hook(pc);
     if (!renderer_enabled())
         return 0;
     if (pc == 0x67EE)
@@ -898,6 +902,7 @@ void tg2_video_frame(uint64_t frame, int on) {
     if (on != race60 || frame < present_frame) presentation_clear();
     race60 = on;
     present_frame = frame;
+    tg2_actors_frame(frame);
     /* No row producer runs, so no picture will raise the N x canvas. */
     if (!renderer_enabled()) highres_wanted = 0;
 }
