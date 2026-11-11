@@ -43,7 +43,8 @@ the machine-resource rules, and never trigger CI.
 | [31](31-highres-s1-s2.md) | High-resolution rendering, steps S1 and S2 (capture + engine seam) | Done (merged 2026-11-09) |
 | [32](32-deck-aspect-and-quiet-logs.md) | Steam Deck feedback: device aspect, no logs in normal use | Done (merged 2026-11-09); needs a real Deck run |
 | [33](33-highres-s3.md) | High-resolution rendering, step S3 (road + background), experimental option | Complete; owner visually approved 2026-11-10, merged in `a205759`; Deck draft delivered, playtest pending (S4–S7 limitations remain) |
-| [34](34-highres-s4.md) | High-resolution rendering, step S4 (detailed sprites at N×) | Implemented/local qualification complete on `vittau/tg2-highres-s4`; owner visual acceptance pending. Pole detail follow-up: task 38. |
+| [34](34-highres-s4.md) | High-resolution rendering, step S4 (detailed sprites at N×) | Owner-approved, merged in `a8041a2`. Pole detail: task 38; continuous actor growth: task 39. |
+| [39](39-highres-continuous-actor-size.md) | Continuous actor growth at N× | Implemented/local gates pass on `vittau/tg2-highres-continuous`; 4×/60-fps MP4 and play build ready. Owner motion/default-policy review pending. |
 | [35](35-linear-filter-highres.md) | Linear Filter has no visible effect in races after S3 (Deck playtest) | Complete; merged `87e926b`, owner approved local macOS playtest. Latest Deck performance remains unmeasured. |
 | [36](36-unify-runtime-menu-groups.md) | Unify Esc menu groups: Display/Graphics/Video → Video; Sound/Audio → Audio | Complete; merged `87e926b`, owner approved local macOS playtest. |
 | [37](37-intermittent-race-menu-instruments.md) | Intermittent missing instruments in race-menu music | Done: BOTH persisted at boot diverted four bytes of the music driver's octave table; fixed, merged, owner approved. |

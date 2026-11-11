@@ -64,9 +64,11 @@ def measure(path):
     stats = defaultdict(lambda: dict(pairs=0, boundaries=0, max_jump=0.,
                                     max_boundary_jump=0., max_residual=0.,
                                     max_boundary_residual=0., residual_over_threshold=0,
-                                    changing=0, repeated=0, examples=[]))
+                                    max_reference_error=0., changing=0, repeated=0, examples=[]))
     previous, old_frame = [], -2
     for frame, actors in frames(path):
+        if frame <= 40:
+            continue  # checkpoint history warm-up, before the scripted drive
         used = set()
         if frame != old_frame + 1:
             previous = []
@@ -94,6 +96,9 @@ def measure(path):
                 continue
             key = 'car' if a['car'] else f"{int(a['kind']):02X}"
             s = stats[key]
+            reference = (2816 * (2218 if a['car'] else 1830)) ** .5
+            s['max_reference_error'] = max(s['max_reference_error'],
+                                           abs(a['size'] * reference / a['projection'] - 1))
             jump = abs(a['size'] / p['size'] - 1)
             projected = a['projection'] / p['projection']
             residual = abs((a['size'] / p['size']) / projected - 1)
@@ -128,13 +133,25 @@ def main():
     a = sub.add_parser('analyze')
     a.add_argument('trace', type=Path, nargs='+')
     a.add_argument('--out', type=Path, required=True)
+    a.add_argument('--continuous', action='store_true',
+                   help='gate residuals and independent ROM reference to 0.1%%')
     args = p.parse_args()
     if args.action == 'record':
         return record(args)
     result = {str(path): measure(path) for path in args.trace}
+    failures = []
+    if args.continuous:
+        kinds = {kind for run in result.values() for kind in run}
+        if not {'car', '94', '99', 'F0'} <= kinds:
+            failures.append('missing car/tree/barrel/sign motion samples')
+        for path, run in result.items():
+            for kind, values in run.items():
+                if values['residual_over_threshold'] or values['max_reference_error'] > .001:
+                    failures.append(f'{path}: {kind} exceeds 0.1% size/projection tolerance')
+        result['gate'] = dict(ok=not failures, failures=failures, threshold=.001)
     args.out.write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == '__main__':

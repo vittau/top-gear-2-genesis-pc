@@ -51,8 +51,8 @@ int tg2_actors_active(void);
 /* Qualification only: TG2_ACTOR_LOG=path writes the LOD evidence stream. */
 int tg2_actors_logging(void);
 
-/* Pre-instruction hook sites (game.toml): $B42E/$B4D6 right after the
- * projection's `swap d1`, $B584 mapper entry, $B5FA per mapping header. */
+/* Pre-instruction hook sites (game.toml): $B314 projection input,
+ * $B42E/$B4D6 right after `swap d1`, $B584 mapper, $B5FA mapping header. */
 void tg2_actors_latch(uint32_t pc);
 void tg2_actors_begin(Tg2ActorSet *set);
 /* Returns the new actor's index, or -1 when the object stays native. `set`

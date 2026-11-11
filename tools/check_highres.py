@@ -927,7 +927,12 @@ def actor_regions(native, shot, scale, info, native_filter=False):
         # The smaller native bands contain only a few authored pixels: their
         # internal colours need not match a filtered detailed asset. Position,
         # size axis, palette, priority and SAT ownership have separate gates.
-        tolerance = dict(near=64, middle=80, far=96)[distance]
+        # Task 39 changes projected silhouette area, even when model 0 is
+        # already the native model (up to 24.6% extra area for the nearest
+        # car). Its explicit near bound is 80; stepped S4 remains 64. Middle
+        # and far stay 80/96, and unchanged pixels retain the S3 limits.
+        continuous = bool(a.get('continuous_size'))
+        tolerance = dict(near=80 if continuous else 64, middle=80, far=96)[distance]
         regions.append(dict(kind=a['kind'], guest_model=a['guest_model'], model=a['model'],
                             distance=distance, box=[x0,y0,x1,y1],
                             mean_abs_diff=round(float(region.mean()), 4), tolerance=tolerance))

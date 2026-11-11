@@ -1460,3 +1460,59 @@ Remaining: owner S4 visual acceptance; native poles (visible mismatch mapped
 at his request in task 38); S5 HUD/weather/tunnel-opening artwork; full N×
 temporal qualification S6; live switching S7; other-country/platform and
 Deck/GPU qualification. No runtime remains running.
+
+## Task 39 — continuous actor growth (2026-11-11)
+
+Local development evidence on macOS arm64, branch
+`vittau/tg2-highres-continuous`; all builds/heavy work used the shared lock,
+at most 3 build jobs and one headless runtime. S4 was approved/merged before
+this task; owner review of the new motion/default policy remains pending.
+The owner explicitly allowed approximate height agreement with the original
+hand-drawn ladder; continuity is the criterion. HIGHRES §15 has the design.
+
+| Final gate | Evidence/result |
+|---|---|
+| ROM/runtime diagnosis | 13,445 interpolated and 12,621 table projections agree with the raw instructions; `$FF17E0` is always the integer row scale, 12,474 interpolated D4 values differ from it |
+| Motion traces | Auckland/Canada/Bavaria rain, 1,200 controller frames each, 4×/60 fps On; 44,505 matched visible frame pairs /1,721 band crossings; 0 residuals above 0.1%, max 0.000034% |
+| Size change before→after | Cars 42.86→11.82%, trees 75.00→24.52%, signs 100→17.80%, barrels 100→25.46%; new changes follow physical projection, without a band-size term |
+| 4× all-frame actors | Auckland 23,521; Canada 9,308; rain 8,977; floor/SAT/anchor/palette/priority errors 0 |
+| Native sprite-row replay | 528,766 rows in the 4× runs, mismatches 0; directed Linear On 2× adds 6,314 actors /71,318 rows, also 0 |
+| Occlusion | Rain native poles block 1,361 sampled output pixels /10 actor pixels draw over poles; clip/guest-cull/SAT guards retained |
+| Changed/unchanged regions | Union of native and new silhouettes; continuous near/middle/far group limits 80/80/96, stepped 64/80/96. Qualified Canada group max 65.7263; outside mean max 0.3652 (4×), 0.8637 (2× Linear On), within unchanged S3 limits |
+| Stock G1 | 9 configurations, exit 0; Off frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` |
+| Native boundaries | 32:9 2P native identity and cap/Off/16:9 transitions, exit 0 |
+| Manifests | All four empty in every runtime run, including the original image-threshold failure |
+| Video | 20 s /60 fps /2848×840, 1,200 exact synchronized pictures per side; ending RAM SHA-256 identical |
+
+The initial Canada audit **returned 1** at group mean 69.8417 against the
+old near limit 64: the projected near car is 1.116× as large, increasing area
+24.6%. This is the intended silhouette change. Its pictures and failing
+summary are retained in `build/task39/audit/canada/`. After declaring the
+continuous near tolerance 80, the qualified repeat returns 0. No region or
+metric was removed; unchanged-region limits, independent position/attribute
+gates and the scalar projection gate were preserved. The first MP4 combine
+also returned 8 because this ffmpeg lacks `drawtext`; raster captions plus
+the supported overlay filter resolve it (exit 0).
+
+CPU: fixed [3000,3900), 900 frames, 1280×800, 60-fps races On, full rendering
+and audio, no audit/dump/pacer work. Original S4→new means are 2×
+2.5311→2.7323 ms (+0.2012 ms), 4× 3.1509→3.4553 ms (+0.3044 ms, new mean
+of two runs). New 4× means vary from 3.0133 to 3.8973 ms. Within-branch
+stepped→continuous pairs give +0.0242 ms at 2× and +0.5897/−0.1856 ms at 4×
+in opposite orders. These observations do not resolve a precise 4× increment
+and are not Deck/GPU measurements; raw CPU/layout phase data remain available.
+
+Ignored report: `build/task39/{worker-report.md,qualified-summary.json}`;
+command ledgers `commands.json`, `followup-commands.json`,
+`video-commands.json`, `cost-repeat-commands.json`, `cost-s4-commands.json`;
+`rom-evidence.json`, `growth-new-final.json`, `growth-stepped.json`,
+`growth-before.json`, `video-identity.json`, `video-probe.json`. The MP4 is
+`build/task39/video/stepped-vs-continuous-4x-60.mp4`; bulk PNGs were deleted.
+`build/task39/play-continuous.sh` launches the ready branch build, saved
+scale 4 and race 60 fps On, with continuous selected internally.
+
+No CI, tags, releases, ROM-derived git artifacts, generated C edits, engine
+changes or submodule pin changes. Native poles/special pieces, stock spawn/
+culling and player/HUD/menus/2P remain in scope exactly as before. Default
+continuous, all-country coverage, S6 and real-platform performance await
+their respective owner review/qualification.

@@ -15,10 +15,13 @@ His report of intermittent missing instruments in race-menu music is fixed
 ([task 37](tasks/37-intermittent-race-menu-instruments.md)): with BOTH saved,
 the boot diverted four bytes of the music driver's octave table to the second
 Z80. Merged into `main`; the owner listened and approved it.
-Detailed sprites [S4/task 34](tasks/34-highres-s4.md) are implemented and
-locally qualified on `vittau/tg2-highres-s4`, pending owner visual acceptance;
-not merged or in a release. Poles remain native and their visible detail
-mismatch is mapped explicitly in [task 38](tasks/38-highres-poles.md).
+Detailed sprites [S4/task 34](tasks/34-highres-s4.md) were owner-approved and
+merged in `a8041a2`. Smooth growth [task 39](tasks/39-highres-continuous-actor-size.md)
+is now implemented and locally qualified on `vittau/tg2-highres-continuous`:
+band-independent projection sizing and size interpolation at 60 fps, with a
+20-second motion comparison and ready 4× play build. Owner motion review and
+the decision to make it default are pending; the branch still defaults to
+stepped. See HIGHRES §15. Poles remain native (task 38).
 
 **v0.1.0 is out** (published 2026-11-08, tag on `f1cb093`; release notes in
 `release/v0.1.0.md`). It is a native Top Gear 2 for Windows, Linux/Steam Deck
@@ -43,7 +46,7 @@ Where to look:
 | Native 4:3 baseline | Boot → menus → full 4-lap race → results/shop/next race; 2P split-screen; 33.7-min soak, plus a 43.7-min soak with all options on (16:9 + Edges + 60 fps + Hide overscan, 13 races, SP stable). 0 dispatch misses. | `BRINGUP.md`, `VALIDATION.md` |
 | All 64 races | Password codec reversed (`PASSWORDS.md`, `tools/tg2_password.py`). All 16 countries raced for 62 s in Off and 16:9+Edges, 0 manifest entries; rain, night, fog and snow covered. Task 25 drove the last 19 races (index selected from the ROM table on the setup screen) to the finish: 64/64. Nitro = C button. | `VALIDATION.md` |
 | Widescreen | Adaptive / 16:9 / 21:9 race renderer: road, background, sprites in the margins. HUD Centered or Edges. Off is byte-identical to stock. | `WIDESCREEN.md` |
-| High-resolution S3 | Road rasteriser at 2×/3×/4×, default 1×, restart required. Owner approved straight/curve/hill/rain/tunnel comparisons; merged in `a205759`. 22,575 audited images, 0 violations. HUD/effects remain native detail; detailed actors are implemented in the separate S4 review branch, pending owner acceptance. | `HIGHRES.md` §13, `CONTINUATION.md` |
+| High-resolution S3/S4 | Road/background and detailed actors at 2×/3×/4×, default 1×, restart required. S3/S4 approved and merged; actors use authored stepped sizes. Continuous projection growth is locally qualified on the task 39 branch, awaiting motion review. HUD/effects/poles retain native detail. | `HIGHRES.md` §§13–15, `CONTINUATION.md` |
 | Widescreen fixes from playtests | Black bands on downhills, the top-window line, tunnel margins (now follow the walls), and the motion-only flicker in 60 fps synthesized frames. Full-presented-frame margin audit: 1019 → 0. | `WIDESCREEN.md` |
 | Hide overscan | Default On: crops the 8 top and 16 bottom empty race lines (the top band's stock red marks go with them), so the picture fills the window. Menus, results and split-screen keep their full height. | `WIDESCREEN.md` |
 | 60 fps | Stock simulation plus host-only interpolation. Identical WRAM over 16000 frames; 60 pictures/s; no road artefacts; adds 50 ms display latency. | `FRAMERATE.md` |

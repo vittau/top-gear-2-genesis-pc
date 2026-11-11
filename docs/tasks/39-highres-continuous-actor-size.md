@@ -1,6 +1,6 @@
 # Task 39: continuous actor growth without pop-in at N×
 
-**Status: in progress (Sol, 2026-11-11).** Read `AGENTS.md`,
+**Status: implemented and locally qualified (Sol, 2026-11-11); owner motion review pending.** Read `AGENTS.md`,
 `HIGHRES.md` §14 and [task 34](34-highres-s4.md) (its "Progress / handoff"
 section) first. Only Opus, Fable or Sol may implement this S4 extension. Use supervised Orca
 orchestration, the shared heavy lock, at most 3 jobs, headless probes, one runtime and no worker CI.
@@ -66,41 +66,65 @@ Poles (task 38) are out of scope unless they share the size code naturally.
 
 ## Progress / handoff
 
-Branch `vittau/tg2-highres-continuous`, based on `origin/main` at `c56d2fa`.
-Existing build and patched submodules retained; no CI or engine edits.
+Implementation and local technical gates are complete on
+`vittau/tg2-highres-continuous`, based on `origin/main` at `c56d2fa`. The
+owner clarified during this work that exact matching to hand-drawn original
+heights is unnecessary; prioritize smooth growth. Default remains stepped
+until he reviews the motion and approves making continuous the default.
 
-First milestone: raw-ROM inspection verifies `$B314` (`3744 93D4`) as
-the common projection entry with unsigned D2 fraction intact on both paths.
-`$B410` stores the integer row scale into `$FF17E0`; `$B416..$B428`
-interpolates D4 separately, truncating to an integer before ×4. The distant
-path discards D2 at `$B480`. A new read-only entry hook preserves that
-fraction and reconstructs the unrounded table interpolation, for evidence
-only at this milestone. No generated C was edited.
+### Implemented and verified
 
-`tools/check_actor_growth.py` records deterministic 4×/60-fps input-script
-runs and streams per-frame sizes. The instrumented old policy is retained
-locally as `build/task39/TG2Recomp-instrumented-s4`. Initial Auckland old
-continuous run: exit 0, four manifests empty; measured boundary jumps up to
-66.50% (tree), with up to 46.49% unexplained by the precise projection.
-Artifacts and raw-ROM disassembly are under ignored `build/task39/`.
+- Raw ROM and 26,066 runtime projection entries confirm the diagnosis:
+  `$FF17E0` is the integer row's scale; D4 has a separate interpolated value,
+  rounded to an integer before ×4. A validated read-only `$B314` hook keeps
+  the full unsigned depth fraction for both projection paths.
+- Size now uses model-0 extent × projection / fixed model-0 reference,
+  never the guest band/extent. ROM references: scenery 2270.0837, cars
+  2499.1775. 60-fps pictures interpolate scale and anchor together.
+- Scenery matches by stable world depth plus record/lateral. Runtime proved
+  the active camera is `$FF17F4`, set by `$B04C..$B058`. This prevents the
+  old anchor matcher from confusing equal objects at different depths.
+- Three tracks, 1,200 controller frames each, 4×/60 fps On: 44,505 matched
+  visible frame pairs, 1,721 band crossings, 0 residuals over the stated
+  0.1% size/projection threshold; max residual 0.000034%. Stepped maximum
+  frame change 100%, new 25.46% (physical near-range growth); old continuous
+  leaves up to 46.49% unexplained residual. Per-kind tables: HIGHRES §15.
+- Three 4× audits plus 2× Linear On: 48,120 promoted actors / 600,084
+  native-row replays, floor/SAT/anchor/palette/priority/replay errors 0;
+  native poles overlap in both directions. Four manifests empty in every
+  run. Stock G1, native 32:9 2P and cap/Off boundaries pass. Stock hashes:
+  frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD`.
+- Changed-region masks include both native and new silhouettes. Continuous
+  near/middle/far photometric tolerances are explicitly 80/80/96, stepped
+  retains 64/80/96; outside-region limits stay unchanged. Initial Canada
+  exit 1 (near car group 69.8417 >64) is retained; qualified repeat exits 0
+  under the declared new bound. No attempt was made to force original sizes.
 
-Second milestone: continuous now uses unrounded projection divided by the
-model-0 reference, independently of the guest band and extent. The ROM's
-level-0 interval gives reference scales 2270.0837 for the audited scenery
-kinds and 2499.1775 for cars. Both size and projection interpolate at 60 fps.
-Runtime evidence exposed same-record objects being confused by the former
-anchor-only matcher; scenery now matches world depth (active camera
-`$FF17F4` ×16 + fractional depth) plus lateral, and cars match their slot.
-The active-camera choice was checked at the raw `$B04C..$B058` wrapper;
-the first 180-frame trace has 11 tyre identities, all moving across ticks.
+### Review and ready build
 
-Auckland 1,200-frame continuous trace: exit 0, four manifests empty, 0
-size/projection residuals over 0.1%; maximum residual below 0.00004%.
-Tree maximum frame growth is 12.35%, barrel 17.81%, tyre 19.30%, car 3.95%
-(physical approach); no extra band-boundary term remains. Trace stays at
-`build/task39/qualified/auckland/actors.csv`. Changed-region checks now cover
-the union of old and new silhouettes, retaining the S4 photometric limits.
+`build/task39/video/stepped-vs-continuous-4x-60.mp4`: 20 seconds, 60 fps,
+2848×840, trees/signs/cars, identical guest input and ending RAM SHA-256.
+Bulk PNGs were deleted; individual MP4s and a few QA pictures remain.
 
-Next: finish three-track stepped/new traces, stock and occlusion gates,
-motion video and CPU comparison. Default stays stepped until owner approval,
-as requested by the spec; the final play launcher will set the internal switch.
+Run `build/task39/play-continuous.sh` for the owner. It launches the branch's
+ready build visibly with the internal continuous switch; `build/settings.ini`
+has internal scale 4 and 60-fps races On. The script itself has not been run
+visibly by the worker. Default stepping is retained outside that launcher.
+
+`build/task39/worker-report.md` and `qualified-summary.json` consolidate exact
+commands/exits, manifests, trace maxima, stock hashes, CPU and limitations.
+CPU uses [3000,3900), 900 frames, 1280×800, 60 fps On, full audio/rendering,
+no audits/dumps/pacer work. Original S4 → new means: 2× 2.5311 →2.7323 ms;
+4× 3.1509 →3.4553 ms (new mean of two runs, 3.0133–3.8973 ms). Thus observed
+increments are +0.2012/+0.3044 ms, with material 4× run variation; not a
+resolved Deck/GPU cost. Same-branch stepped/continuous pairs are also retained.
+
+### Remaining and constraints retained
+
+Coordinator: review the MP4 and launch the build for the owner's motion
+judgment; record whether continuous should become the default. Native
+spawn/culling, poles/special pieces, player/HUD/menus and 2P remain as S4.
+All-country coverage, S6, live scale changes and real-platform performance
+remain outside this task. No CI, tags, releases, generated C edits, engine
+changes or submodule pin changes. Existing applied submodule dirt is retained.
+No runtime or heavy process is left running at completion.

@@ -1,5 +1,15 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
+**Task 39 continuation (2026-11-11):** continuous actor size is implemented
+and locally qualified on `vittau/tg2-highres-continuous`; read task 39's
+current handoff and HIGHRES §15. A 20-second synchronized 4×/60-fps comparison
+is at `build/task39/video/stepped-vs-continuous-4x-60.mp4`; launch
+`build/task39/play-continuous.sh` for the owner (saved scale 4 / 60 fps On).
+Stock hashes, empty manifests and all final technical gates pass. Original
+S4 remains default-stepped until the owner approves the new motion/default.
+He clarified that exact height agreement with hand-drawn sprites is not
+necessary. No visible game was launched, no CI or engine changes occurred.
+
 **S4 continuation (2026-11-11):** Fable completed the LOD evidence/checkpoint;
 Sol continued the implementation on `vittau/tg2-highres-s4`. Local technical
 qualification is complete; owner visual acceptance is pending. Read task 34's

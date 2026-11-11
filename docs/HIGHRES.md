@@ -1385,6 +1385,9 @@ completed S3 qualification.
 
 ## 14. S4 — actor evidence and selection policy (task 34)
 
+This records the initial S4 implementation. Task 39 (§15) supersedes the
+experimental continuous-size formula and the 60-fps actor matching/size path.
+
 **Status: implemented and locally qualified; owner visual acceptance pending.** This section records the bounded captures, raw
 ROM evidence and implemented selection policy. Addresses were re-read from the ROM with
 `tools/disasm_tg2.py`; where they differ from §3, this section wins.
@@ -1666,3 +1669,107 @@ Owner acceptance of S4 remains pending. Poles stay native and their visible
 mismatch is explicitly mapped in [task 38](tasks/38-highres-poles.md).
 HUD/weather/tunnel-opening art, full N× temporal qualification, live changes
 and Deck/GPU qualification remain outside this step.
+
+## 15. Continuous actor growth (task 39)
+
+Implemented and locally qualified on `vittau/tg2-highres-continuous`;
+owner motion review is pending. The owner clarified that exact agreement
+with the hand-drawn small sprites is unnecessary: the goal is continuous
+motion. `TG2_ACTOR_SIZE=continuous` selects the new path; default remains
+stepped until he approves changing it. Native 1×, menus and 2P are unchanged.
+
+### Projection and size
+
+The coordinator's diagnosis was verified against the stock ROM and three
+runtime streams. `$B410` stores the **integer row's scale** at `$FF17E0`,
+even on the interpolated path. D4 is interpolated separately and rounded to
+an integer before ×4. A read-only hook at `$B314` (`3744 93D4`) now captures
+the unsigned D2 fraction before `$B3A2` halves it or `$B480` discards it.
+The host interpolates the same ROM scale table using the full fraction on
+both paths. All 13,445 interpolated entries and 12,621 table entries checked
+agree with the raw instruction reading; 12,474 interpolated entries have a
+D4 scale different from `$FF17E0`. No generated C or engine code was edited.
+
+Continuous size = **unrounded projection / fixed model-0 reference**.
+The reference is the geometric centre of model 0's ROM depth interval:
+2270.0837 for kinds `$80/$F0/$94/$85/$99/$9A/$86` (depth interval `[0,2)`),
+2499.1775 for cars (`[0,1)`). The per-kind art and its model-0 extent still
+come from that record's captured mapping. The current guest band and its
+opaque extent never enter this formula. This deliberately allows a near
+object to grow beyond model 0's authored size, rather than clamping at 1.
+
+60-fps synthesis interpolates the scale along with the bottom-centre anchor.
+Scenery matching uses record, lateral and a stable world depth, reconstructed
+as active camera `$FF17F4` ×16 plus the input fractional depth. Runtime
+verification of `$B04C..$B058` matters here: using the other player's camera
+would not give stable identities. This prevents two identical tyres at
+different depths from inheriting one another's scale. Cars retain their
+guest object word and nearest-anchor match within a record. Native SAT
+ownership, guest culling, clip line, depth order and priority masks are retained.
+
+### Motion evidence and tolerance
+
+`tools/check_actor_growth.py record` replays a checkpoint and fixed controller
+script at 4× with 60-fps races On. `TG2_ACTOR_TRACE` streams every presented
+actor; `analyze --continuous` excludes the 40-frame history warm-up and gates
+both a fixed ROM-reference check and unexplained size/projection changes at
+**0.1%**. Three 1,200-frame runs (Auckland, Canada and Bavaria rain) give
+44,505 matched visible frame pairs and 1,721 band crossings, with **0**
+over threshold. Maximum residual is 0.000034%; serialization/float rounding
+accounts for it. The old continuous implementation reaches 46.49% residual.
+
+| Actor | Stepped maximum frame change | New maximum frame change |
+|---|---:|---:|
+| Cars | 42.86% | 11.82% |
+| Trees | 75.00% | 24.52% |
+| Chevron signs | 100.00% | 17.80% |
+| Barrels | 100.00% | 25.46% |
+
+The new maxima are physical close-range approach, not an extra term at an
+art boundary; every measured change follows the projected scale. Size also
+changes on intervening presented frames when projection changes. This is a
+scalar-size check, not a claim that a changing car angle has identical bounds.
+
+The changed-region mask now includes the **union of native and projected
+silhouettes**, padded by two native pixels. Stepped S4 retains 64/80/96
+near/middle/far photometric limits. Continuous uses **80/80/96**: close-range
+projected area intentionally differs even when the guest already uses model
+0. The initial Canada gate returned 1 for a 1.116× car (24.6% larger area,
+group error 69.8417 against 64); the original images and failure are retained.
+The qualified repeat passes the explicit new near bound (max 65.7263).
+Unchanged pixels retain S3's mean ≤2.5 and ≤2% above error 64. Maximum outside
+mean is 0.3652 in the three 4× runs, 0.8637 with Linear On at 2×.
+
+Three 4× audits plus the directed 2× Linear On check cover 48,120 promoted
+actors and 600,084 native row replays. Floor/SAT/anchor, palette, priority
+and replay mismatches are all 0. Native pole overlap is exercised in both
+directions (rain: 1,361 sampled output pixels blocked, 10 overpainted).
+Fully culled/incompletely allocated actors remain native. Stock G1, 32:9 2P
+and cap/Off/fixed-aspect boundaries pass; the four manifests are empty.
+Stock hashes remain `60=2A0B972960C5E325`, `300=1131D937D70234FD`.
+
+The 20-second side-by-side MP4 is
+`build/task39/video/stepped-vs-continuous-4x-60.mp4` (2848×840, 60 fps,
+1,200 synchronized pictures per side, identical ending RAM SHA-256
+`029cb11effc2d899e908e2e5875996bd322def17d9d293c1cb1028be898fbd3d`).
+It shows approaching trees, signs and cars; the fixed input also causes a
+collision, identically on both sides. Full-size individual videos and a
+small QA contact sheet remain beside it; bulk PNGs were deleted.
+
+Exact commands/exits, size tables and CPU measurements are in
+`build/task39/{worker-report.md,qualified-summary.json}` and the command
+ledgers named there. CPU runs use the fixed [3000,3900) interval, 1280×800,
+60-fps races On, full audio/rendering, no audits/dumps/pacer work. They are
+development-host measurements; 4× pair-to-pair variation is material and is
+reported rather than treated as a precise Deck/GPU cost.
+
+Original S4 → new whole-frame CPU means are 2× 2.5311→2.7323 ms
+(+0.2012 ms), 4× 3.1509→3.4553 ms (+0.3044 ms, new mean of two runs).
+The two new 4× runs span 3.0133–3.8973 ms; its incremental cost is therefore
+not tightly resolved. The same-branch policy pairs and phase timings remain
+in the report, including the reverse-order pair that changed the sign.
+
+Ready play launcher: `build/task39/play-continuous.sh`, with saved internal
+scale 4 and 60-fps races On. Poles/special pieces stay native; guest spawn/
+culling is preserved. Owner approval of the motion and a default-policy
+change, all-country coverage, S6 and real-platform performance remain open.
