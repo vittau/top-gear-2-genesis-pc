@@ -1385,9 +1385,9 @@ completed S3 qualification.
 
 ## 14. S4 — actor evidence and selection policy (task 34)
 
-**Status: evidence phase complete; presentation not implemented yet.** This
-section records what the bounded captures and the raw ROM show, and the policy
-derived from them. Addresses were re-read from the ROM with
+**Status: presentation implemented; final qualification in progress, owner
+visual acceptance pending.** This section records the bounded captures, raw
+ROM evidence and implemented selection policy. Addresses were re-read from the ROM with
 `tools/disasm_tg2.py`; where they differ from §3, this section wins.
 
 ### 14.1 How the game picks a variant (raw ROM)
@@ -1474,7 +1474,9 @@ separates. Non-actor sprites are therefore always in front of actors.
 
 1. **What is promoted.** Every mapper entry that came through the normal
    projection (`$FF1878 != $FFFE`, a latched `$B42E/$B4D6` projection for the
-   same record and X): opponent cars and scenery kinds. Its SAT entries are
+   same record and X): opponent cars and scenery kinds. The ROM comparator at
+   `$B53A..$B542` identifies the player (`$FF17D6 == $FF1878`); that car stays
+   native even when it reaches the mapper through normal projection. Its SAT entries are
    removed from the native sprite layer and the actor is redrawn at N×.
 2. **Which variant.** Scenery: model 0 of the same record, when that table
    entry is a valid mapping and its art is at least as large as the guest's
@@ -1525,3 +1527,43 @@ separates. Non-actor sprites are therefore always in front of actors.
   native. Pole reconstruction needs the `$B99A` stacking logic. S4 must still
   verify that native poles and promoted actors occlude each other correctly.
 
+
+### 14.5 Presentation implementation
+
+`Scene` now owns each actor's double-precision anchor, native integer anchor,
+clip line, guest/detailed model pieces, attributes and capture depth. The
+mapper hooks resolve ROM/WRAM data while the guest owns the record; the host
+painter only reads that immutable snapshot and the displayed endpoint VRAM.
+Per-picture indexed art is deduplicated by captured pieces, measured on its
+opaque extents, and filtered in premultiplied RGB using each row's own CRAM.
+The sole size-policy function defaults to authored stepped sizes; the env-only
+continuous switch exists for the requested review pair.
+
+The existing engine raster seam runs once on every N× race row, including
+Linear Off. A host replay identifies exact SAT ownership, respecting the
+64-entry / 16-per-row limits, sprite mask and pixel budget. Only promoted
+entries are removed from host composition; guest sprite evaluation, collision
+flags, SAT, planes and simulation are unchanged. The native replay audit
+compares opacity, palette indices and sprite priority against the engine's
+captured channels. Matching identical SAT pieces is bijective in reverse
+allocation order. If the final SAT lacks any captured in-screen piece, the
+whole actor stays native (fallback reason 5), preserving the guest emitter's
+last culling/allocation decision.
+
+Explicit foreground coverage now protects native art even when its RGB equals
+the road, resolving S3's documented same-colour ambiguity for N× rows. Separate
+plane-priority and native-sprite-depth masks govern actor occlusion. HUD/player
+car, poles and tunnel/special objects retain native art. A true native pass,
+used only while a same-frame dump is requested, retains promoted sprites for
+downscale review without counting a second presented row or changing crop
+bookkeeping. 60-fps actors interpolate their anchors between matched endpoint
+records; variant, clip and other properties use the nearer endpoint. Full N×
+temporal qualification remains S6.
+
+`check_highres.py drive --actors` emits sampled per-kind variant tables plus
+all-frame actor totals and independent guest-piece/SAT position checks. TCP
+`tg2_highres` reports `actors`, `all_actors`, native-row audit counts and
+fallback reasons: 1 untabulated kind, 2 invalid detailed mapping, 3 empty/
+unrasterisable detailed art, 4 detailed extent smaller than guest, 5 incomplete
+final SAT ownership. `TG2_ACTORS=0` disables actor promotion for CPU A/B tests;
+that baseline retains the same explicit foreground infrastructure.

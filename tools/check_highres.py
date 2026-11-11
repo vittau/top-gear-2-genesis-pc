@@ -897,6 +897,7 @@ def actor_table_sample(table, info, rom, failures, strict=True):
     table['rows_checked'] = info['actor_rows']
     table['row_mismatches'] = info['actor_row_mismatches']
     for a in info['actors']:
+        table['fallbacks'] += bool(a['fallback'])
         if not a['promoted']:
             table['native'] += 1
             continue
@@ -907,7 +908,6 @@ def actor_table_sample(table, info, rom, failures, strict=True):
         kind['models'][model] = kind['models'].get(model, 0) + 1
         kind['fallbacks'] += bool(a['fallback'])
         kind['visible'] += bool(a['pixels'])
-        table['fallbacks'] += bool(a['fallback'])
         table['actors'] += 1
         table['native_blocked'] += a['native_blocked']
         table['pole_blocked'] += a['pole_blocked']
@@ -1058,6 +1058,13 @@ def check_drive(args):
                 shots.append(shot)
         builder_end, builder_end_frame = r.command_many([('tg2_highres', {}), ('frame_info', {})])
         item['highres_filter'] = builder_end
+        if args.actors and 'all_actors' in builder_end:
+            all_actors = builder_end['all_actors']
+            item['sprite_table_all'] = all_actors
+            keys = ['palette_mismatches', 'priority_mismatches']
+            if not args.race60: keys += ['position_mismatches', 'max_floor_error']
+            if any(all_actors[k] for k in keys) or all_actors['max_drawn_anchor_error'] >= 1:
+                failures.append(f'all-frame actor checks: {all_actors}')
         item['builder_end_frame'] = builder_end_frame['current_frame']
         built = builder_end['build_frames'] - builder_start['build_frames']
         item['builder_interval'] = dict(frames=built,

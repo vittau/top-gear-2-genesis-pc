@@ -473,7 +473,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
         if (side && c) {
             removed[x] = 1;
             shifted[origin + x + (side < 0 ? -origin : right)] = c;
-            ++hud_plane_pixels;
+            if (!reference_pass) ++hud_plane_pixels;
             dirty = 1;
         }
     }
@@ -532,10 +532,10 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                 occupied[ox] = 1;
                 if (hud) {
                     shifted[ox] = c;
-                    if (marker)
-                        ++hud_marker_pixels;
-                    else
-                        ++hud_sprite_pixels;
+                    if (!reference_pass) {
+                        if (marker) ++hud_marker_pixels;
+                        else ++hud_sprite_pixels;
+                    }
                 } else if (nx >= 0 && nx < nw) {
                     sprites[nx] = c;
                     spr_attr[nx] = attr;
@@ -860,12 +860,12 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
      * every output mode, while an inactive window keeps menu rows intact. */
     if (tg2_video_get_hide_overscan() && line < 8 &&
         window_at(v, line, 0) && window_at(v, line, nw - 1)) {
-        ++crop_top_rows;
+        if (!reference_pass) ++crop_top_rows;
         if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
         return;
     }
     if (!race(v) || !(v->reg[1] & 64)) {
-        ++native_lines;
+        if (!reference_pass) ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
         if (audit_race_frame) {
             window_margins(v, line, native, nw, out, w);
@@ -873,7 +873,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         }
         return;
     }
-    ++wide_lines;
+    if (!reference_pass) ++wide_lines;
     if (!line && !synthesizing && tg2_highres_present_scale() <= 1)
         select_scene(v);
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
@@ -890,7 +890,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     /* S1: compact per-row capture, only when the render scale is above 1, so
      * the stock path pays nothing. It records exactly the row state the
      * renderer is about to use. */
-    tg2_highres_capture_row(v, line, ha, hb);
+    if (!reference_pass) tg2_highres_capture_row(v, line, ha, hb);
     uint32_t pal[64];
     for (int i = 0; i < 64; ++i)
         pal[i] = genesis_dac_cram_to_argb(v->cram[i], 0);
@@ -943,7 +943,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
             if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
                 if (filter_foreground) filter_foreground[ox] = 1;
-                ++frame_margin_pixels;
+                if (!reference_pass) ++frame_margin_pixels;
             }
         }
     }
@@ -1407,7 +1407,7 @@ void tg2_video_command(int id, const char *json) {
  * the renderer (for example the blanked overscan band) and must not be
  * compared. */
 void tg2_video_highres_command(int id, const char *json) {
-    enum { CAPACITY = 98304 };
+    enum { CAPACITY = 262144 };
     char *out = malloc(CAPACITY);
     if (!out) {
         cmd_send_response("{\"ok\":false,\"error\":\"out of memory\"}");
@@ -1462,6 +1462,8 @@ void tg2_video_highres_command(int id, const char *json) {
                       tg2_highres_linear_filter());
     if (n>0 && n<CAPACITY) n+=snprintf(out+n,CAPACITY-n,",\"actor_rows\":%llu,\"actor_row_mismatches\":%llu,\"actor_dropped\":%u,\"native_objects\":%u,\"actors\":",actor_rows,actor_row_mismatches,tg2_actors_dropped(),tg2_actors_native_objects());
     if (n>0 && n<CAPACITY) n+=tg2_actors_json(out+n,CAPACITY-n);
+    if (n>0 && n<CAPACITY) n+=snprintf(out+n,CAPACITY-n,",\"all_actors\":");
+    if (n>0 && n<CAPACITY) n+=tg2_actors_stats_json(out+n,CAPACITY-n);
     if (n > 0 && n < CAPACITY) snprintf(out + n, CAPACITY - n, "}");
     cmd_send_response(out);
     free(out);

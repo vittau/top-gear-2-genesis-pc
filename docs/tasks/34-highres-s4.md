@@ -259,3 +259,14 @@ per-scale follow-ups after 30 frames of republished scene history. Cost mode
 refuses actor audits. Remaining work: finish the long run, directed other
 scales/weather/poles and filter check, G1/G3/boundaries, CPU A/B, silhouette
 review pictures and the single stepped/continuous pair, then final docs.
+
+The corrected native-reference pass no longer changes crop bookkeeping or
+per-row capture/audit counts. `build/s4/final2` passes with stable 712×400
+pictures and max downscale mean 1.677; `build/s4/qualified4` passes its 3,200-
+frame directed drive (3,299 audited pictures, 830,040 road rows, 172,282 stripe
+centres, maximum centre error 0.5 output px, no road/margin violations).
+Its sampled table covers 4,885 promoted actors plus one native fallback for
+incomplete final SAT ownership: all promoted in-screen pieces match the SAT,
+position/palette/priority mismatches are 0, maximum drawn-anchor error
+2.1e-8 output px including JSON rounding. Added all-frame cumulative totals so
+unsampled scenes are also covered by the final directed checks.

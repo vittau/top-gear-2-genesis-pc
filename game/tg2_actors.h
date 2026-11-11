@@ -85,6 +85,7 @@ typedef struct Tg2ActorCanvas {
 void tg2_actors_paint(const Tg2ActorCanvas *canvas);
 /* JSON array of the prepared actors and the last paint's results. */
 int tg2_actors_json(char *out, int capacity);
+int tg2_actors_stats_json(char *out, int capacity);
 
 #ifdef __cplusplus
 }
