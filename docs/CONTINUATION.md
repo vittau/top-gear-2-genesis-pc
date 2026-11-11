@@ -1,5 +1,14 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
+**S4 continuation (2026-11-11):** Fable completed the LOD evidence/checkpoint;
+Sol continued the implementation on `vittau/tg2-highres-s4`. Local technical
+qualification is complete; owner visual acceptance is pending. Read task 34's
+current handoff and HIGHRES §14, with the full ignored report at
+`build/s4/worker-report.md`. The operator highlighted the native pole detail
+mismatch in picture 05; [task 38](tasks/38-highres-poles.md) explicitly maps
+that compound-pole improvement. It has not started. No S4 merge/release/CI
+was performed. The older S3/main-checkout snapshots below are historical.
+
 Latest owner decision (2026-11-11): he tested the
 `deck-instruments-20261110` draft on the Steam Deck and said **“Está ótimo no
 Deck.”** Task 37 is accepted on the Deck too; do not ask again. He then asked to
@@ -148,7 +157,8 @@ new implementation work merely because this checkpoint exists.
   applied patch set may be stale. Snapshot both nested source trees before
   refreshing the current project patch stack, then regenerate/build. The
   successful CI used a clean recursive checkout of the exact merge revision.
-- No S4 implementation has started. Task 28 (NTSC/scanlines) remains paused.
+- Historical pre-S4 snapshot: implementation now exists on the separate S4
+  review branch; task 34 has the current handoff. Task 28 remains paused.
   Clean FM and Clean engine samples were rejected and removed; keep the
   finished Music/SFX volume controls. Do not restore the withdrawn options.
 

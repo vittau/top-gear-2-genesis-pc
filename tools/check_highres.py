@@ -888,11 +888,161 @@ def downscale_against(native: Path, shot: Path, scale: int, native_filter: bool 
     return compare_downscaled(reference, downsample(cpix, cw, ch, cc, scale))
 
 
+def actor_regions(native, shot, scale, info, native_filter=False):
+    """Same-frame RGB comparison including actor silhouette edges. Two native
+    pixels of padding include subpixel shifts and differing authored short
+    axes. Boxes include occlusion/background, not guessed colour ownership."""
+    import math
+    import numpy as np
+    from PIL import Image
+    ref = Image.open(native).convert('RGB')
+    candidate = Image.open(shot).convert('RGB')
+    top = 8 if candidate.height // scale == 200 else 0
+    ref = ref.crop((0, top, ref.width, top + candidate.height // scale))
+    if native_filter:
+        ref = ref.resize(candidate.size, Image.Resampling.BILINEAR).resize(ref.size, Image.Resampling.BOX)
+    candidate = candidate.resize(ref.size, Image.Resampling.BOX)
+    diff = np.abs(np.asarray(ref, dtype=np.int16) - np.asarray(candidate, dtype=np.int16)).max(axis=2)
+    mask = np.zeros(diff.shape, dtype=bool)
+    regions = []
+    for a in info['actors']:
+        if not a['promoted'] or not a['pixels']: continue
+        x0, y0, x1, y1 = a['box']
+        x0, x1 = max(0, math.floor(x0/scale)-2), min(ref.width, math.ceil(x1/scale)+2)
+        y0 = max(0, math.floor(y0/scale)-top-2)
+        y1 = min(ref.height, math.ceil(min(y1/scale, a['clip']))-top+2)
+        if x1 <= x0 or y1 <= y0: continue
+        mask[y0:y1, x0:x1] = True
+        region = diff[y0:y1, x0:x1]
+        distance = 'near' if a['size'] >= .5 else 'middle' if a['size'] >= .15 else 'far'
+        # The smaller native bands contain only a few authored pixels: their
+        # internal colours need not match a filtered detailed asset. Position,
+        # size axis, palette, priority and SAT ownership have separate gates.
+        tolerance = dict(near=64, middle=80, far=96)[distance]
+        regions.append(dict(kind=a['kind'], guest_model=a['guest_model'], model=a['model'],
+                            distance=distance, box=[x0,y0,x1,y1],
+                            mean_abs_diff=round(float(region.mean()), 4), tolerance=tolerance))
+    # Occluding actors must be compared together. A tiny far sign's box can
+    # lie inside a nearby car; testing that patch alone would attribute the
+    # car's intentional new detail to the hidden sign's silhouette.
+    groups = []
+    for region in regions:
+        box = region['box'][:]
+        members = [region]
+        changed = True
+        while changed:
+            changed = False
+            for group in groups[:]:
+                a,b,c,d = group['box']
+                if box[0] < c and box[2] > a and box[1] < d and box[3] > b:
+                    box = [min(box[0],a),min(box[1],b),max(box[2],c),max(box[3],d)]
+                    members += group['members']
+                    groups.remove(group)
+                    changed = True
+        groups.append(dict(box=box,members=members))
+    for group in groups:
+        x0,y0,x1,y1 = group['box']
+        group['mean_abs_diff'] = round(float(diff[y0:y1,x0:x1].mean()),4)
+        group['tolerance'] = min(r['tolerance'] for r in group['members'])
+    outside = diff[~mask]
+    return dict(outside_mean_abs_diff=round(float(outside.mean()), 4) if outside.size else 0,
+                outside_big_diff_ratio=round(float((outside>64).mean()), 6) if outside.size else 0,
+                actor_box_pixels=int(mask.sum()), regions=regions, silhouette_groups=groups)
+
+
+def actor_region_failures(result, mean=2.5, big=.02):
+    failures = []
+    if result['outside_mean_abs_diff'] > mean or result['outside_big_diff_ratio'] > big:
+        failures.append(f"outside actor boxes: {result}")
+    for r in result['silhouette_groups']:
+        if r['mean_abs_diff'] > r['tolerance']: failures.append(f"actor silhouette/detail group: {r}")
+    return failures
+
+
+def check_sprite_pairs(args):
+    """Recheck captured pairs without rerunning the guest. Always retain the
+    global S3 metric, while S4's bounded box tolerances handle changed assets."""
+    root = args.capture.resolve()
+    pairs, failures = [], []
+    for f in sorted(root.glob('frame-*-actors.json')):
+        stem = f.name.replace('-actors.json', '')
+        native, shot = root / (stem+'-1x.ppm'), root / (stem+'.png')
+        if not native.exists(): continue
+        info = json.loads(f.read_text())
+        result = actor_regions(native, shot, args.scale, info, bool(info.get("native_filter")))
+        pairs.append(dict(frame=stem, **result))
+        failures.extend(f'{stem}: {e}' for e in actor_region_failures(result))
+    if not pairs: failures.append('no actor/native image pairs')
+    result = dict(check='sprite-pairs', pairs=pairs, failures=failures, ok=not failures)
+    (root/'sprite-pairs-summary.json').write_text(json.dumps(result, indent=1))
+    brief = dict(ok=not failures, failures=failures, pairs=len(pairs),
+                 max_outside_mean=max((p['outside_mean_abs_diff'] for p in pairs),default=0),
+                 max_outside_big_ratio=max((p['outside_big_diff_ratio'] for p in pairs),default=0),
+                 max_actor_box_mean=max((r['mean_abs_diff'] for p in pairs for r in p['regions']),default=0),
+                 max_silhouette_group_mean=max((r['mean_abs_diff'] for p in pairs for r in p['silhouette_groups']),default=0))
+    print(json.dumps(brief,indent=1))
+    return int(bool(failures))
+
+
+def actor_table_sample(table, info, rom, failures, strict=True):
+    """Check captured guest pieces independently of the painter's anchors,
+    and the chosen car frame against the raw ROM remap, not a second copy of
+    the C selection routine. Counts are per distinct displayed scene."""
+    import math
+    if info.get('actor_dropped', 0): failures.append(f"actor capture overflow: {info['actor_dropped']}")
+    table['rows_checked'] = info['actor_rows']
+    table['row_mismatches'] = info['actor_row_mismatches']
+    for a in info['actors']:
+        table['fallbacks'] += bool(a['fallback'])
+        if not a['promoted']:
+            table['native'] += 1
+            continue
+        key = f"{a['kind']:02X}"
+        kind = table['kinds'].setdefault(key, dict(actors=0, models={}, fallbacks=0, visible=0))
+        kind['actors'] += 1
+        model = f"{a['guest_model']}->{a['model']}"
+        kind['models'][model] = kind['models'].get(model, 0) + 1
+        kind['fallbacks'] += bool(a['fallback'])
+        kind['visible'] += bool(a['pixels'])
+        table['actors'] += 1
+        table['native_blocked'] += a['native_blocked']
+        table['pole_blocked'] += a['pole_blocked']
+        table['pole_overpaint'] += a['pole_overpaint']
+        floor_error = max(abs(math.floor(a['anchor'][i])-a['guest'][i]) for i in (0, 1))
+        table['max_floor_error'] = max(table['max_floor_error'], floor_error)
+        expected = [(a['anchor'][0] + a['draw_origin'])*a['draw_scale'], a['anchor'][1]*a['draw_scale']]
+        error = max(abs(a['drawn_anchor'][i]-expected[i]) for i in (0, 1))
+        table['max_drawn_anchor_error'] = max(table['max_drawn_anchor_error'], error)
+        table['position_mismatches'] += a['position_mismatches']
+        table['palette_mismatches'] += a['palette_mask'] != a['guest_palette_mask']
+        table['priority_mismatches'] += a['priority_mask'] != a['guest_priority_mask']
+        table['inside_pieces'] += a['inside']
+        table['sat_matched'] += a['matched']
+        if strict and (floor_error or a['position_mismatches']):
+            if len(failures)<20: failures.append(f"actor guest-position mismatch: {a}")
+        if error >= 1 or a['palette_mask'] != a['guest_palette_mask'] or a['priority_mask'] != a['guest_priority_mask']:
+            if len(failures)<20: failures.append(f"actor anchor/palette/priority mismatch: {a}")
+        if a['record'] >= 0xFF8E94 and not a['fallback']:
+            # A model used in row 0 keeps its angle; later rows choose the
+            # mild level-0 frame of the left/centre/right run nearest column 4.
+            rows = [list(rom[0x57C8+n*9:0x57C8+(n+1)*9]) for n in range(24)]
+            row = next((r for r in rows if a['guest_model'] in r), None)
+            if row is None: failures.append(f"car model outside ROM table: {a}")
+            else:
+                cols = [i for i,m in enumerate(row) if m == a['guest_model']]
+                col = min(cols, key=lambda i: abs(i-4))
+                want = a['guest_model'] if row is rows[0] else rows[0][4 if len(set(row)) == 1 else col]
+                if a['model'] != want: failures.append(f"wrong car angle: {a}; expected {want}")
+    if info['actor_row_mismatches'] and len(failures)<20:
+        failures.append(f"native row reconstruction: {info['actor_row_mismatches']} mismatches")
+
+
 def check_drive(args):
     """S3 audit on a driven race: password into a track, drive it with the
     closed-loop controller at a render scale, with the N x road records and
     the margin audit on, taking a picture every --shot-every frames. The trace
     carries curvature and slope so curve/hill pictures can be picked."""
+    if args.actors and args.no_audit: raise ValueError('--actors cannot be combined with --no-audit')
     info = TRACKS[args.track]
     tag = (f'{args.track}-scale{args.scale}' + ('-60' if args.race60 else '') +
            ('-cost' if args.no_audit else ''))
@@ -905,6 +1055,7 @@ def check_drive(args):
     env = {'TG2_HIGHRES_SCALE': str(args.scale),
            'TG2_RACE_60FPS': '1' if args.race60 else '0',
            'TG2_HIGHRES_TIMING': '1'}
+    if args.actors: env['TG2_ACTOR_AUDIT'] = '1'
     if args.no_audit:
         env['GENESIS_FRAME_STATS'] = str(out / 'frame-stats.csv')
     if not args.no_audit:
@@ -929,6 +1080,12 @@ def check_drive(args):
     item = {'tag': tag, 'track': args.track, 'scale': args.scale, 'mode': args.mode,
             'race60': bool(args.race60), 'frames': args.frames}
     trace, shots, failures = [], [], []
+    actor_table = dict(actors=0, native=0, fallbacks=0, kinds={}, max_floor_error=0,
+                       max_drawn_anchor_error=0, position_mismatches=0, palette_mismatches=0,
+                       priority_mismatches=0, inside_pieces=0, sat_matched=0,
+                       rows_checked=0, row_mismatches=0, native_blocked=0, pole_blocked=0, pole_overpaint=0)
+    actor_serial = None
+    actor_rom = args.rom.read_bytes() if args.actors else None
     r.start()
     try:
         if args.output_size:
@@ -939,7 +1096,13 @@ def check_drive(args):
             state = r.state_and_frame()
             start = 3000
         else:
-            state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            if args.load_state:
+                r.command('load_state', path=str(args.load_state.resolve()))
+                r.wait_frame(r.frame()+30)  # republish immutable scene history after reset
+                state = r.state_and_frame()
+            else:
+                state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            if args.save_state: r.command('save_state', path=str(args.save_state.resolve()))
             start = r.frame()
         item['race_start_frame'] = state.frame
         item['native_filter'] = bool(r.command('tg2_highres')['native_filter'])
@@ -957,22 +1120,32 @@ def check_drive(args):
             if due:
                 # The pictures this step builds also leave their 1x canvas.
                 r.command('tg2_highres', dump=str(out / 'native.ppm'))
-            st = r.step(pad)
+            if args.actors:
+                st, samples = r.step_commands(pad, [('tg2_highres', {})])
+                actor_info = samples[0]
+            else:
+                st = r.step(pad)
             lat = st.lat_units
             d = 0.0 if previous is None else lat - previous
             u = -1.0 * lat - 4.0 * d
             pad = 0x10 | (0x08 if u > 9.0 else 0x04 if u < -9.0 else 0)
             previous = lat
             trace.append([st.frame, st.speed, round(lat, 2), st.curv, st.slope, st.lap])
+            if args.actors:
+                if actor_info['serial'] != actor_serial:
+                    actor_serial = actor_info['serial']
+                    actor_table_sample(actor_table, actor_info, actor_rom, failures)
             if not args.no_audit and (due or not last_shot):
                 last_shot = st.frame
                 # One batch is served in one per-frame poll, so the screenshot
                 # and the end of the 1x dump see the same completed picture.
                 path = out / f'frame-{st.frame}.png'
                 batch = [('screenshot', dict(path=str(path)))]
+                if args.actors: batch.append(('tg2_highres', {}))
                 if due:
                     batch.append(('tg2_highres', dict(dump='')))
-                r.command_many(batch)
+                batch_result = r.command_many(batch)
+                if args.actors: (out / f'frame-{st.frame}-actors.json').write_text(json.dumps(batch_result[1], indent=1))
                 shot = {'frame': st.frame, 'path': str(path), 'speed': st.speed,
                         'curv': st.curv, 'slope': st.slope}
                 native = out / 'native.ppm'
@@ -981,9 +1154,18 @@ def check_drive(args):
                     native.replace(reference)
                     shot['native'] = str(reference)
                     shot['downscale'] = downscale_against(reference, Path(path), args.scale, item['native_filter'])
+                    if args.actors:
+                        shot['actor_regions'] = actor_regions(reference, Path(path), args.scale, batch_result[1], item['native_filter'])
+                        failures.extend(f"{tag}: frame {st.frame} {e}" for e in actor_region_failures(shot['actor_regions'], args.max_mean_diff, args.max_big_ratio))
                 shots.append(shot)
         builder_end, builder_end_frame = r.command_many([('tg2_highres', {}), ('frame_info', {})])
         item['highres_filter'] = builder_end
+        if args.actors and 'all_actors' in builder_end:
+            all_actors = builder_end['all_actors']
+            item['sprite_table_all'] = all_actors
+            keys = ['palette_mismatches', 'priority_mismatches', 'position_mismatches', 'max_floor_error']
+            if any(all_actors[k] for k in keys) or all_actors['max_drawn_anchor_error'] >= 1:
+                failures.append(f'all-frame actor checks: {all_actors}')
         item['builder_end_frame'] = builder_end_frame['current_frame']
         built = builder_end['build_frames'] - builder_start['build_frames']
         item['builder_interval'] = dict(frames=built,
@@ -1034,6 +1216,9 @@ def check_drive(args):
                 wait_cpu_max_us=max(int(row['cpu_wait_us']) for row in rows),
                 present_p50_us=statistics.median(int(row['present_us']) for row in rows))
     (out / 'trace.json').write_text(json.dumps(trace) + '\n')
+    if args.actors:
+        item['sprite_table'] = actor_table
+        if not actor_table['actors'] or not actor_table['rows_checked']: failures.append('no actor/row samples')
     item.update({'shots': shots, 'manifests': empty_manifests(out),
                  'steps': len(trace),
                  'moving_steps': sum(1 for t in trace if t[1] > 500)})
@@ -1045,7 +1230,7 @@ def check_drive(args):
             'max_big_diff_ratio': max(c['big_diff_ratio'] for c in compared)}
         for shot in shots:
             c = shot.get('downscale')
-            if c and (c['mean_abs_diff'] > args.max_mean_diff or
+            if not args.actors and c and (c['mean_abs_diff'] > args.max_mean_diff or
                       c['big_diff_ratio'] > args.max_big_ratio):
                 failures.append(f"{tag}: frame {shot['frame']} downscale {c}")
     elif args.scale > 1 and shots[1:]:
@@ -1084,6 +1269,53 @@ def check_drive(args):
     brief = {k: v for k, v in summary.items() if k not in ('shots',)}
     print(json.dumps(brief, indent=1))
     return 0 if not failures else 1
+
+
+def check_lod(args):
+    """S4 evidence: drive one track at 1x with the read-only actor log on
+    (TG2_ACTOR_LOG, game/tg2_actors.c). The stream stays under the ignored
+    build directory; tools/analyze_actors.py summarises it."""
+    info = TRACKS[args.track]
+    out = args.out / 'lod' / args.track
+    out.mkdir(parents=True, exist_ok=True)
+    log = out / 'actors.csv'
+    r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
+               widescreen=args.mode, max_frames=400000,
+               env_extra={'TG2_ACTOR_LOG': str(log), 'TG2_HIGHRES_SCALE': '1'},
+               extra_args=['--turbo'], timeout=120)
+    item = {'track': args.track, 'frames': args.frames, 'log': str(log)}
+    r.start()
+    try:
+        state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+        start = r.frame()
+        item['race_start_frame'] = state.frame
+        pad, previous, snapped = 0, None, False
+        while r.frame() - start < args.frames:
+            st = r.step(pad)
+            lat = st.lat_units
+            d = 0.0 if previous is None else lat - previous
+            u = -1.0 * lat - 4.0 * d
+            pad = 0x10 | (0x08 if u > 9.0 else 0x04 if u < -9.0 else 0)
+            previous = lat
+            if not snapped and st.frame - start >= args.snapshot_at:
+                # One art snapshot for tools/actor_sheet.py (ignored build dir).
+                snapped = True
+                (out / 'snap.vram').write_bytes(b''.join(
+                    r.vram(a, 0x1000) for a in range(0, 0x10000, 0x1000)))
+                (out / 'snap.cram').write_bytes(bytes.fromhex(r.command('read_cram')['hex']))
+                r.dump_ram_file(out / 'snap.ram')
+                r.screenshot(out / 'snap.png')
+                item['snapshot_frame'] = st.frame
+        item['end_frame'] = r.frame()
+    finally:
+        item['exit'] = r.stop()
+    item['manifests'] = empty_manifests(out)
+    item['log_bytes'] = log.stat().st_size if log.exists() else 0
+    item['ok'] = (item['exit'] == 0 and item['log_bytes'] > 0 and
+                  all(v == 0 for v in item['manifests'].values()))
+    (out / 'lod-summary.json').write_text(json.dumps(item, indent=1))
+    print(json.dumps(item, indent=1))
+    return 0 if item['ok'] else 1
 
 
 def check_nx(args):
@@ -1229,12 +1461,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='check', required=True)
-    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split', 'cap', 'launcher'):
+    for name in ('g1', 'capture', 's3', 'nx', 'drive', 'captures', 'option', 'route', 'split', 'cap', 'launcher', 'sprite-pairs'):
         s = sub.add_parser(name)
         s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
         s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
         s.add_argument('--out', type=Path, default=ROOT / 'build/highres-check')
         s.add_argument('--port', type=int, default=4494)
+    s = sub.choices['sprite-pairs']
+    s.add_argument('--capture', type=Path, required=True)
+    s.add_argument('--scale', type=int, required=True)
     s = sub.choices['split']
     s.add_argument('--mode', default='16:9', choices=['16:9', '32:9'])
     s.add_argument('--scale', type=int, default=4, choices=[2,3,4])
@@ -1273,6 +1508,9 @@ def main():
     s.add_argument('--shot-every', type=int, default=120)
     s.add_argument('--min-frames', type=int, default=3000)
     s.add_argument('--race60', action='store_true')
+    s.add_argument('--actors', action='store_true', help='S4: independent sprite-position/variant and native-row coverage table')
+    s.add_argument('--load-state', type=Path, help='ignored local race checkpoint; republish 30 frames before sampling')
+    s.add_argument('--save-state', type=Path, help='save an ignored local race checkpoint before driving')
     s.add_argument('--no-audit', action='store_true', help='CPU timing with no road/margin audits, screenshots or native dumps')
     s.add_argument('--uncapped', action='store_true', help='Cost mode: full rendering/audio work without host pacing')
     s.add_argument('--cost-route', action='store_true', help='Cost mode: committed baseline input route; sample [3000,3000+frames)')
@@ -1280,6 +1518,15 @@ def main():
     s.add_argument('--keep-audit', action='store_true')
     s.add_argument('--max-mean-diff', type=float, default=2.5)
     s.add_argument('--max-big-ratio', type=float, default=0.02)
+    s = sub.add_parser('lod')
+    s.add_argument('--exe', type=Path, default=ROOT / 'build/TG2Recomp')
+    s.add_argument('--rom', type=Path, default=Path.home() / 'roms/genesis/tg2.bin')
+    s.add_argument('--out', type=Path, default=ROOT / 'build/highres-check')
+    s.add_argument('--port', type=int, default=4494)
+    s.add_argument('--track', default='auckland', choices=sorted(TRACKS))
+    s.add_argument('--mode', default='16:9')
+    s.add_argument('--frames', type=int, default=3600)
+    s.add_argument('--snapshot-at', type=int, default=1500)
     args = p.parse_args()
     args.exe = args.exe.resolve()
     args.out = args.out.resolve()
@@ -1290,7 +1537,7 @@ def main():
     return {'g1': check_g1, 'capture': check_capture, 's3': check_s3,
             'nx': check_nx, 'drive': check_drive, 'captures': check_captures, 'option': check_option,
             'route': check_route, 'split': check_split, 'cap': check_cap,
-            'launcher': check_launcher}[args.check](args)
+            'launcher': check_launcher, 'lod': check_lod, 'sprite-pairs': check_sprite_pairs}[args.check](args)
 
 
 if __name__ == '__main__':

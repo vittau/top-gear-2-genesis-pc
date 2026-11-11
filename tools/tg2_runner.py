@@ -225,12 +225,21 @@ class Runner:
         frame F and the pad is latched for frame F+1: a fixed one-frame control
         delay instead of TCP jitter.
         """
-        _, block, info = self.command_many([
+        state, _ = self.step_commands(pad, [])
+        return state
+
+    def step_commands(self, pad: int, commands):
+        """Sample diagnostics in the same frame poll as the controller state;
+        extra TCP polls otherwise change the closed-loop steering cadence."""
+        replies = self.command_many([
             ('set_input', dict(keys='%02X' % pad)),
             ('read_ram', dict(addr='0x%04X' % STATE_LO, size=STATE_LEN)),
             ('frame_info', {}),
+            *commands,
         ])
-        return RaceState(bytes.fromhex(block['hex']), int(info['current_frame']))
+        block, info = replies[1:3]
+        state = RaceState(bytes.fromhex(block['hex']), int(info['current_frame']))
+        return state, replies[3:]
 
     def frame(self) -> int:
         return int(self.command('frame_info')['current_frame'])

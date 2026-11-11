@@ -15,6 +15,7 @@
  * SAT or scheduling state is touched.
  */
 #include "tg2_highres.h"
+#include "tg2_actors.h"
 
 #include "app_config.h"
 #include "video/genesis_vdp.h"
@@ -55,6 +56,20 @@ int tg2_highres_linear_filter(void) {
 }
 unsigned tg2_highres_filtered_frames(void) { return s_filtered_frames; }
 unsigned tg2_highres_filter_incomplete(void) { return s_filter_incomplete; }
+
+static unsigned char s_actor_occluder[TG2_HIGHRES_ROWS][4096];
+static unsigned short s_actor_front[TG2_HIGHRES_ROWS][4096];
+static unsigned char s_actor_row_ok[TG2_HIGHRES_ROWS];
+static uint32_t s_reference[TG2_HIGHRES_ROWS][4096];
+void tg2_highres_capture_actors(int line,const unsigned char *foreground,
+    const unsigned char *occluder,const unsigned short *front,
+    const uint32_t *reference,int width,int actor_free) {
+    if(line<0 || line>=TG2_HIGHRES_ROWS || width>4096)return;
+    memcpy(s_actor_occluder[line],occluder,width);
+    memcpy(s_actor_front[line],front,width*sizeof *front);
+    if(tg2_highres_native_dump_active()) memcpy(s_reference[line],reference,width*sizeof *reference);
+    s_actor_row_ok[line]=actor_free && tg2_highres_row_serial()[line]==tg2_highres_serial();
+}
 
 /* ── Render scale (the one place the port reads it) ──────────────────────── */
 
@@ -219,7 +234,7 @@ static int road_runs(const GVDP *v, const Tg2RowState *r, int py, RoadRuns *runs
 
 void tg2_highres_capture_native(int line, const uint32_t *pixels,
                                 const unsigned char *foreground, int width) {
-    if (!tg2_highres_linear_filter() || line < 0 || line >= TG2_HIGHRES_ROWS ||
+    if (tg2_highres_present_scale() <= 1 || line < 0 || line >= TG2_HIGHRES_ROWS ||
         !pixels || !foreground || width <= 0 || width > 4096) return;
     memcpy(s_native_rgb[line], pixels, (size_t)width * sizeof *pixels);
     memcpy(s_native_foreground[line], foreground, (size_t)width);
@@ -244,6 +259,7 @@ void tg2_highres_picture_start(void) {
         return;
     ++s_capture_frames;
     ++s_serial;
+    memset(s_actor_row_ok,0,sizeof s_actor_row_ok);
     s_capture_rows = 0;
     s_capture_us = 0;
 }
@@ -680,7 +696,8 @@ static void build_terrain(int src, const RowPlan *p, int origin, int native_w,
             x = x < -256 ? -256 : 255;
         }
         while (run + 1 < runs->count && runs->start[run + 1] <= x) ++run;
-        s_terrain[u] = row[u * scale] == p->colour[run];
+        s_terrain[u] = row[u * scale] == p->colour[run] &&
+            !(s_native_serial[src] == s_serial && s_native_foreground[src][u]);
         s_model[u] = p->colour[run];
     }
 }
@@ -807,6 +824,7 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
  * an empty path stops it. */
 static char s_dump_path[1024];
 
+int tg2_highres_native_dump_active(void) { return s_dump_path[0] != 0; }
 void tg2_highres_request_native_dump(const char *path) {
     snprintf(s_dump_path, sizeof s_dump_path, "%s", path ? path : "");
 }
@@ -817,7 +835,7 @@ static void native_dump(const uint32_t *pixels, int stride, int scale, int w1, i
     fprintf(f, "P6\n%d %d\n255\n", w1, h);
     for (int y = 0; y < h; ++y)
         for (int u = 0; u < w1; ++u) {
-            uint32_t c = pixels[(size_t)y * stride + u * scale];
+            uint32_t c = s_native_serial[y] == s_serial ? s_reference[y][u] : pixels[(size_t)y * stride + u * scale];
             unsigned char rgb[3] = {(unsigned char)(c >> 16), (unsigned char)(c >> 8),
                                     (unsigned char)c};
             fwrite(rgb, 1, 3, f);
@@ -940,6 +958,11 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
         if (coverage) fclose(coverage);
         ++s_filtered_frames;
     }
+    const unsigned char *occluder[TG2_HIGHRES_ROWS];
+    const unsigned short *front[TG2_HIGHRES_ROWS];
+    for(int y=0;y<native_h;++y){occluder[y]=s_actor_occluder[y];front[y]=s_actor_front[y];}
+    Tg2ActorCanvas actors={pixels,stride,width,scale,w1,origin,native_h,occluder,front,s_actor_row_ok,s_rows};
+    tg2_actors_paint(&actors);
     nx_audit_write(frame, scale, w1, native_w);
     ++s_build_frames;
     if (timing) {

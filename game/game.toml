@@ -142,6 +142,20 @@ kind = "game_hook"
 [[widescreen_site]]
 addr = 0x00B5FA
 kind = "game_hook"
+# S4 actor snapshots (game/tg2_actors.c), read-only. $B42E and $B4D6 are the
+# instruction after the projection's `swap d1` on the interpolated and the
+# depth-table path (raw ROM 3C2B 93B4 at both, after 4841): the upper word of
+# D1 still holds the discarded X fraction. $B584 (426B A046) is the mapper
+# entry with the final model index in D7 and the object record in A1.
+[[widescreen_site]]
+addr = 0x00B42E
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x00B4D6
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x00B584
+kind = "game_hook"
 [[widescreen_site]]
 addr = 0x006982
 kind = "game_hook"

@@ -1,6 +1,7 @@
 /* TG2 USA presentation. Guest raster state is authoritative on every row. */
 #include "tg2_video.h"
 #include "tg2_highres.h"
+#include "tg2_actors.h"
 #include "cmd_server.h"
 #include "genesis_runtime.h"
 #include "video/genesis_dac.h"
@@ -17,6 +18,12 @@ static uint64_t present_frame;
  * that produced the native RGB row. Custom margin/HUD writes update its mask. */
 static const GVDPRasterRow *filter_layers;
 static unsigned char *filter_foreground;
+static unsigned char *actor_occluder;
+static unsigned short *actor_front;
+static int actor_free, reference_pass;
+static unsigned short owners[256];
+static unsigned long long actor_rows, actor_row_mismatches;
+static int actor_audit = -1;
 static int foreground_at(const GVDPRasterRow *r, int x) {
     unsigned a = r->plane_a[x], b = r->plane_b[x];
     int sp = r->opaque[x] != 0;
@@ -135,14 +142,19 @@ enum { MAX_PIECES = 2048, HISTORY = 4 };
 typedef struct {
     int x, y;
     unsigned attr, size;
+    int actor;
+    unsigned char kind;
 } Piece;
 typedef struct {
     Piece pieces[MAX_PIECES];
+    Tg2ActorSet actors;
+    short sat_piece[64];
     unsigned count, serial, sat_size;
     unsigned char sat[512];
 } Scene;
 static Scene building, history[HISTORY];
 static const Scene *shown;
+static int current_actor = -1;
 static unsigned serial, overflow, matched_pieces, margin_pieces;
 static unsigned read16(unsigned a) {
     a &= 0xFFFFFF;
@@ -156,19 +168,30 @@ static unsigned read32(unsigned a) { return (read16(a) << 16) | read16(a + 2); }
 void tg2_video_reset(void) {
     presentation_clear();
     tg2_highres_reset();
+    tg2_actors_reset();
     highres_wanted = 0;
+    actor_rows=actor_row_mismatches=0;
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
-    shown = NULL;
+    shown = NULL; current_actor=-1;
     serial = overflow = matched_pieces = margin_pieces = 0;
     crop_race_ok = crop_top_rows = crop_bottom_ok = presented_cropped = 0;
     crop_frames = crop_withheld = 0;
 }
 int tg2_video_hook(uint32_t pc) {
+    int actors = tg2_actors_active();
+    if (pc == 0xB42E || pc == 0xB4D6) {
+        if (actors || tg2_actors_logging()) tg2_actors_latch(pc);
+    } else if (pc == 0xB584) {
+        current_actor = (actors || tg2_actors_logging()) ?
+            tg2_actors_object(actors ? &building.actors : NULL, building.count) : -1;
+    } else if (pc == 0xB5FA && tg2_actors_logging()) tg2_actors_log_header();
     if (!renderer_enabled())
         return 0;
-    if (pc == 0x67EE)
-        building.count = 0;
+    if (pc == 0x67EE) {
+        building.count = 0; current_actor = -1;
+        tg2_actors_begin(&building.actors);
+    }
     else if (pc == 0x6982) {
         unsigned index = word(g_ram, 0x22D8);
         if (index > 127)
@@ -205,6 +228,8 @@ int tg2_video_hook(uint32_t pc) {
                 break;
             }
             Piece *piece = &building.pieces[building.count++];
+            piece->actor = current_actor;
+            piece->kind = word(g_ram,0x187C)&255;
             piece->x = px;
             piece->y = py + (int16_t)word(g_ram, 0x2452) - 128;
             piece->size = sz & 15;
@@ -229,21 +254,120 @@ static void select_scene(const GVDP *v) {
         if (k == sc->sat_size && k)
             shown = sc;
     }
+    if (shown) memset(((Scene *)shown)->sat_piece, 0xFF, sizeof shown->sat_piece);
     if (shown)
-        for (unsigned i = 0; i < shown->count; ++i) {
+        for (unsigned n = shown->count; n > 0; --n) {
+            unsigned i=n-1; /* nearest first, like the backward SAT allocator */
             const Piece *p = &shown->pieces[i];
             if (p->x < 0 || p->x + ((((p->size >> 2) & 3) + 1) * 8) > 256)
                 ++margin_pieces;
             for (unsigned k = 0; k < shown->sat_size; k += 8) {
                 const unsigned char *q = shown->sat + k;
-                if (((word(q, 0) & 511) - 128) == (unsigned)p->y &&
+                if (shown->sat_piece[k/8]<0 && ((word(q, 0) & 511) - 128) == (unsigned)p->y &&
                     ((word(q, 6) & 511) - 128) == (unsigned)p->x && (q[2] & 15) == p->size &&
                     word(q, 4) == p->attr) {
+                    ((Scene *)shown)->sat_piece[k / 8] = i;
                     ++matched_pieces;
                     break;
                 }
             }
         }
+}
+/* Replay just the host sprite ownership from the immutable row. The real
+ * evaluator already ran once in the engine seam; this changes no VDP flags. */
+static unsigned sprite_texel(const GVDP *v, unsigned attr, unsigned size, int dx, int dy) {
+    int w=(((size>>2)&3)+1)*8,h=((size&3)+1)*8;
+    int sx=attr&0x800?w-1-dx:dx,sy=attr&0x1000?h-1-dy:dy;
+    unsigned tile=((attr&2047)+(sx/8)*(h/8)+sy/8)&2047;
+    unsigned b=v->vram[(tile*32+(sy&7)*4+(sx&7)/2)&65535];
+    return sx&1?b&15:b>>4;
+}
+static int promoted_sat(int link) {
+    return shown && link<64 && shown->sat_piece[link]>=0 &&
+        tg2_actors_promoted(shown->pieces[shown->sat_piece[link]].actor);
+}
+static void prepare_actors(const GVDP *v) {
+    tg2_actors_prepare(v,shown?&shown->actors:NULL);
+    if (!shown) return;
+    for(unsigned j=0;j<shown->count;++j) tg2_actors_note_native(j,shown->pieces[j].kind);
+    for(unsigned i=0;i<shown->actors.count;++i) {
+        unsigned count=0,inside=0,matched=0,bad_position=0;
+        const Tg2Actor *a=&shown->actors.actors[i];
+        for(unsigned j=0;j<shown->count;++j) if(shown->pieces[j].actor==(int)i) {
+            const Piece *p=&shown->pieces[j];++count;
+            int found=0;
+            for(unsigned k=0;k<a->guest_count;++k) {
+                const Tg2ModelPiece *q=&shown->actors.pieces[a->guest_first+k];
+                if(p->attr==q->attr && p->size==q->size && p->x==a->gx+q->dx && p->y==a->gy+q->dy) {found=1;break;}
+            }
+            if(!found)++bad_position;
+            int w=(((p->size>>2)&3)+1)*8;
+            if(p->x<256 && p->x+w>0) {
+                ++inside;
+                for(unsigned k=0;k<64;++k) if(shown->sat_piece[k]==(int)j) {++matched;break;}
+            }
+        }
+        tg2_actors_note_sat(i,count,inside,matched,bad_position);
+    }
+}
+static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *native,
+                              uint32_t *out,GVDPRasterRow *free_row,unsigned short *owners) {
+    *free_row=*filter_layers;
+    if(!free_row->display) {memset(owners,0,nw*sizeof *owners);memcpy(out,native,nw*sizeof *out);return;}
+    unsigned char all[256]={0},all_hi[256]={0},kept[256]={0},hi[256]={0};
+    int owner[256]; for(int x=0;x<nw;++x)owner[x]=-1;
+    memset(owners,0,nw*sizeof *owners);
+    unsigned sat=(v->reg[5]&127)<<9;
+    int link=0,on_line=0,budget=filter_layers->width;
+    for(int n=0;n<64;++n) {
+        unsigned e=sat+link*8,sz=v->vram[(e+2)&65535],attr=word(v->vram,e+4);
+        int y=(word(v->vram,e)&1023)-128,h=((sz&3)+1)*8,w=(((sz>>2)&3)+1)*8;
+        int next=v->vram[(e+3)&65535]&127;
+        if(line>=y && line<y+h) {
+            if(++on_line>16)break;
+            int xword=word(v->vram,e+6)&1023;
+            if(!xword && on_line>1)break;
+            int removed=promoted_sat(link);
+            for(int dx=0;dx<w;++dx) {
+                int x=xword-128+dx;
+                if(x<0||x>=nw)continue;
+                unsigned c=sprite_texel(v,attr,sz,dx,line-y);
+                if(!c)continue;
+                c|=(attr>>9)&48;
+                if(!all[x]){all[x]=c;all_hi[x]=!!(attr&0x8000);owner[x]=removed;}
+                if(!removed && !kept[x]) {
+                    kept[x]=c;hi[x]=!!(attr&0x8000);
+                    int piece=shown && link<64?shown->sat_piece[link]:-1;
+                    owners[x]=piece<0?65535:piece+1;
+                }
+            }
+            budget-=w;if(budget<=0)break;
+        }
+        if(!next)break;
+        link=next;
+    }
+    int offset=((int)free_row->width-nw)/2;
+    /* A full no-removal reconstruction is checked against the engine's own
+     * captured sprite channels, independently of colour/palette equality. */
+    if(actor_audit<0)actor_audit=getenv("TG2_ACTOR_AUDIT")!=NULL;
+    if(actor_audit) {
+        ++actor_rows;
+        for(int x=0;x<nw;++x) {
+            int k=x+offset;
+            if(!!all[x]!=!!filter_layers->opaque[k] || (all[x] && (all[x]!=filter_layers->sprite[k] || all_hi[x]!=filter_layers->high[k]))) ++actor_row_mismatches;
+        }
+    }
+    for(int x=0;x<nw;++x) if(owner[x]==1) {
+        int k=x+offset;
+        free_row->sprite[k]=kept[x];free_row->opaque[k]=!!kept[x];free_row->high[k]=hi[x];
+        free_row->shadow_op[k]=free_row->hilite_op[k]=0;
+    }
+    uint8_t indices[GVDP_MAX_WIDTH];
+    gvdp_compose_captured(free_row,indices);
+    for(int x=0;x<nw;++x) {
+        int k=x+offset;
+        out[x]=owner[x]==1?genesis_dac_cram_to_argb(v->cram[indices[k]&63],indices[k]>>6):native[x];
+    }
 }
 static int tiles(int n) { return n == 1 ? 64 : n == 3 ? 128 : 32; }
 static unsigned pixel(const GVDP *v, unsigned base, int x, int y, unsigned *attr) {
@@ -325,11 +449,12 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     /* One row at a time, single-threaded: keep the scratch off the stack and
      * zero only what this row uses. */
     static unsigned char removed[256], sprites[256], shifted[4096];
-    static unsigned short spr_attr[256];
+    static unsigned short spr_attr[256], spr_front[256];
     memset(removed, 0, sizeof removed);
     memset(sprites, 0, sizeof sprites);
     memset(shifted, 0, sizeof shifted);
     memset(spr_attr, 0, sizeof spr_attr);
+    memset(spr_front, 0, sizeof spr_front);
     int dirty = 0;
     /* Only relocate plane-A texels the display actually shows. The stock top
      * window band hides plane A, and there a nonnegative plane-A V-scroll
@@ -348,7 +473,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
         if (side && c) {
             removed[x] = 1;
             shifted[origin + x + (side < 0 ? -origin : right)] = c;
-            ++hud_plane_pixels;
+            if (!reference_pass) ++hud_plane_pixels;
             dirty = 1;
         }
     }
@@ -372,6 +497,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
             if (!xword && on_line > 1)
                 break;
             int x = xword - 128, sy = line - y;
+            int skip_actor = actor_free && promoted_sat(link);
             int marker = size == 5 && (attr & 0x8000) &&
                          ((attr & 2047) == 0x106 || (attr & 2047) == 0x10E);
             /* The game also draws the whole instrument cluster as sprites,
@@ -392,7 +518,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                 unsigned tile = ((attr & 2047) + (sx / 8) * (sh / 8) + sy / 8) & 2047;
                 unsigned data = v->vram[(tile * 32 + (sy & 7) * 4 + (sx & 7) / 2) & 65535];
                 unsigned c = sx & 1 ? data & 15 : data >> 4;
-                if (!c)
+                if (!c || skip_actor)
                     continue;
                 c |= (attr >> 9) & 48;
                 if (window_at(v, line, nx < 0 ? 0 : nx > nw - 1 ? nw - 1 : nx))
@@ -406,13 +532,15 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                 occupied[ox] = 1;
                 if (hud) {
                     shifted[ox] = c;
-                    if (marker)
-                        ++hud_marker_pixels;
-                    else
-                        ++hud_sprite_pixels;
+                    if (!reference_pass) {
+                        if (marker) ++hud_marker_pixels;
+                        else ++hud_sprite_pixels;
+                    }
                 } else if (nx >= 0 && nx < nw) {
                     sprites[nx] = c;
                     spr_attr[nx] = attr;
+                    int piece=shown && link<64?shown->sat_piece[link]:-1;
+                    spr_front[nx]=piece<0?65535:piece+1;
                 }
             }
             budget -= sw;
@@ -440,6 +568,8 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                      ap && (a & 0x8000) ? ap : bp && (b & 0x8000) ? bp :
                      sp ? sp : ap ? ap : bp ? bp : v->reg[7] & 63;
         out[origin + x] = pal[c];
+        if (actor_front) actor_front[origin+x] = sp ? spr_front[x] : 0;
+        if (actor_occluder) actor_occluder[origin+x] = (ap && (a&0x8000)) || (bp && (b&0x8000));
         if (filter_foreground)
             filter_foreground[origin + x] = (sp && (spr_attr[x] & 0x8000)) ||
                 (ap && (a & 0x8000)) || (!(bp && (b & 0x8000)) && (sp || ap));
@@ -447,6 +577,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     for (int x = 0; x < w; ++x)
         if (shifted[x]) {
             out[x] = pal[shifted[x]];
+            if (actor_front) actor_front[x] = 65535;
             if (filter_foreground) filter_foreground[x] = 1;
         }
 }
@@ -567,6 +698,7 @@ static int margin_audit_checked;
 static uint64_t margin_audit_from, margin_audit_to = ~(uint64_t)0;
 static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                           int nw, const uint32_t *out, int w) {
+    if (reference_pass) return; /* evidence pass is not another presented row */
     if (!margin_audit_checked) {
         margin_audit_checked = 1;
         const char *path = getenv("TG2_MARGIN_AUDIT");
@@ -652,13 +784,37 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     }
     static uint32_t row1[4096];
     int w1 = w / scale;
-    static unsigned char foreground[4096];
-    int filtered = tg2_highres_linear_filter() && filter_layers &&
-                   filter_layers->width >= (unsigned)nw;
-    filter_foreground = filtered ? foreground : NULL;
+    static unsigned char foreground[4096], occluder[4096];
+    static unsigned short front[4096];
+    static uint32_t stripped[256], reference[4096];
+    static GVDPRasterRow free_row;
+    const GVDPRasterRow *original=filter_layers;
+    int layers = filter_layers && filter_layers->width >= (unsigned)nw;
+    if (!line) {
+        if (!synthesizing) select_scene(v);
+        prepare_actors(v);
+    }
+    actor_free=0;
+    /* Keep the actual native+margin picture for same-frame downscale evidence. */
+    if(tg2_highres_native_dump_active()) {
+        reference_pass=1;
+        render_scanline_1x(v,line,native,nw,reference,w1);
+        reference_pass=0;
+    }
+    if(layers && tg2_actors_active()) {
+        actor_native_row(v,line,nw,native,stripped,&free_row,owners);
+        filter_layers=&free_row; native=stripped; actor_free=1;
+    }
+    memset(occluder,0,w1);memset(front,0,w1*sizeof *front);
+    actor_occluder=layers?occluder:NULL;actor_front=layers?front:NULL;
+    filter_foreground=layers?foreground:NULL;
     render_scanline_1x(v, line, native, nw, row1, w1);
-    if (filtered) tg2_highres_capture_native(line, row1, foreground, w1);
-    filter_foreground = NULL;
+    if (layers) {
+        tg2_highres_capture_native(line, row1, foreground, w1);
+        tg2_highres_capture_actors(line,foreground,occluder,front,reference,w1,actor_free);
+    }
+    filter_foreground=NULL;actor_occluder=NULL;actor_front=NULL;actor_free=0;
+    filter_layers=original;
     for (int x = 0; x < w; ++x)
         out[x] = row1[x / scale];
 }
@@ -680,8 +836,12 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     if (!line) {
         audit_race_frame = nw == 256 && race(v);
         last_frame_race = audit_race_frame;
+        /* Overscan can return before the first visible race row. Select the
+         * displayed SAT now at 1x too, so 60-fps Off retains margin sprites. */
+        if (last_frame_race && !synthesizing && tg2_highres_present_scale()<=1)
+            select_scene(v);
         highres_wanted = last_frame_race && tg2_highres_present_scale() > 1;
-        if (last_frame_race)
+        if (last_frame_race && !reference_pass)
             tg2_highres_picture_start();
         crop_race_ok = audit_race_frame;
         crop_top_rows = 0;
@@ -704,12 +864,12 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
      * every output mode, while an inactive window keeps menu rows intact. */
     if (tg2_video_get_hide_overscan() && line < 8 &&
         window_at(v, line, 0) && window_at(v, line, nw - 1)) {
-        ++crop_top_rows;
+        if (!reference_pass) ++crop_top_rows;
         if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
         return;
     }
     if (!race(v) || !(v->reg[1] & 64)) {
-        ++native_lines;
+        if (!reference_pass) ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
         if (audit_race_frame) {
             window_margins(v, line, native, nw, out, w);
@@ -717,9 +877,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         }
         return;
     }
-    ++wide_lines;
-    if (!line && !synthesizing)
-        select_scene(v);
+    if (!reference_pass) ++wide_lines;
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
     unsigned hbase = (v->reg[13] & 63) << 10;
     int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
@@ -734,7 +892,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     /* S1: compact per-row capture, only when the render scale is above 1, so
      * the stock path pays nothing. It records exactly the row state the
      * renderer is about to use. */
-    tg2_highres_capture_row(v, line, ha, hb);
+    if (!reference_pass) tg2_highres_capture_row(v, line, ha, hb);
     uint32_t pal[64];
     for (int i = 0; i < 64; ++i)
         pal[i] = genesis_dac_cram_to_argb(v->cram[i], 0);
@@ -748,15 +906,18 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         unsigned ap = weather_pixel(v, line, nx, ha, va, ba);
         if (ap) out[x] = pal[ap];
         if (filter_foreground) filter_foreground[x] = ap != 0;
+        if (actor_occluder) actor_occluder[x] = (bp && (b&0x8000)) || ap;
     }
     unsigned window_mask = window_margins(v, line, native, nw, out, w);
     plane_a_margins(v, line, native, nw, pal, out, w, ha, va, ba);
+    if (actor_occluder) for(int x=0;x<w;++x) if((x<origin && ((window_mask|pa_extend_mask)&1)) || (x>=origin+nw && ((window_mask|pa_extend_mask)&2))) actor_occluder[x]=1;
     if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
     /* Reverse allocation order matches the native backward SAT builder. */
     static unsigned char covered[4096];
     memset(covered, 0, sizeof covered);
     for (unsigned n = shown ? shown->count : 0; n > 0; --n) {
         const Piece *s = &shown->pieces[n - 1];
+        if (actor_free && tg2_actors_promoted(s->actor)) continue;
         int sw = (((s->size >> 2) & 3) + 1) * 8, sh = ((s->size & 3) + 1) * 8;
         int sy = line - s->y;
         if (sy < 0 || sy >= sh)
@@ -774,6 +935,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
             if (!c)
                 continue;
             covered[ox] = 1;
+            if (actor_front) actor_front[ox] = n;
             unsigned b;
             unsigned bp = pixel(v, bb, road_x(nx, hb, line + vb), line + vb, &b);
             if (!(s->attr & 0x8000) &&
@@ -783,15 +945,35 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
             if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
                 if (filter_foreground) filter_foreground[ox] = 1;
-                ++frame_margin_pixels;
+                if (!reference_pass) ++frame_margin_pixels;
             }
         }
     }
     memcpy(out + origin, native, nw * sizeof *out);
+    if (actor_front) memcpy(actor_front+origin,owners,nw*sizeof *owners);
+    if (actor_occluder) for(int x=0;x<nw;++x) {
+        int k=x+((int)filter_layers->width-nw)/2;
+        actor_occluder[origin+x] = ((filter_layers->plane_a[k]&0xC0)==0xC0) || ((filter_layers->plane_b[k]&0xC0)==0xC0);
+    }
     if (filter_foreground) {
         int offset = ((int)filter_layers->width - nw) / 2;
         for (int x = 0; x < nw; ++x)
             filter_foreground[origin + x] = foreground_at(filter_layers, offset + x);
+    }
+    if (actor_front && !tg2_video_get_hud_mode()) {
+        int offset=((int)filter_layers->width-nw)/2;
+        for(int x=0;x<nw;++x) {
+            int k=x+offset;
+            unsigned ap=filter_layers->plane_a[k],bp=filter_layers->plane_b[k];
+            int sprite=filter_layers->opaque[k],sprite_high=sprite && filter_layers->high[k];
+            int a_wins=!sprite_high && ((ap&0xC0)==0xC0 ||
+                ((bp&0xC0)!=0xC0 && !sprite && (ap&0x40)));
+            if(!a_wins)continue;
+            unsigned attr;
+            pixel(v,ba,x-ha,line+va,&attr);
+            int side=hud_tile(attr);
+            if(side && hud_region(line,x,side)) actor_front[origin+x]=65535;
+        }
     }
     hud_row(v, line, ha, hb, va, vb, ba, bb, pal, nw, out, w);
 }
@@ -898,6 +1080,7 @@ void tg2_video_frame(uint64_t frame, int on) {
     if (on != race60 || frame < present_frame) presentation_clear();
     race60 = on;
     present_frame = frame;
+    tg2_actors_frame(frame);
     /* No row producer runs, so no picture will raise the N x canvas. */
     if (!renderer_enabled()) highres_wanted = 0;
 }
@@ -959,6 +1142,21 @@ static void mix_sprites(GVDP *out, const GVDP *b) {
 }
 static void mix_pieces(const Scene *a, const Scene *b) {
     mixed_scene = *a;
+    unsigned char actor_used[TG2_MAX_ACTORS]={0};
+    for(unsigned i=0;i<a->actors.count;++i) {
+        const Tg2Actor *p=&a->actors.actors[i]; int best=-1;double distance=96;
+        for(unsigned j=0;j<b->actors.count;++j) {
+            const Tg2Actor *q=&b->actors.actors[j];
+            double d=fabs(p->x-q->x)+fabs(p->y-q->y);
+            if(!actor_used[j] && p->record==q->record && d<distance){best=j;distance=d;}
+        }
+        if(best>=0){
+            actor_used[best]=1; Tg2Actor *m=&mixed_scene.actors.actors[i];
+            float t=(float)phase_num/phase_den;if(mix_reverse)t=1-t;
+            m->x=p->x+(b->actors.actors[best].x-p->x)*t;
+            m->y=p->y+(b->actors.actors[best].y-p->y)*t;
+        }
+    }
     unsigned char used[MAX_PIECES] = {0};
     for (unsigned i = 0; i < a->count; ++i) {
         const Piece *p = &a->pieces[i];
@@ -975,6 +1173,29 @@ static void mix_pieces(const Scene *a, const Scene *b) {
             mixed_scene.pieces[i].y = mix(p->y, b->pieces[best].y);
         }
     }
+    /* The 1x synthesized SAT rounds piece positions. Derive each actor's
+     * integer reference from those same pieces, then retain the interpolated
+     * fraction inside that integer cell, as on native projection endpoints. */
+    for(unsigned i=0;i<a->actors.count;++i) {
+        const Tg2Actor *original=&a->actors.actors[i];
+        Tg2Actor *actor=&mixed_scene.actors.actors[i];
+        int found=0;
+        for(unsigned j=0;j<a->count && !found;++j) if(a->pieces[j].actor==(int)i) {
+            const Piece *p=&a->pieces[j];
+            for(unsigned k=0;k<original->guest_count;++k) {
+                const Tg2ModelPiece *q=&a->actors.pieces[original->guest_first+k];
+                if(p->attr==q->attr && p->size==q->size &&
+                   p->x==original->gx+q->dx && p->y==original->gy+q->dy) {
+                    actor->gx=mixed_scene.pieces[j].x-q->dx;
+                    actor->gy=mixed_scene.pieces[j].y-q->dy;
+                    found=1;break;
+                }
+            }
+        }
+        actor->x=fmax(actor->gx,fmin(actor->gx+255.0/256,actor->x));
+        actor->y=fmax(actor->gy,fmin(actor->gy+255.0/256,actor->y));
+    }
+
 }
 static void presentation_begin(const GVDP *v) {
     from_picture = to_picture = NULL;
@@ -1097,7 +1318,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     static GVDPRasterRow filtered_raster;
     const GVDPRasterRow *saved_layers = filter_layers;
     int count;
-    if (tg2_highres_linear_filter() && gvdp_capture_presented_scanline(row_vdp, line, &filtered_raster)) {
+    if (tg2_highres_present_scale()>1 && gvdp_capture_presented_scanline(row_vdp, line, &filtered_raster)) {
         count = gvdp_compose_captured(&filtered_raster, indices);
         filter_layers = &filtered_raster;
     } else {
@@ -1226,7 +1447,7 @@ void tg2_video_command(int id, const char *json) {
  * the renderer (for example the blanked overscan band) and must not be
  * compared. */
 void tg2_video_highres_command(int id, const char *json) {
-    enum { CAPACITY = 98304 };
+    enum { CAPACITY = 262144 };
     char *out = malloc(CAPACITY);
     if (!out) {
         cmd_send_response("{\"ok\":false,\"error\":\"out of memory\"}");
@@ -1279,6 +1500,10 @@ void tg2_video_highres_command(int id, const char *json) {
         n += snprintf(out + n, CAPACITY - n, ",\"filtered_frames\":%u,\"filter_incomplete\":%u,\"native_filter\":%d",
                       tg2_highres_filtered_frames(), tg2_highres_filter_incomplete(),
                       tg2_highres_linear_filter());
+    if (n>0 && n<CAPACITY) n+=snprintf(out+n,CAPACITY-n,",\"actor_rows\":%llu,\"actor_row_mismatches\":%llu,\"actor_dropped\":%u,\"native_objects\":%u,\"actors\":",actor_rows,actor_row_mismatches,tg2_actors_dropped(),tg2_actors_native_objects());
+    if (n>0 && n<CAPACITY) n+=tg2_actors_json(out+n,CAPACITY-n);
+    if (n>0 && n<CAPACITY) n+=snprintf(out+n,CAPACITY-n,",\"all_actors\":");
+    if (n>0 && n<CAPACITY) n+=tg2_actors_stats_json(out+n,CAPACITY-n);
     if (n > 0 && n < CAPACITY) snprintf(out + n, CAPACITY - n, "}");
     cmd_send_response(out);
     free(out);
@@ -1286,12 +1511,12 @@ void tg2_video_highres_command(int id, const char *json) {
 /* Reuse the framework's immutable presented-row seam; sprite/status work is
  * not repeated on the live VDP. Off uses exactly the legacy row producer. */
 static int filter_raster_enabled(const GVDP *v) {
-    return tg2_highres_linear_filter() && race(v);
+    return tg2_highres_present_scale()>1 && race(v);
 }
 static void scanline_presented(const GVDP *v, int line, int nw, uint32_t *out,
                                int w, GameVideoNativeRow native_row, void *ctx,
                                const GVDPRasterRow *raster) {
-    filter_layers = tg2_highres_linear_filter() ? raster : NULL;
+    filter_layers = tg2_highres_present_scale()>1 ? raster : NULL;
     scanline(v, line, native_row(ctx), nw, out, w);
     filter_layers = NULL;
 }

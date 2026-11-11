@@ -328,6 +328,13 @@ $B57C  d7 = byte[a0 + d7]           ; per-type, per-band model index
 $B584  mapper entry with D7 = model index
 ```
 
+> **Corrected by the S4 evidence (§14, 2026-11-11):** the `LEA` at `$B578`
+> resolves to ROM **`$57C8`** (raw bytes `41FA A24E`, a negative displacement),
+> not `$10D42`, and the nine bands are **view-angle frames of the opponent
+> cars**, selected from the projected X — not distance bands. Distance levels
+> come from two depth-indexed tables read by the callers. §14 supersedes the
+> reading below.
+
 So: **nine distance bands per object type**, remapped through the byte table at
 ROM `$10D42`, with a bias in `$FF1894` and adjustment words in `$FF17D6`,
 `$FF17D8`, `$FF17DE`, `$FF187A` selected by the special-mode word `$FF1878`
@@ -1373,3 +1380,289 @@ completed S3 qualification.
   straight, curve, hill, rain and tunnel comparisons and approved their look
   ("Está ótimo"). This approves the S3 visuals shown; the other limitations
   above remain unchanged.
+
+---
+
+## 14. S4 — actor evidence and selection policy (task 34)
+
+**Status: implemented and locally qualified; owner visual acceptance pending.** This section records the bounded captures, raw
+ROM evidence and implemented selection policy. Addresses were re-read from the ROM with
+`tools/disasm_tg2.py`; where they differ from §3, this section wins.
+
+### 14.1 How the game picks a variant (raw ROM)
+
+`A3 = $FF8408` in this code, so `-$6b90(a3)` is `$FF1878`, and so on.
+
+| Site | What it does |
+|---|---|
+| `$A43C` (scenery, 1P) | object word `$FF1800`: high byte = **kind** → `$FF187C`, low byte = lateral position. `D7 = word[($FF2222) + 2*depth]`: the **distance level comes from a depth-indexed table** (negative = not drawn). Record = `long[$FF2B36 + 4*kind]`. Calls `$B04C`. |
+| `$A4E8` (opponent cars, 1P) | `D7 = word[($FF2226) + 2*depth]` (car distance level), record = `($FF1AA6) + 10*(car & 3)`, `$FF1878` = car number. Calls `$AFC2`. |
+| `$B314` | projection entry: `D0` depth index, `D1` lateral, `D2` depth fraction, `D4` height above ground (`$FF17DC`), `D7` level, `A1` record. |
+| `$B37C..$B42C` | **interpolated path** (depth < `$40`): centre, Y and scale are interpolated between two entries of the per-depth table `$FF1254` (8 bytes: centre X, Y, clip line, curve) with the depth fraction; `muls d4,d1; swap d1` at `$B42A/$B42C`. |
+| `$B43E..$B4D4` | **depth-table path** (far objects and special kinds): integer table row, `swap d1` at `$B4D4`. |
+| `$B4E2..$B514` | clip line `$FF1836 = min(table clip, base Y)`; `Y -= ((height * scale) >> 16) >> $FF242A`; kind `$82` lifts by `1.5 * (scale >> 5)`. |
+| `$B520..$B580` | **only for car records (`A1 >= $FF8E94`)**: `band = clamp(((($90 - X) >> 2) + steer - curve/4) >> 3, 0, 8)`, `model = byte[$57C8 + 9*level + band + $FF1894]`. |
+| `$B584` | mapper entry: `D7` = model index into the record's table `4(A1)`, art block `(A1)`, attribute `8(A1)`. Scenery arrives here with model = level. |
+| `$B5D8..$B632` | per mapping header (10 bytes: piece set, half width, height, attribute, `$8888` end marker); `$B5FA` is the existing pre-cull hook. |
+| `$B6F0` | piece emitter: whole pieces are dropped at/below the clip line and above `$FF23E6`; SAT slots are allocated **backwards** (`$FF22D8`), so objects are drawn far to near. |
+| `$B7C0..$B818` | hill crests: two SAT entries (`x = 1`, then `x = 0`, 8×32) are emitted at the clip line — a **VDP sprite mask** that hides the straddling pieces of farther objects. |
+| `$B986/$B990/$B99A` | kinds `$84/$83/$BD` (poles): a handler stacks shaft segments (segment height `word[$10AA4 + 2*level]`) from the ground up to `scale/16 + 3` pixels and puts the head record on top, each through a direct `$B584` call. |
+
+The table at `$57C8` (24 rows of 9 bytes) maps car level × view band to a
+model: level 0 has five angle frames (`0 0 1 1 2 3 3 4 4`), levels 1–3 three
+(`left ×3, straight ×3, right ×3`), level 4 and above a single straight frame.
+Frames 3/4 are frames 1/0 mirrored by the header's flip bit.
+
+The projection keeps more precision than the SAT shows: right after
+`swap d1` the **upper word of `D1` is the discarded 16-bit X fraction**, and on
+the interpolated path the upper word of `D2` is the Y fraction and `D4` the
+interpolated scale ×4. The guest's integer position is exactly the floor of
+that value.
+
+### 14.2 Bounded captures
+
+`tools/check_highres.py lod --track T --frames 3600` drives a track at 1× with
+`TG2_ACTOR_LOG` set (`game/tg2_actors.c`: read-only hooks at `$B42E`, `$B4D6`,
+`$B584` and the existing `$B5FA`), and saves one VRAM/CRAM/WRAM art snapshot.
+`tools/analyze_actors.py` groups the stream; `tools/actor_sheet.py` draws every
+model from the snapshot and measures its opaque extent. All three runs exited 0
+with the four manifests empty. Streams, snapshots and sheets stay under the
+ignored `build/highres-check/lod/<track>/`.
+
+| Track | Mapper entries | Interpolated / table / direct | Y model check |
+|---|---:|---:|---|
+| Auckland | 31,822 | 16,766 / 14,846 / 210 | 31,610 of 31,612 (the 2 are special kind `$8A`) |
+| Canada | 31,396 | 14,484 / 14,417 / 2,495 | 28,901 of 28,901 |
+| Bavaria (rain) | 34,106 | 17,595 / 12,230 / 4,281 | 29,825 of 29,825 |
+
+"Y model check" recomputes the guest's final Y from the latched projection
+with the `$B4E2..$B514` reading above. `$FF1894` (the remap bias) was 0 in all
+97,324 entries. Object kinds seen:
+
+| Kind | What (from the sheets) | Tracks | Ladder |
+|---|---|---|---|
+| cars (`$FF8E94 + 10n`) | four shared car-colour records (including the player), one art block, colour by palette line | all | 25 models: 5 + 3 + 3 + 3 angle frames, then 11 single frames, 64×31 → 4×2 px |
+| `$80`, `$F0` | chevron signs (left / right) | `$F0` all three, `$80` Canada | models 0–10, 31×32 → 3×1 px |
+| `$94` | tree; the kind is a slot with per-track art (poplar on Auckland, snowy pine on Canada, different mapping tables) | Auckland, Canada | models 0–10, 40×104 → 4×8 px, 8 → 1 pieces |
+| `$85` | bush (snow-covered on Canada) | all | models 0–10, 48×24 → 2×1 px |
+| `$99` | drum / barrel | Auckland, Canada | models 0–10, 32×32 → 1×2 px |
+| `$9A` | tyre stack | Auckland, Bavaria | models 0–10 |
+| `$86` | striped roadwork barrier; lateral/height from the per-object table `$FF2736` | Auckland | models 0–10 |
+| `$BD` (+ shaft record `$FF8E76`) | power pole: head + stacked shaft segments | Canada, Bavaria | compound, built by `$B99A` |
+| `$8A` (+ record `$FF8E6C`), `$F8`, `$F9` | tunnel columns and special pieces (`$FF1878 = $FFFE`, alternate SAT lists) | Auckland, Canada | special handlers |
+
+For every ordinary kind, **model index = distance level and model 0 is the
+same object at its largest, most detailed size**; all levels' tiles are loaded
+at once. The scenery depth table is the same on the three tracks
+(levels 0–10 start at depths 0, 2, 3, 6, 10, 16, 22, 35, 48, 74, 99), so are the
+car table and the scale table (`($FF221E)`: 2816, 2218, 1830, 1557, …).
+
+Measured art against the projection: scaling model 0 by
+`scale(band centre) / scale(level 0 centre)` predicts the authored height of
+levels 1–5 within 0.99–1.23× (signs are drawn ~15% larger than the band-centre
+projection, trees within 6%); below ~6 px the art is quantised (ratios
+0.6–1.5) and the last levels reuse one tile. The authored ladder therefore
+follows the projection scale, but not exactly — which is why the policy below
+anchors sizes on the authored art rather than on a single constant.
+
+SAT link order in the snapshots: HUD (high priority), the player's car, then
+the actors nearest first; the hill sprite mask sits between the actors it
+separates. Non-actor sprites are therefore always in front of actors.
+
+### 14.3 Selection policy
+
+1. **What is promoted.** Every mapper entry that came through the normal
+   projection (`$FF1878 != $FFFE`, a latched `$B42E/$B4D6` projection for the
+   same record and X): opponent cars and scenery kinds. The ROM comparator at
+   `$B53A..$B542` identifies the player (`$FF17D6 == $FF1878`); that car stays
+   native even when it reaches the mapper through normal projection. Its SAT entries are
+   removed from the native sprite layer and the actor is redrawn at N×.
+2. **Which variant.** Scenery: model 0 of the same record, when that table
+   entry is a valid mapping and its art is at least as large as the guest's
+   model; otherwise the guest's own model (counted as a fallback). Cars:
+   level 0, keeping the guest's own angle class. The class is read from the
+   ROM table at `$57C8`: find the guest model's row; a level-0 guest keeps its
+   exact frame; a single-frame row becomes the straight frame (`byte[$57C8+4]`
+   = 2); otherwise take the level-0 entry at the column of the guest's run that
+   is nearest to the centre column 4 (left → frame 1, straight → 2, right → 3).
+   The side frames of levels 1–3 have the aspect ratio of the *slight* level-0
+   angle (48×26 = 1.85 against 57×31 = 1.84; the hard angle is 64×31 = 2.06),
+   so frames 0/4 are only ever shown when the guest itself selects them.
+3. **Size (coordinator decision, 2026-11-11): stepped by default.** Uniform
+   scale = the guest model's opaque extent over the detailed model's, measured
+   on the detailed model's longer axis from the displayed VRAM, so each actor
+   has the authored 1× size of the band the guest chose. One internal switch
+   (`TG2_ACTOR_SIZE=continuous`, no menu row) multiplies that by
+   `projection scale / band-centre scale` for one stepped-vs-continuous review
+   pair; the owner decides at visual review whether it becomes the default.
+4. **Position.** Anchor = bottom centre at the latched sub-pixel X (both
+   paths) and sub-pixel Y (interpolated path, including the height term),
+   clamped into `[guest, guest + 1)` so its floor always equals the guest's
+   integer anchor (the 1× SAT position). The check reports the maximum error.
+5. **Occlusion and priority.** Rows at/below the object's own clip line
+   (`$FF1836` at `$B584`) are not drawn, which is what the piece cull plus the
+   crest sprite mask produce. Per pixel, a low-priority actor is hidden by a
+   high-priority plane pixel of the native layers; HUD and the player's car
+   stay in front; actors are painted far to near in capture order.
+6. **Filtering.** The detailed model is rasterised to RGB with coverage after
+   palette lookup and resampled with an area/bilinear filter in premultiplied
+   RGB; flips and palette lines come from the detailed model's own headers.
+7. **What stays native in S4.** Poles (`$BD/$83/$84`: variable-height
+   compound objects), the tunnel/special kinds (`$8A`, `$F8`, `$F9`, `$FC`,
+   `$FD`), the player's car, HUD and anything without a latched projection.
+   2P split-screen never enters this path.
+
+### 14.4 Gaps
+
+- Only three tracks were captured; other countries may add kinds. An unknown
+  kind is safe by construction (rule 2 falls back to the guest's model, rule 7
+  to the native picture), but its ladder is not tabulated.
+- Car level 2 (models 8–10) is not used by the depth table on these tracks;
+  its art exists and was drawn in the sheets.
+- `$FF1894` was never non-zero; a non-zero bias would shift the remap row, so
+  the implementation derives the level from the model actually selected.
+- **Follow-up (coordinator-approved to leave out of S4):** poles
+  (`$BD/$83/$84`) and tunnel/special pieces (`$8A/$F8/$F9/$FC/$FD`) stay
+  native. Pole reconstruction needs the `$B99A` stacking logic. S4 must still
+  verify that native poles and promoted actors occlude each other correctly.
+  The owner highlighted their visible detail mismatch during S4 review;
+  [task 38](tasks/38-highres-poles.md) now maps the compound-pole improvement.
+
+
+### 14.5 Presentation implementation
+
+`Scene` now owns each actor's double-precision anchor, native integer anchor,
+clip line, guest/detailed model pieces, attributes and capture depth. The
+mapper hooks resolve ROM/WRAM data while the guest owns the record; the host
+painter only reads that immutable snapshot and the displayed endpoint VRAM.
+Per-picture indexed art is deduplicated by captured pieces, measured on its
+opaque extents, and filtered in premultiplied RGB using each row's own CRAM.
+The sole size-policy function defaults to authored stepped sizes; the env-only
+continuous switch exists for the requested review pair.
+
+The existing engine raster seam runs once on every N× race row, including
+Linear Off. A host replay identifies exact SAT ownership, respecting the
+64-entry / 16-per-row limits, sprite mask and pixel budget. Only promoted
+entries are removed from host composition; guest sprite evaluation, collision
+flags, SAT, planes and simulation are unchanged. The native replay audit
+compares opacity, palette indices and sprite priority against the engine's
+captured channels. Matching identical SAT pieces is bijective in reverse
+allocation order. If the final SAT lacks any captured in-screen piece, the
+whole actor stays native (fallback reason 5), preserving the guest emitter's
+last culling/allocation decision.
+
+Explicit foreground coverage now protects native art even when its RGB equals
+the road, resolving S3's documented same-colour ambiguity for N× rows. Separate
+plane-priority and native-sprite-depth masks govern actor occlusion. HUD/player
+car, poles and tunnel/special objects retain native art. A true native pass,
+used only while a same-frame dump is requested, retains promoted sprites for
+downscale review without counting a second presented row or changing crop
+bookkeeping. 60-fps actors interpolate their anchors between matched endpoint
+records; variant, clip and other properties use the nearer endpoint. Full N×
+temporal qualification remains S6.
+
+`check_highres.py drive --actors` emits sampled per-kind variant tables plus
+all-frame actor totals and independent guest-piece/SAT position checks. TCP
+`tg2_highres` reports `actors`, `all_actors`, native-row audit counts and
+fallback reasons: 1 untabulated kind, 2 invalid detailed mapping, 3 empty/
+unrasterisable detailed art, 4 detailed extent smaller than guest, 5 incomplete
+final SAT ownership, 6 all guest pieces vertically culled, 7 inconsistent
+synthesized-piece anchors. Guards 5–7 keep the native picture; they do not
+substitute a different asset. Fully culled actors are never resurrected by
+the more detailed artwork. `TG2_ACTORS=0` disables actor promotion for CPU A/B tests;
+that baseline retains the same explicit foreground infrastructure.
+
+### 14.6 Downscale tolerance and review scope
+
+S4 intentionally replaces the authored small-band pixels. The original S3
+whole-image metric remains in every report, but cannot by itself reject
+changed internal detail: a near snowy Canada tree yields a whole-image mean
+3.211/255, exceeding S3's 2.5 while preserving size, anchor and silhouette.
+The same frame has mean 0.214 outside padded actor boxes. `sprite-pairs`
+rechecks retained same-frame native/N× pairs without another guest run.
+
+The S4 check includes each visible actor's silhouette edges in a box padded
+by two native pixels, clipped to its own horizon. It reports per-box RGB
+error (including background/occlusion, never inferred by colour equality).
+Outside those boxes the existing S3 limits remain mean ≤2.5/255 and ≤2% of
+pixels with a channel error above 64. Overlapping boxes are joined into silhouette/occlusion groups, so a far
+sign hidden by a near car is not judged as an isolated sign patch. Each group
+uses the strictest member bound: mean maximum-channel error 64 (size ≥0.5),
+80 (0.15..0.5), or 96 (size <0.15). Tiny bands need more tolerance because the original asset
+may contain only one or two opaque texels. These photometric limits accompany
+independent anchor, guest-piece, SAT, palette and priority gates; visual
+acceptance still belongs to the owner. Linear On compares with the same
+bilinear-expanded, box-reduced native RGB footprint used by the S3 check.
+No screenshot or metric is hidden when the whole-image S3 number is larger.
+
+At 60 fps the raw interpolated anchor is clamped into the integer cell of the
+actual synthesized SAT anchor, derived from the endpoint's own model pieces.
+This retains subpixel motion where compatible with the existing 1× rounding
+policy and keeps `floor(anchor)` equal to that picture's native position.
+A non-rigid piece mix falls back to native rather than promoting an
+inconsistent object. This is a directed combined-mode guard, not S6's full
+N× temporal qualification.
+
+### 14.7 Local qualification (2026-11-11)
+
+All evidence is from this worktree on macOS arm64, headless, with the shared
+heavy lock and ≤3 build jobs. It is development evidence, not a Linux release
+or Deck/GPU qualification. No engine patch/pin changed and no CI ran.
+
+| Gate | Result |
+|---|---|
+| Stock G1 / manifests | 9 configurations pass; Off hashes `60=2A0B972960C5E325`, `300=1131D937D70234FD`; all four manifests empty |
+| Stock G3 widescreen | Off / 16:9 / 21:9, 5,600 frames each; canonical state/centre identical at all five capture frames; margins/adaptive widths pass |
+| Stock G3 60 fps | 186 vs 360 changed pictures over the 360-frame window; sampled RAM fields identical, WAV SHA-256 identical |
+| Native 2P / boundaries | 32:9 at requested 4× remains native and identical; menu/3× cap/Off transitions pass |
+| Auckland 4× long audit | 3,301 pictures; 812,488 measured road rows; 161,582 stripe centres; max centre error 0.5 output px; no road/margin violations |
+| Directed checks | Canada 3×/1,800 frames, Bavaria rain 4×/900, Auckland tunnel 2×/2,000, Linear On 2×/300, combined 60-fps smoke 2×/180 pass |
+
+The stock G3 repeat exposed an existing 1× / 60-fps Off / Hide overscan On
+case: blanking line 0 could return before selecting the displayed scene and
+leave margin sprite snapshots unset. Selecting that same read-only scene
+before overscan fixes it; G3 now verifies both the canonical centre and real
+margin pieces. Actor diagnostics are batched with controller state so an
+extra TCP poll does not change closed-loop steering cadence. The stock
+framerate comparison streams RAM/VRAM fields and hashes WAVs in chunks.
+
+| Track | Promoted actors, all frames | Unknown/model fallback | Incomplete SAT kept native | All guest pieces culled |
+|---|---:|---:|---:|---:|
+| Auckland | 52,156 | 0 | 14 | 13,516 |
+| Canada | 25,077 | 0 | 6 | 5,264 |
+| Bavaria rain | 11,852 | 0 | 15 | 1,257 |
+
+Across those 89,085 promoted actors, maximum floor error, independent guest-
+piece mismatches, palette/priority mismatches and analytic drawn-anchor error
+are all 0. Checking the serialized coordinates adds ≤2.1e-8 output-pixel
+rounding. The native row audit also has 0 sprite opacity/index/priority
+mismatches. Sampled pole overlaps exercise both directions: Canada 520 output
+pixels hidden by native poles / 604 painted in front; rain 570 / 233.
+
+The largest-scale command's original independent-box checker returned 1 for
+a far-sign box covered by a near car (individual patch mean 114.25); its
+runtime, road, margins and actor invariants passed. Rechecking the exact same
+25 native/N× pairs as connected occlusion groups returns 0, max group mean
+52.9121 and outside-box mean 0.3884. Canada and rain group rechecks pass too;
+raw individual and whole-image metrics remain in the reports.
+
+Cost, fixed 900-frame interval [3000,3900), 1280×800, full rendering/audio,
+no audits/dumps/pacer work, same infrastructure with `TG2_ACTORS=0` vs On:
+
+| Scale | Whole-frame CPU mean Off → On | Incremental mean | On p95 |
+|---|---:|---:|---:|
+| 2× | 1.4031 → 1.6596 ms | 0.2565 ms | 1.883 ms |
+| 4× | 1.8841 → 2.2672 ms | 0.3831 ms | 2.594 ms |
+
+Ignored evidence: `build/s4/qualified-summary.json`, `worker-report.md`,
+`final-commands.json`, `boundaries-commands.json`, `cost-commands.json`,
+`pair-commands.json`, and the named run folders in those ledgers. Review
+pictures: `build/s4/review/01-far.png`, `02-middle.png`, `03-near-car.png`,
+`04-near-tree.png`, `05-pole-rain.png`, `06-tunnel.png`, plus
+`stepped-continuous.png` and `pole-occlusion.png`. The policy pair uses the
+same frame 221 and identical guest RAM hash.
+
+Owner acceptance of S4 remains pending. Poles stay native and their visible
+mismatch is explicitly mapped in [task 38](tasks/38-highres-poles.md).
+HUD/weather/tunnel-opening art, full N× temporal qualification, live changes
+and Deck/GPU qualification remain outside this step.

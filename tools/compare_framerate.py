@@ -15,26 +15,40 @@ FIELDS = {'race_vint': (0x238C, 2), 'pictures_built': (0x23B4, 2),
 
 
 def read_fields(path):
-    data = path.read_bytes()
-    assert len(data) == 65536, path
-    return {k: int.from_bytes(data[a:a+n], 'big') for k, (a, n) in FIELDS.items()}
+    assert path.stat().st_size == 65536, path
+    values = {}
+    with path.open('rb') as stream:
+        for key, (offset, length) in FIELDS.items():
+            stream.seek(offset)
+            values[key] = int.from_bytes(stream.read(length), 'big')
+    return values
 
 
 def capture(path, start, count):
     summary = json.loads((path / 'summary.json').read_text())
     assert summary['exit'] == 0
     assert summary['cold_boot'] == {'60': '2A0B972960C5E325', '300': '1131D937D70234FD'}
-    ram = [(path / f'ram-{f}.ram').read_bytes() for f in range(start, start + count + 1)]
     scalar = [read_fields(path / f'ram-{f}.ram') for f in range(start, start + count + 1)]
     summary['counter_deltas'] = {k: dict(Counter((y[k] - x[k]) % (1 << (FIELDS[k][1] * 8))
                                                 for x, y in zip(scalar, scalar[1:])))
                                  for k in ['race_vint', 'pictures_built', 'clock_16_16']}
     for name, off, length in [('sprites', 0xBE00, 0x280), ('hscroll', 0xB800, 0x380)]:
-        values = [(path / f'vram-{f}.vram').read_bytes()[off:off+length]
-                  for f in range(start, start + count + 1)]
-        summary[name + '_changed'] = sum(a != b for a, b in zip(values, values[1:]))
-    summary['primary_raster_swaps'] = sum(a[0x231E:0x2322] != b[0x231E:0x2322]
-                                        for a, b in zip(ram, ram[1:]))
+        previous, changed = None, 0
+        for frame in range(start, start + count + 1):
+            with (path / f'vram-{frame}.vram').open('rb') as stream:
+                stream.seek(off)
+                value = stream.read(length)
+            changed += previous is not None and value != previous
+            previous = value
+        summary[name + '_changed'] = changed
+    previous, changed = None, 0
+    for frame in range(start, start + count + 1):
+        with (path / f'ram-{frame}.ram').open('rb') as stream:
+            stream.seek(0x231E)
+            value = stream.read(4)
+        changed += previous is not None and value != previous
+        previous = value
+    summary['primary_raster_swaps'] = changed
     for name in ['dispatch_misses', 'floor_coverage', 'interior_label_misses', 'floor_unsafe']:
         text = (path / (name + '.toml')).read_text()
         match = re.search(r'# entries:\s+(\d+)', text)
