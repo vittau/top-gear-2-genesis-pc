@@ -1460,3 +1460,39 @@ Remaining: owner S4 visual acceptance; native poles (visible mismatch mapped
 at his request in task 38); S5 HUD/weather/tunnel-opening artwork; full N×
 temporal qualification S6; live switching S7; other-country/platform and
 Deck/GPU qualification. No runtime remains running.
+
+## Task 40 — trigger pedals and fixed TYPE 1 controls (2026-11-11)
+
+Owner request: the gamepad/Deck triggers should accelerate and brake. Decision
+afterwards: remove the cartridge's CONTROL TYPE choice (remapping belongs to
+the launcher) and lock TYPE 1 for both players. Details in
+`docs/CONTROLS.md`.
+
+* **Triggers.** RT = Genesis B, LT = Genesis A, additive to every binding.
+  Driven headlessly through two synthetic SDL controllers (engine dev probes
+  `virtual_pad` / `virtual_axis`), so SDL's real gamecontroller axis path, the
+  player deadzone (25 % = 8191) and the game hook all run:
+  `tools/test_tg2_controls.py`. Covers below-threshold, press, release, P1 and
+  P2 pads, and coexistence with a bound face button (including a remapped one).
+* **Settings round trip.** No new key exists, so nothing to migrate: the same
+  test passes with a fresh install, with a pre-existing `settings.ini`
+  (recorded pad/key bindings, P2 enabled) and with B remapped to another face
+  button (`tools/test-data/settings-existing.ini`,
+  `tools/test-data/settings-override.ini`).
+* **TYPE 1 lock.** A non-zero `$FF1BC6`/`$FF201E` is clamped within a frame
+  and logged once; a race applies `[5,6,0,1,3,2,4]` to both players; a
+  tampered table + type words saved into a quickstate are corrected on load
+  (`tg2_controls_state_loaded`).
+* **CONTROL row.** The carousel wraps 0..3 (UP from RACE goes to SPEED, DOWN
+  from SPEED goes to RACE), the removed button's rectangle is backdrop in the
+  presented picture, and the other four rows are drawn. Before/after:
+  `build/trigger-pedals/carousel-before-after.png` (ignored).
+* **Stock gates.** Frame 60 `2A0B972960C5E325`, frame 300
+  `1131D937D70234FD`, all four manifests empty, in all three test runs.
+* **Builds.** `tools/build-linux.sh` exit 0 after applying the patch stack
+  through both `tools/apply-engine-patches.sh` and
+  `tools/apply-engine-patches.py` (clean stack, identical trees).
+
+Not verified: real Deck/DualSense/Xbox hardware. Trigger and stick axes share
+`SDL_GameControllerGetAxis` and the same deadzone code, which already works on
+those devices.

@@ -214,11 +214,19 @@ restore every option to its default.
 | X / Y / Z | A / S / D | Y / LB / RB |
 | Start | Enter | Start |
 | Mode | Backspace | Back |
+| Accelerate / brake | — | **RT / LT** (analog, additive) |
 
-With the game's default control setup, **B** accelerates, **A** brakes and
-**C** fires the nitro. The game's own *Control* menu can change this. Player 2
-uses I/J/K/L to steer, N/M/comma for A/B/C and Right Shift for Start, or a
-second gamepad.
+**B** accelerates, **A** brakes and **C** fires the nitro. The right trigger
+also accelerates and the left trigger also brakes, above the same deadzone the
+analog sticks use; the face buttons keep working, so menus are unchanged.
+Triggers need no setting and never replace a binding, including in an existing
+`settings.ini`. Player 2 uses I/J/K/L to steer, N/M/comma for A/B/C and Right
+Shift for Start, or a second gamepad (RT/LT work there too).
+
+The cartridge's own CONTROL TYPE selection is fixed at its default (TYPE 1) for
+both players, because remapping belongs to the launcher and the in-game runtime
+menu; the game's *CONTROL* carousel row is gone. See
+[docs/CONTROLS.md](docs/CONTROLS.md).
 
 | Action | Keyboard | Gamepad |
 | --- | --- | --- |
