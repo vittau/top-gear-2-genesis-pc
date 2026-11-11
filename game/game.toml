@@ -160,6 +160,20 @@ kind = "game_hook"
 addr = 0x006982
 kind = "game_hook"
 
+# Port-owned controls (game/tg2_controls.c): the setup carousel's input
+# handler ($021A62, replaces it to drop the CONTROL row), its row-list draw
+# leaf ($021E14, marks the screen for the presentation mask) and the
+# control-mapping applier ($00797A, holds both players on TYPE 1).
+[[widescreen_site]]
+addr = 0x021A62
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x021E14
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x00797A
+kind = "game_hook"
+
 # Host-snapshot frame boundaries: the race picture-ready loop and the
 # top-level title/menu loop. The adapter parks a queued quickstate here.
 [[widescreen_site]]

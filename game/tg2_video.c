@@ -1,5 +1,6 @@
 /* TG2 USA presentation. Guest raster state is authoritative on every row. */
 #include "tg2_video.h"
+#include "tg2_controls.h"
 #include "tg2_highres.h"
 #include "tg2_actors.h"
 #include "cmd_server.h"
@@ -762,10 +763,27 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
                             uint32_t *out, int w);
 static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
                                uint32_t *out, int w);
+/* The setup carousel's CONTROL row is removed from navigation and from the
+ * mapping (game/tg2_controls.c). Its button is part of the page bitmap the
+ * cartridge streams into tiles, so the port omits it in the presented picture
+ * on the one screen that draws it: the row-list draw leaf sets the flag, and
+ * everything outside this native rectangle is the stock picture. */
+static void mask_removed_control_row(int line, uint32_t *out, int nw, int w) {
+    if (nw != 256 || line < TG2_CONTROLS_ROW_Y0 || line > TG2_CONTROLS_ROW_Y1)
+        return;
+    if (!tg2_controls_row_list_active())
+        return;
+    int origin = (w - nw) / 2;
+    for (int x = TG2_CONTROLS_ROW_X0; x <= TG2_CONTROLS_ROW_X1; ++x) {
+        int ox = origin + x;
+        if (ox >= 0 && ox < w) out[ox] = 0xFF000000u;
+    }
+}
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     render_scanline(v, line, native, nw, out, w);
     note_crop_row(line, out, w);
+    mask_removed_control_row(line, out, nw, w);
 }
 /* S3: a render scale above 1 presents an N x canvas whose content is the 1x
  * picture scaled by nearest in both axes. The road rows are then repainted at

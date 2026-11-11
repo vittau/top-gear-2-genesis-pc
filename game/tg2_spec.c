@@ -6,6 +6,7 @@
  * docs/FRAMERATE.md; its preference is latched at each race start. */
 #include "game_spec.h"
 #include "tg2_icon.h"
+#include "tg2_controls.h"
 #include "genesis_runtime.h"
 #include "tg2_video.h"
 #include "tg2_options.h"
@@ -53,6 +54,7 @@ static int race_live(void)
 }
 static void tg2_frame_pre(uint64_t frame_count)
 {
+    tg2_controls_frame();           /* hold TYPE 1, clear the row-list flag */
     tg2_audio_frame_pre();          /* BOTH: writer-routed second sound chip */
     int live = race_live();
     if (live && !s_race_live) s_race60 = tg2_race60_requested();
@@ -80,6 +82,7 @@ static int tg2_instruction_hook(uint32_t pc)
 {
     /* Frame boundary offered for a host snapshot (F-keys / overlay). */
     glue_state_boundary(pc);
+    if (tg2_controls_hook(pc)) return 1;
     if (pc == 0x0235C0u || pc == 0x0235C4u) {
         unsigned address = g_cpu.A[0] & 0xFFFFFFu;
         if (address >= 0xFF0000u && address <= 0x1000000u - sizeof pw_trace.work) {
@@ -97,6 +100,14 @@ static void tg2_post_reset(void)
     memset(&pw_trace, 0, sizeof pw_trace);
     tg2_audio_reset();
     tg2_video_reset();
+}
+/* A quickstate restores guest RAM exactly, so it may carry another control
+ * type and a mapping table built from it. Re-assert TYPE 1 before the game
+ * reads either one. */
+static void tg2_state_loaded(void)
+{
+    tg2_post_reset();
+    tg2_controls_state_loaded();
 }
 
 /* ── Host snapshots ────────────────────────────────────────────────────────
@@ -179,6 +190,7 @@ const GameSpec g_game_spec = {
      * M/N/comma, right Shift = Start, second gamepad) are live from a fresh
      * install. A saved settings.ini keeps whatever device it recorded. */
     .default_players = 2,
+    .pad_trigger_bits = tg2_pad_trigger_bits,
     .load_settings = tg2_options_load,
     .save_settings = tg2_options_save,
     .runtime_ui_items = tg2_options_runtime_items,
@@ -187,7 +199,7 @@ const GameSpec g_game_spec = {
     .runtime_ui_set = tg2_options_runtime_set,
     .mods = tg2_mods,
     .on_post_reset = tg2_post_reset,
-    .on_state_loaded = tg2_post_reset,
+    .on_state_loaded = tg2_state_loaded,
     .state_build_id = "tg2-0.1.0-bd3074d2-state1",
     .state_size = tg2_state_size,
     .state_save = tg2_state_save,
