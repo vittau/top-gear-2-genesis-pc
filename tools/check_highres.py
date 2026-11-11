@@ -888,11 +888,65 @@ def downscale_against(native: Path, shot: Path, scale: int, native_filter: bool 
     return compare_downscaled(reference, downsample(cpix, cw, ch, cc, scale))
 
 
+def actor_table_sample(table, info, rom, failures, strict=True):
+    """Check captured guest pieces independently of the painter's anchors,
+    and the chosen car frame against the raw ROM remap, not a second copy of
+    the C selection routine. Counts are per distinct displayed scene."""
+    import math
+    if info.get('actor_dropped', 0): failures.append(f"actor capture overflow: {info['actor_dropped']}")
+    table['rows_checked'] = info['actor_rows']
+    table['row_mismatches'] = info['actor_row_mismatches']
+    for a in info['actors']:
+        if not a['promoted']:
+            table['native'] += 1
+            continue
+        key = f"{a['kind']:02X}"
+        kind = table['kinds'].setdefault(key, dict(actors=0, models={}, fallbacks=0, visible=0))
+        kind['actors'] += 1
+        model = f"{a['guest_model']}->{a['model']}"
+        kind['models'][model] = kind['models'].get(model, 0) + 1
+        kind['fallbacks'] += bool(a['fallback'])
+        kind['visible'] += bool(a['pixels'])
+        table['fallbacks'] += bool(a['fallback'])
+        table['actors'] += 1
+        table['native_blocked'] += a['native_blocked']
+        table['pole_blocked'] += a['pole_blocked']
+        table['pole_overpaint'] += a['pole_overpaint']
+        floor_error = max(abs(math.floor(a['anchor'][i])-a['guest'][i]) for i in (0, 1))
+        table['max_floor_error'] = max(table['max_floor_error'], floor_error)
+        expected = [(a['anchor'][0] + a['draw_origin'])*a['draw_scale'], a['anchor'][1]*a['draw_scale']]
+        error = max(abs(a['drawn_anchor'][i]-expected[i]) for i in (0, 1))
+        table['max_drawn_anchor_error'] = max(table['max_drawn_anchor_error'], error)
+        table['position_mismatches'] += a['position_mismatches']
+        table['palette_mismatches'] += a['palette_mask'] != a['guest_palette_mask']
+        table['priority_mismatches'] += a['priority_mask'] != a['guest_priority_mask']
+        table['inside_pieces'] += a['inside']
+        table['sat_matched'] += a['matched']
+        if strict and (floor_error or a['position_mismatches']):
+            if len(failures)<20: failures.append(f"actor guest-position mismatch: {a}")
+        if error >= 1 or a['palette_mask'] != a['guest_palette_mask'] or a['priority_mask'] != a['guest_priority_mask']:
+            if len(failures)<20: failures.append(f"actor anchor/palette/priority mismatch: {a}")
+        if a['record'] >= 0xFF8E94 and not a['fallback']:
+            # A model used in row 0 keeps its angle; later rows choose the
+            # mild level-0 frame of the left/centre/right run nearest column 4.
+            rows = [list(rom[0x57C8+n*9:0x57C8+(n+1)*9]) for n in range(24)]
+            row = next((r for r in rows if a['guest_model'] in r), None)
+            if row is None: failures.append(f"car model outside ROM table: {a}")
+            else:
+                cols = [i for i,m in enumerate(row) if m == a['guest_model']]
+                col = min(cols, key=lambda i: abs(i-4))
+                want = a['guest_model'] if row is rows[0] else rows[0][4 if len(set(row)) == 1 else col]
+                if a['model'] != want: failures.append(f"wrong car angle: {a}; expected {want}")
+    if info['actor_row_mismatches'] and len(failures)<20:
+        failures.append(f"native row reconstruction: {info['actor_row_mismatches']} mismatches")
+
+
 def check_drive(args):
     """S3 audit on a driven race: password into a track, drive it with the
     closed-loop controller at a render scale, with the N x road records and
     the margin audit on, taking a picture every --shot-every frames. The trace
     carries curvature and slope so curve/hill pictures can be picked."""
+    if args.actors and args.no_audit: raise ValueError('--actors cannot be combined with --no-audit')
     info = TRACKS[args.track]
     tag = (f'{args.track}-scale{args.scale}' + ('-60' if args.race60 else '') +
            ('-cost' if args.no_audit else ''))
@@ -905,6 +959,7 @@ def check_drive(args):
     env = {'TG2_HIGHRES_SCALE': str(args.scale),
            'TG2_RACE_60FPS': '1' if args.race60 else '0',
            'TG2_HIGHRES_TIMING': '1'}
+    if args.actors: env['TG2_ACTOR_AUDIT'] = '1'
     if args.no_audit:
         env['GENESIS_FRAME_STATS'] = str(out / 'frame-stats.csv')
     if not args.no_audit:
@@ -929,6 +984,12 @@ def check_drive(args):
     item = {'tag': tag, 'track': args.track, 'scale': args.scale, 'mode': args.mode,
             'race60': bool(args.race60), 'frames': args.frames}
     trace, shots, failures = [], [], []
+    actor_table = dict(actors=0, native=0, fallbacks=0, kinds={}, max_floor_error=0,
+                       max_drawn_anchor_error=0, position_mismatches=0, palette_mismatches=0,
+                       priority_mismatches=0, inside_pieces=0, sat_matched=0,
+                       rows_checked=0, row_mismatches=0, native_blocked=0, pole_blocked=0, pole_overpaint=0)
+    actor_serial = None
+    actor_rom = args.rom.read_bytes() if args.actors else None
     r.start()
     try:
         if args.output_size:
@@ -939,7 +1000,13 @@ def check_drive(args):
             state = r.state_and_frame()
             start = 3000
         else:
-            state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            if args.load_state:
+                r.command('load_state', path=str(args.load_state.resolve()))
+                r.wait_frame(r.frame()+30)  # republish immutable scene history after reset
+                state = r.state_and_frame()
+            else:
+                state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            if args.save_state: r.command('save_state', path=str(args.save_state.resolve()))
             start = r.frame()
         item['race_start_frame'] = state.frame
         item['native_filter'] = bool(r.command('tg2_highres')['native_filter'])
@@ -964,15 +1031,22 @@ def check_drive(args):
             pad = 0x10 | (0x08 if u > 9.0 else 0x04 if u < -9.0 else 0)
             previous = lat
             trace.append([st.frame, st.speed, round(lat, 2), st.curv, st.slope, st.lap])
+            if args.actors:
+                actor_info = r.command('tg2_highres')
+                if actor_info['serial'] != actor_serial:
+                    actor_serial = actor_info['serial']
+                    actor_table_sample(actor_table, actor_info, actor_rom, failures, strict=not args.race60)
             if not args.no_audit and (due or not last_shot):
                 last_shot = st.frame
                 # One batch is served in one per-frame poll, so the screenshot
                 # and the end of the 1x dump see the same completed picture.
                 path = out / f'frame-{st.frame}.png'
                 batch = [('screenshot', dict(path=str(path)))]
+                if args.actors: batch.append(('tg2_highres', {}))
                 if due:
                     batch.append(('tg2_highres', dict(dump='')))
-                r.command_many(batch)
+                batch_result = r.command_many(batch)
+                if args.actors: (out / f'frame-{st.frame}-actors.json').write_text(json.dumps(batch_result[1], indent=1))
                 shot = {'frame': st.frame, 'path': str(path), 'speed': st.speed,
                         'curv': st.curv, 'slope': st.slope}
                 native = out / 'native.ppm'
@@ -1034,6 +1108,9 @@ def check_drive(args):
                 wait_cpu_max_us=max(int(row['cpu_wait_us']) for row in rows),
                 present_p50_us=statistics.median(int(row['present_us']) for row in rows))
     (out / 'trace.json').write_text(json.dumps(trace) + '\n')
+    if args.actors:
+        item['sprite_table'] = actor_table
+        if not actor_table['actors'] or not actor_table['rows_checked']: failures.append('no actor/row samples')
     item.update({'shots': shots, 'manifests': empty_manifests(out),
                  'steps': len(trace),
                  'moving_steps': sum(1 for t in trace if t[1] > 500)})
@@ -1320,6 +1397,9 @@ def main():
     s.add_argument('--shot-every', type=int, default=120)
     s.add_argument('--min-frames', type=int, default=3000)
     s.add_argument('--race60', action='store_true')
+    s.add_argument('--actors', action='store_true', help='S4: independent sprite-position/variant and native-row coverage table')
+    s.add_argument('--load-state', type=Path, help='ignored local race checkpoint; republish 30 frames before sampling')
+    s.add_argument('--save-state', type=Path, help='save an ignored local race checkpoint before driving')
     s.add_argument('--no-audit', action='store_true', help='CPU timing with no road/margin audits, screenshots or native dumps')
     s.add_argument('--uncapped', action='store_true', help='Cost mode: full rendering/audio work without host pacing')
     s.add_argument('--cost-route', action='store_true', help='Cost mode: committed baseline input route; sample [3000,3000+frames)')

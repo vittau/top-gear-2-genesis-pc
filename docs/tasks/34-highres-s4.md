@@ -240,3 +240,22 @@ hashes in all five configurations, all four manifests empty
 is an implementation checkpoint, **not accepted S4**. Next: inspect the first
 same-frame picture and TCP actor table, fix any composition/position defects,
 then add the independent actor checks and execute the reduced acceptance plan.
+
+The directed 2× actor table (`build/s4/short2/.../drive-summary.json`) sampled
+280 actors: floor/guest-piece/palette/priority mismatches all 0, drawn-anchor
+error ≤1.1e-8 output px (JSON precision), fallback count 0, native-row replay
+mismatches 0. Road checks passed; the margin checker exposed duplicate audit
+rows while the true-native dump pass was active, which is now suppressed.
+The rerun/long 4× qualification is `build/s4/long4` (still running at this
+checkpoint). The player's car is explicitly left native using the ROM's own
+`$B53A..$B542` player-number comparator (`$FF17D6 == $FF1878`), rather than
+assuming every car-table entry is an opponent. Anchor storage is double
+precision so a fraction near 1 cannot round up across an integer boundary.
+
+`check_highres.py drive --actors` adds the independent guest-piece position,
+ROM variant, palette/priority and native SAT replay tables. Optional local
+`--save-state/--load-state` race checkpoints stay ignored and allow short
+per-scale follow-ups after 30 frames of republished scene history. Cost mode
+refuses actor audits. Remaining work: finish the long run, directed other
+scales/weather/poles and filter check, G1/G3/boundaries, CPU A/B, silhouette
+review pictures and the single stepped/continuous pair, then final docs.

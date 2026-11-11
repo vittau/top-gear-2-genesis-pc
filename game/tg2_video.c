@@ -143,6 +143,7 @@ typedef struct {
     int x, y;
     unsigned attr, size;
     int actor;
+    unsigned char kind;
 } Piece;
 typedef struct {
     Piece pieces[MAX_PIECES];
@@ -169,9 +170,10 @@ void tg2_video_reset(void) {
     tg2_highres_reset();
     tg2_actors_reset();
     highres_wanted = 0;
+    actor_rows=actor_row_mismatches=0;
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
-    shown = NULL;
+    shown = NULL; current_actor=-1;
     serial = overflow = matched_pieces = margin_pieces = 0;
     crop_race_ok = crop_top_rows = crop_bottom_ok = presented_cropped = 0;
     crop_frames = crop_withheld = 0;
@@ -227,6 +229,7 @@ int tg2_video_hook(uint32_t pc) {
             }
             Piece *piece = &building.pieces[building.count++];
             piece->actor = current_actor;
+            piece->kind = word(g_ram,0x187C)&255;
             piece->x = px;
             piece->y = py + (int16_t)word(g_ram, 0x2452) - 128;
             piece->size = sz & 15;
@@ -253,13 +256,14 @@ static void select_scene(const GVDP *v) {
     }
     if (shown) memset(((Scene *)shown)->sat_piece, 0xFF, sizeof shown->sat_piece);
     if (shown)
-        for (unsigned i = 0; i < shown->count; ++i) {
+        for (unsigned n = shown->count; n > 0; --n) {
+            unsigned i=n-1; /* nearest first, like the backward SAT allocator */
             const Piece *p = &shown->pieces[i];
             if (p->x < 0 || p->x + ((((p->size >> 2) & 3) + 1) * 8) > 256)
                 ++margin_pieces;
             for (unsigned k = 0; k < shown->sat_size; k += 8) {
                 const unsigned char *q = shown->sat + k;
-                if (((word(q, 0) & 511) - 128) == (unsigned)p->y &&
+                if (shown->sat_piece[k/8]<0 && ((word(q, 0) & 511) - 128) == (unsigned)p->y &&
                     ((word(q, 6) & 511) - 128) == (unsigned)p->x && (q[2] & 15) == p->size &&
                     word(q, 4) == p->attr) {
                     ((Scene *)shown)->sat_piece[k / 8] = i;
@@ -285,23 +289,32 @@ static int promoted_sat(int link) {
 static void prepare_actors(const GVDP *v) {
     tg2_actors_prepare(v,shown?&shown->actors:NULL);
     if (!shown) return;
+    for(unsigned j=0;j<shown->count;++j) tg2_actors_note_native(j,shown->pieces[j].kind);
     for(unsigned i=0;i<shown->actors.count;++i) {
-        unsigned count=0,inside=0,matched=0;
+        unsigned count=0,inside=0,matched=0,bad_position=0;
+        const Tg2Actor *a=&shown->actors.actors[i];
         for(unsigned j=0;j<shown->count;++j) if(shown->pieces[j].actor==(int)i) {
             const Piece *p=&shown->pieces[j];++count;
+            int found=0;
+            for(unsigned k=0;k<a->guest_count;++k) {
+                const Tg2ModelPiece *q=&shown->actors.pieces[a->guest_first+k];
+                if(p->attr==q->attr && p->size==q->size && p->x==a->gx+q->dx && p->y==a->gy+q->dy) {found=1;break;}
+            }
+            if(!found)++bad_position;
             int w=(((p->size>>2)&3)+1)*8;
             if(p->x<256 && p->x+w>0) {
                 ++inside;
                 for(unsigned k=0;k<64;++k) if(shown->sat_piece[k]==(int)j) {++matched;break;}
             }
         }
-        tg2_actors_note_sat(i,count,inside,matched);
+        tg2_actors_note_sat(i,count,inside,matched,bad_position);
     }
 }
 static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *native,
                               uint32_t *out,GVDPRasterRow *free_row,unsigned short *owners) {
     *free_row=*filter_layers;
-    unsigned char all[256]={0},kept[256]={0},hi[256]={0};
+    if(!free_row->display) {memset(owners,0,nw*sizeof *owners);memcpy(out,native,nw*sizeof *out);return;}
+    unsigned char all[256]={0},all_hi[256]={0},kept[256]={0},hi[256]={0};
     int owner[256]; for(int x=0;x<nw;++x)owner[x]=-1;
     memset(owners,0,nw*sizeof *owners);
     unsigned sat=(v->reg[5]&127)<<9;
@@ -321,7 +334,7 @@ static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *nativ
                 unsigned c=sprite_texel(v,attr,sz,dx,line-y);
                 if(!c)continue;
                 c|=(attr>>9)&48;
-                if(!all[x]){all[x]=c;owner[x]=removed;}
+                if(!all[x]){all[x]=c;all_hi[x]=!!(attr&0x8000);owner[x]=removed;}
                 if(!removed && !kept[x]) {
                     kept[x]=c;hi[x]=!!(attr&0x8000);
                     int piece=shown && link<64?shown->sat_piece[link]:-1;
@@ -341,7 +354,7 @@ static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *nativ
         ++actor_rows;
         for(int x=0;x<nw;++x) {
             int k=x+offset;
-            if(!!all[x]!=!!filter_layers->opaque[k] || (all[x] && all[x]!=filter_layers->sprite[k])) ++actor_row_mismatches;
+            if(!!all[x]!=!!filter_layers->opaque[k] || (all[x] && (all[x]!=filter_layers->sprite[k] || all_hi[x]!=filter_layers->high[k]))) ++actor_row_mismatches;
         }
     }
     for(int x=0;x<nw;++x) if(owner[x]==1) {
@@ -436,11 +449,12 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     /* One row at a time, single-threaded: keep the scratch off the stack and
      * zero only what this row uses. */
     static unsigned char removed[256], sprites[256], shifted[4096];
-    static unsigned short spr_attr[256];
+    static unsigned short spr_attr[256], spr_front[256];
     memset(removed, 0, sizeof removed);
     memset(sprites, 0, sizeof sprites);
     memset(shifted, 0, sizeof shifted);
     memset(spr_attr, 0, sizeof spr_attr);
+    memset(spr_front, 0, sizeof spr_front);
     int dirty = 0;
     /* Only relocate plane-A texels the display actually shows. The stock top
      * window band hides plane A, and there a nonnegative plane-A V-scroll
@@ -525,6 +539,8 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                 } else if (nx >= 0 && nx < nw) {
                     sprites[nx] = c;
                     spr_attr[nx] = attr;
+                    int piece=shown && link<64?shown->sat_piece[link]:-1;
+                    spr_front[nx]=piece<0?65535:piece+1;
                 }
             }
             budget -= sw;
@@ -552,7 +568,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                      ap && (a & 0x8000) ? ap : bp && (b & 0x8000) ? bp :
                      sp ? sp : ap ? ap : bp ? bp : v->reg[7] & 63;
         out[origin + x] = pal[c];
-        if (actor_front) actor_front[origin+x] = sp ? 65535 : 0;
+        if (actor_front) actor_front[origin+x] = sp ? spr_front[x] : 0;
         if (actor_occluder) actor_occluder[origin+x] = (ap && (a&0x8000)) || (bp && (b&0x8000));
         if (filter_foreground)
             filter_foreground[origin + x] = (sp && (spr_attr[x] & 0x8000)) ||
@@ -682,6 +698,7 @@ static int margin_audit_checked;
 static uint64_t margin_audit_from, margin_audit_to = ~(uint64_t)0;
 static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                           int nw, const uint32_t *out, int w) {
+    if (reference_pass) return; /* evidence pass is not another presented row */
     if (!margin_audit_checked) {
         margin_audit_checked = 1;
         const char *path = getenv("TG2_MARGIN_AUDIT");
@@ -1443,7 +1460,7 @@ void tg2_video_highres_command(int id, const char *json) {
         n += snprintf(out + n, CAPACITY - n, ",\"filtered_frames\":%u,\"filter_incomplete\":%u,\"native_filter\":%d",
                       tg2_highres_filtered_frames(), tg2_highres_filter_incomplete(),
                       tg2_highres_linear_filter());
-    if (n>0 && n<CAPACITY) n+=snprintf(out+n,CAPACITY-n,",\"actor_rows\":%llu,\"actor_row_mismatches\":%llu,\"actors\":",actor_rows,actor_row_mismatches);
+    if (n>0 && n<CAPACITY) n+=snprintf(out+n,CAPACITY-n,",\"actor_rows\":%llu,\"actor_row_mismatches\":%llu,\"actor_dropped\":%u,\"native_objects\":%u,\"actors\":",actor_rows,actor_row_mismatches,tg2_actors_dropped(),tg2_actors_native_objects());
     if (n>0 && n<CAPACITY) n+=tg2_actors_json(out+n,CAPACITY-n);
     if (n > 0 && n < CAPACITY) snprintf(out + n, CAPACITY - n, "}");
     cmd_send_response(out);

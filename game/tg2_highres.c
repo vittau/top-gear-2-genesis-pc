@@ -68,7 +68,7 @@ void tg2_highres_capture_actors(int line,const unsigned char *foreground,
     memcpy(s_actor_occluder[line],occluder,width);
     memcpy(s_actor_front[line],front,width*sizeof *front);
     if(tg2_highres_native_dump_active()) memcpy(s_reference[line],reference,width*sizeof *reference);
-    s_actor_row_ok[line]=actor_free;
+    s_actor_row_ok[line]=actor_free && tg2_highres_row_serial()[line]==tg2_highres_serial();
 }
 
 /* ── Render scale (the one place the port reads it) ──────────────────────── */
@@ -234,7 +234,7 @@ static int road_runs(const GVDP *v, const Tg2RowState *r, int py, RoadRuns *runs
 
 void tg2_highres_capture_native(int line, const uint32_t *pixels,
                                 const unsigned char *foreground, int width) {
-    if (!tg2_highres_linear_filter() || line < 0 || line >= TG2_HIGHRES_ROWS ||
+    if (tg2_highres_present_scale() <= 1 || line < 0 || line >= TG2_HIGHRES_ROWS ||
         !pixels || !foreground || width <= 0 || width > 4096) return;
     memcpy(s_native_rgb[line], pixels, (size_t)width * sizeof *pixels);
     memcpy(s_native_foreground[line], foreground, (size_t)width);

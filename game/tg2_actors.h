@@ -25,7 +25,7 @@ typedef struct Tg2ModelPiece {
  * painter needs is copied here; nothing is looked up in live guest memory at
  * presentation time. */
 typedef struct Tg2Actor {
-    float x, y;                 /* sub-pixel anchor, screen coordinates      */
+    double x, y;                 /* sub-pixel anchor, screen coordinates      */
     float continuous;           /* projection scale / band-centre scale      */
     unsigned record, art, guest_key, model_key;
     short gx, gy, clip;         /* guest integer anchor, first hidden row    */
@@ -65,9 +65,13 @@ void tg2_actors_prepare(const struct GVDP *v, const Tg2ActorSet *set);
 /* Whether actor `index` of the prepared set will be painted (its native
  * sprites may then be removed from the row). */
 int tg2_actors_promoted(int index);
+unsigned tg2_actors_dropped(void);
+unsigned tg2_actors_native_objects(void);
 /* Qualification: how many scene pieces the actor has, how many intersect the
  * native picture and how many of those the displayed SAT contains. */
-void tg2_actors_note_sat(int index, unsigned pieces, unsigned inside, unsigned matched);
+void tg2_actors_note_sat(int index, unsigned pieces, unsigned inside, unsigned matched, unsigned position_mismatches);
+
+void tg2_actors_note_native(unsigned piece, unsigned kind);
 
 typedef struct Tg2ActorCanvas {
     uint32_t *pixels;

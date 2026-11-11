@@ -126,6 +126,7 @@ static void log_definition(FILE *f, unsigned record) {
 void tg2_actors_frame(uint64_t frame) { log_frame = frame; }
 void tg2_actors_reset(void) {
     pending.path = 0;
+    tg2_actors_prepare(NULL,NULL);
     def_count = 0;
     table_ptr[0] = table_ptr[1] = 0;
 }
@@ -250,7 +251,8 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
         ram16(0x189E) || ram16(0x1878) == 0xFFFE || ram16(0x1878) == 0xFD66 ||
         kind == 0x82 || kind == 0x83 || kind == 0x84 || kind == 0xBD ||
         kind == 0x8A || kind == 0xF8 || kind == 0xF9 || kind == 0xFC || kind == 0xFD ||
-        !valid_pointer(record)) { ++set->native_objects; return -1; }
+        !valid_pointer(record) ||
+        (record >= 0xFF8E94 && ram16(0x1878) == ram16(0x17D6))) { ++set->native_objects; return -1; }
     if (set->count == TG2_MAX_ACTORS) { ++set->dropped; return -1; }
     Tg2Actor a = {0};
     a.record = record; a.art = mem32(record); a.kind = kind; a.path = path;
@@ -261,7 +263,7 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     a.level = level; a.rattr = mem16(record + 8); a.scale = ram16(0x17E0);
     a.gx = (int16_t)g_cpu.D[1] + 128;
     a.gy = (int16_t)g_cpu.D[2] + (int16_t)ram16(0x2452) - 128;
-    a.x = a.gx + (pending.d1 >> 16) / 65536.0f;
+    a.x = a.gx + (pending.d1 >> 16) / 65536.0;
     double y = (int16_t)pending.d2 + (path == 1 ? (pending.d2 >> 16) / 65536.0 : 0);
     int limit = (int16_t)ram16(0x17BC) - 2;
     if (y >= limit) y = limit;
@@ -295,12 +297,19 @@ typedef struct {
     Tg2Actor actor;
     int art, promoted;
     float size;
-    unsigned pixels, pieces, inside, matched, palettes, priorities;
+    unsigned native_blocked, pole_blocked, pole_overpaint;
+    unsigned pixels, pieces, inside, matched, position_mismatches, palettes, priorities, guest_palettes, guest_priorities;
+    double drawn_x, drawn_y;
+    int draw_origin, draw_scale;
     int box[4];
 } Prepared;
 static Art art_cache[TG2_MAX_ACTORS * 2];
 static Prepared prepared[TG2_MAX_ACTORS];
 static unsigned art_count, prepared_count;
+static unsigned char native_kind[2048];
+void tg2_actors_note_native(unsigned piece, unsigned kind) {
+    if(piece<2048) native_kind[piece]=kind;
+}
 static const Tg2ActorSet *prepared_set;
 static int raster_model(const GVDP *v, unsigned first, unsigned count) {
     const Tg2ModelPiece *pieces = prepared_set->pieces + first;
@@ -346,9 +355,20 @@ static int raster_model(const GVDP *v, unsigned first, unsigned count) {
     *a = (Art){first,count,x0+lx,y0+ly,cw,ch,texels};
     return art_count++;
 }
+/* The sole size policy switch. Stepped is the authored size by default;
+ * continuous exists only for the requested same-frame visual review pair. */
+static float actor_size_policy(float stepped, float ratio) {
+    static int continuous=-1;
+    if (continuous<0) {
+        const char *s=getenv("TG2_ACTOR_SIZE");
+        continuous=s && !strcmp(s,"continuous");
+    }
+    return stepped*(continuous?ratio:1);
+}
 void tg2_actors_prepare(const GVDP *v, const Tg2ActorSet *set) {
     for (unsigned i=0;i<art_count;++i) free(art_cache[i].texels);
     art_count=prepared_count=0; prepared_set=set;
+    memset(native_kind,0,sizeof native_kind);
     if (!v || !set || !tg2_actors_active()) return;
     prepared_count=set->count;
     for (unsigned i=0;i<set->count;++i) {
@@ -361,10 +381,12 @@ void tg2_actors_prepare(const GVDP *v, const Tg2ActorSet *set) {
         p->size=m->w>=m->h ? (float)g->w/m->w : (float)g->h/m->h;
         if (p->size>1) { model=guest; p->size=1; a->fallback=4; }
         if (model==guest) a->model=a->guest_model;
-        static int continuous=-1;
-        if (continuous<0) { const char *s=getenv("TG2_ACTOR_SIZE"); continuous=s && !strcmp(s,"continuous"); }
-        if (continuous) p->size *= a->continuous;
+        p->size=actor_size_policy(p->size,a->continuous);
         p->art=model; p->promoted=1;
+        for(int n=0;n<g->w*g->h;++n) if(g->texels[n]) {
+            p->guest_palettes|=1u<<((g->texels[n]>>4)&3);
+            p->guest_priorities|=1u<<(g->texels[n]>>7);
+        }
         m=&art_cache[model];
         for (int n=0;n<m->w*m->h;++n) if (m->texels[n]) {
             p->palettes |= 1u<<((m->texels[n]>>4)&3);
@@ -372,19 +394,23 @@ void tg2_actors_prepare(const GVDP *v, const Tg2ActorSet *set) {
         }
     }
 }
+unsigned tg2_actors_dropped(void) { return prepared_set?prepared_set->dropped:0; }
+unsigned tg2_actors_native_objects(void) { return prepared_set?prepared_set->native_objects:0; }
 int tg2_actors_promoted(int index) {
     return index>=0 && (unsigned)index<prepared_count && prepared[index].promoted;
 }
-void tg2_actors_note_sat(int index, unsigned pieces, unsigned inside, unsigned matched) {
+void tg2_actors_note_sat(int index, unsigned pieces, unsigned inside, unsigned matched, unsigned position_mismatches) {
     if (index<0 || (unsigned)index>=prepared_count) return;
+    prepared[index].position_mismatches=position_mismatches;
     prepared[index].pieces=pieces; prepared[index].inside=inside; prepared[index].matched=matched;
 }
 void tg2_actors_paint(const Tg2ActorCanvas *c) {
     for (unsigned i=0;i<prepared_count;++i) {
-        Prepared *p=&prepared[i]; p->pixels=0;
+        Prepared *p=&prepared[i]; p->pixels=p->native_blocked=p->pole_blocked=p->pole_overpaint=0;
         if (!p->promoted) continue;
         const Tg2Actor *a=&p->actor; const Art *m=&art_cache[p->art];
         double k=p->size*c->scale, ax=(a->x+c->origin)*c->scale, ay=a->y*c->scale;
+        p->drawn_x=ax;p->drawn_y=ay;p->draw_origin=c->origin;p->draw_scale=c->scale;
         double radius=fmax(1,1/k)*0.5;
         int x0=(int)floor(ax+(m->x0-radius)*k), x1=(int)ceil(ax+(m->x0+m->w+radius)*k);
         int y0=(int)floor(ay+(m->y0-radius)*k), y1=(int)ceil(ay+(m->y0+m->h+radius)*k);
@@ -401,7 +427,9 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
             if(sy0<0)sy0=0;if(sy1>m->h)sy1=m->h;
             for (int x=x0;x<x1;++x) {
                 int col=x/c->scale; unsigned front=c->front[row][col];
-                if (front==65535 || (front && front-1>=a->first_piece)) continue;
+                int blocked=front==65535 || (front && front-1>=a->first_piece);
+                unsigned kind=front && front<=2048?native_kind[front-1]:0;
+                int pole=kind==0xBD || kind==0x83 || kind==0x84;
                 double tx=(x+0.5-ax)/k-m->x0, left=tx-radius,right=tx+radius;
                 int sx0=(int)floor(left),sx1=(int)ceil(right);
                 if(sx0<0)sx0=0;if(sx1>m->w)sx1=m->w;
@@ -414,6 +442,8 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
                     for(int ch=0;ch<3;++ch) rgb[ch]+=((color>>(ch*8))&255)*weight;
                 }
                 if (alpha<=0)continue;
+                if(blocked) {++p->native_blocked;if(pole)++p->pole_blocked;continue;}
+                if(pole)++p->pole_overpaint;
                 uint32_t *out=&c->pixels[(size_t)y*c->stride+x], under=*out,color=0xFF000000;
                 for(int ch=0;ch<3;++ch) color|=(unsigned)fmin(255,floor((rgb[ch]+((under>>(ch*8))&255)*(area-alpha))/area+0.5))<<(ch*8);
                 *out=color;++p->pixels;
@@ -425,8 +455,8 @@ int tg2_actors_json(char *out,int cap) {
     int n=snprintf(out,cap,"[");
     for(unsigned i=0;i<prepared_count && n>0 && n<cap;++i) {
         Prepared *p=&prepared[i]; Tg2Actor *a=&p->actor;
-        n+=snprintf(out+n,cap-n,"%s{\"kind\":%u,\"record\":%u,\"guest_model\":%u,\"model\":%u,\"fallback\":%u,\"promoted\":%d,\"guest\":[%d,%d],\"anchor\":[%.8f,%.8f],\"size\":%.8f,\"clip\":%d,\"first_piece\":%u,\"palette_mask\":%u,\"priority_mask\":%u,\"high\":%u,\"box\":[%d,%d,%d,%d],\"pixels\":%u,\"pieces\":%u,\"inside\":%u,\"matched\":%u}",
-            i?",":"",a->kind,a->record,a->guest_model,a->model,a->fallback,p->promoted,a->gx,a->gy,a->x,a->y,p->size,a->clip,a->first_piece,p->palettes,p->priorities,a->high,p->box[0],p->box[1],p->box[2],p->box[3],p->pixels,p->pieces,p->inside,p->matched);
+        n+=snprintf(out+n,cap-n,"%s{\"kind\":%u,\"record\":%u,\"guest_model\":%u,\"model\":%u,\"fallback\":%u,\"promoted\":%d,\"guest\":[%d,%d],\"anchor\":[%.8f,%.8f],\"size\":%.8f,\"clip\":%d,\"first_piece\":%u,\"palette_mask\":%u,\"priority_mask\":%u,\"high\":%u,\"box\":[%d,%d,%d,%d],\"pixels\":%u,\"pieces\":%u,\"inside\":%u,\"matched\":%u,\"position_mismatches\":%u,\"guest_palette_mask\":%u,\"guest_priority_mask\":%u,\"drawn_anchor\":[%.8f,%.8f],\"draw_origin\":%d,\"draw_scale\":%d,\"native_blocked\":%u,\"pole_blocked\":%u,\"pole_overpaint\":%u}",
+            i?",":"",a->kind,a->record,a->guest_model,a->model,a->fallback,p->promoted,a->gx,a->gy,a->x,a->y,p->size,a->clip,a->first_piece,p->palettes,p->priorities,a->high,p->box[0],p->box[1],p->box[2],p->box[3],p->pixels,p->pieces,p->inside,p->matched,p->position_mismatches,p->guest_palettes,p->guest_priorities,p->drawn_x,p->drawn_y,p->draw_origin,p->draw_scale,p->native_blocked,p->pole_blocked,p->pole_overpaint);
     }
     if(n>0 && n<cap)n+=snprintf(out+n,cap-n,"]");
     return n;
