@@ -315,3 +315,11 @@ must update Codex, then resend it. Merge into `main` after that.
 background. Its uncommitted tree is saved at
 `refs/keep/tg2-t39-followup-limit-20261111` (`21e1c71`). After 14:48, resend
 to `dispatch:ctx_57e6e08d6e0a` to finish the rocks diagnosis, the survey write-up and `worker_done`.
+
+**Task 39 merged (2026-11-11, `9f8345a`).** Continuous growth is the default,
+and the Ayers Rock rocks (kind `$96`) are promoted; the owner approved both. Next:
+Sol (dispatch `ctx_8ecb75cf3bf5`, branch `vittau/tg2-highres-more-kinds`)
+promotes the untabulated ordinary kinds `$81/$93/$97/$A1–$A4`. The pre-existing
+Ayers night-road audit failure is mapped as task 41. Task 40 (gamepad triggers,
+removal of the in-game CONTROL TYPE menu) is running on OpenCode in the
+`tg2-trigger-pedals` worktree (dispatch `ctx_9eebeaa6e88e`).
