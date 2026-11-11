@@ -160,18 +160,15 @@ kind = "game_hook"
 addr = 0x006982
 kind = "game_hook"
 
-# Port-owned controls (game/tg2_controls.c): the setup carousel's input
-# handler ($021A62, replaces it to drop the CONTROL row), its row-list draw
-# leaf ($021E14, marks the screen for the presentation mask) and the
-# control-mapping applier ($00797A, holds both players on TYPE 1).
+# Port-owned controls (game/tg2_controls.c), as native replacements: the
+# setup carousel's input handler ($021A62) wraps over four rows, and its
+# row/page draw ($021F54) emits only RACE, PLAYER, GEARS and SPEED for the row
+# list. Every other state keeps the stock emission.
 [[widescreen_site]]
 addr = 0x021A62
 kind = "game_hook"
 [[widescreen_site]]
-addr = 0x021E14
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x00797A
+addr = 0x021F54
 kind = "game_hook"
 
 # Host-snapshot frame boundaries: the race picture-ready loop and the

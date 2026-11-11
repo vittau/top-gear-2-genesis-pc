@@ -1,6 +1,5 @@
 /* TG2 USA presentation. Guest raster state is authoritative on every row. */
 #include "tg2_video.h"
-#include "tg2_controls.h"
 #include "tg2_highres.h"
 #include "tg2_actors.h"
 #include "cmd_server.h"
@@ -763,31 +762,86 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
                             uint32_t *out, int w);
 static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
                                uint32_t *out, int w);
-/* The setup carousel's CONTROL row is removed from navigation and from the
- * mapping (game/tg2_controls.c). Its button is part of the page bitmap the
- * cartridge streams into tiles, so the port omits it in the presented picture
- * on the one screen that draws it: the row-list draw leaf sets the flag, and
- * everything outside this native rectangle is the stock picture. */
-static void mask_removed_control_row(int line, uint32_t *out, int nw, int w) {
-    Tg2ControlsRowRect rects[2];
-    int n;
-    if (nw != 256 || !tg2_controls_row_list_active())
-        return;
-    n = tg2_controls_row_rects(rects, 2);
-    int origin = (w - nw) / 2;
-    for (int i = 0; i < n; ++i) {
-        if (line < rects[i].y0 || line > rects[i].y1) continue;
-        for (int x = rects[i].x0; x <= rects[i].x1; ++x) {
-            int ox = origin + x;
-            if (ox >= 0 && ox < w) out[ox] = 0xFF000000u;
+/* ---- Evidence capture for the carousel CONTROL row (dev only) -----------
+ * TG2_CONTROL_CAPTURE=<path> writes one line per presented picture with the
+ * non-backdrop pixel count of the three rectangles where the removed CONTROL
+ * button can appear: the one-player row list, and player 1's and player 2's
+ * lists in the stacked two-player layout. It also records whether the game's
+ * own carousel state says the row list is up and how many SAT sprites overlap
+ * those rectangles. It never alters a pixel. */
+static const struct { int x0, y0, x1, y1; } k_control_rects[3] = {
+    { 100, 136, 211, 151 },   /* one-player: the removed fifth row */
+    { 100,  80, 211,  95 },   /* two-player: player 1's fifth row     */
+    { 100, 192, 211, 207 }    /* two-player: player 2's fifth row     */
+};
+static FILE *control_capture;
+static int control_capture_open_checked;
+static int control_counts[3], control_pieces, control_rowlist, control_twop;
+static unsigned long long control_capture_frames;
+
+/* The CONTROL row's four pieces are the 32x16 sprites whose SAT tiles are
+ * exactly 0x157, 0x15F, 0x167 and 0x16F (the 0x2000 in the attribute word is
+ * the priority bit). The row highlight's tiles start at 0x173, so match the
+ * exact set. Count them in the live display list, so a run can prove the
+ * pieces never reach the SAT. */
+static const unsigned k_control_tiles[4] = { 0x157u, 0x15Fu, 0x167u, 0x16Fu };
+static int control_sprites_in_sat(const GVDP *v) {
+    unsigned sat = (unsigned)((v->reg[5] & 0x7F) << 9);
+    int link = 0, count = 0;
+    for (int n = 0; n < 80; ++n) {
+        unsigned e = sat + (unsigned)link * 8;
+        unsigned tile = word(v->vram, e + 4) & 0x7FFu;
+        for (int t = 0; t < 4; ++t)
+            if (tile == k_control_tiles[t]) { ++count; break; }
+        int next = v->vram[(e + 3) & 0xFFFF] & 0x7F;
+        if (!next || next <= link) break;
+        link = next;
+    }
+    return count;
+}
+static void control_capture_row(const GVDP *v, int line, int nw, int w,
+                                const uint32_t *out) {
+    if (!control_capture_open_checked) {
+        const char *path = getenv("TG2_CONTROL_CAPTURE");
+        control_capture_open_checked = 1;
+        if (path && *path) control_capture = fopen(path, "w");
+        if (control_capture)
+            fputs("# frame rowlist twop pieces r1 r2 r3\n", control_capture);
+    }
+    if (!control_capture) return;
+    if (line == 0) {
+        memset(control_counts, 0, sizeof control_counts);
+        control_pieces = nw == 256 ? control_sprites_in_sat(v) : 0;
+        control_rowlist = word(g_ram, 0x2554) == 0x00B4u &&
+                          word(g_ram, 0x2556) == 0;
+        control_twop = word(g_ram, 0x189E) != 0;
+    }
+    if (nw == 256) {
+        int origin = (w - nw) / 2;
+        for (int r = 0; r < 3; ++r) {
+            if (line < k_control_rects[r].y0 || line > k_control_rects[r].y1)
+                continue;
+            for (int x = k_control_rects[r].x0; x <= k_control_rects[r].x1; ++x) {
+                int ox = origin + x;
+                if (ox >= 0 && ox < w && (out[ox] & 0xFFFFFFu))
+                    ++control_counts[r];
+            }
         }
+    }
+    if (line == 223) {
+        fprintf(control_capture, "%llu %d %d %d %d %d %d\n",
+                (unsigned long long)present_frame, control_rowlist, control_twop,
+                control_pieces, control_counts[0], control_counts[1],
+                control_counts[2]);
+        fflush(control_capture);
+        ++control_capture_frames;
     }
 }
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     render_scanline(v, line, native, nw, out, w);
     note_crop_row(line, out, w);
-    mask_removed_control_row(line, out, nw, w);
+    control_capture_row(v, line, nw, w, out);
 }
 /* S3: a render scale above 1 presents an N x canvas whose content is the 1x
  * picture scaled by nearest in both axes. The road rows are then repainted at

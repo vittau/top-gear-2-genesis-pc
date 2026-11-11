@@ -54,7 +54,6 @@ static int race_live(void)
 }
 static void tg2_frame_pre(uint64_t frame_count)
 {
-    tg2_controls_frame();           /* hold TYPE 1, clear the row-list flag */
     tg2_audio_frame_pre();          /* BOTH: writer-routed second sound chip */
     int live = race_live();
     if (live && !s_race_live) s_race60 = tg2_race60_requested();
@@ -100,14 +99,6 @@ static void tg2_post_reset(void)
     memset(&pw_trace, 0, sizeof pw_trace);
     tg2_audio_reset();
     tg2_video_reset();
-}
-/* A quickstate restores guest RAM exactly, so it may carry another control
- * type and a mapping table built from it. Re-assert TYPE 1 before the game
- * reads either one. */
-static void tg2_state_loaded(void)
-{
-    tg2_post_reset();
-    tg2_controls_state_loaded();
 }
 
 /* ── Host snapshots ────────────────────────────────────────────────────────
@@ -199,7 +190,7 @@ const GameSpec g_game_spec = {
     .runtime_ui_set = tg2_options_runtime_set,
     .mods = tg2_mods,
     .on_post_reset = tg2_post_reset,
-    .on_state_loaded = tg2_state_loaded,
+    .on_state_loaded = tg2_post_reset,
     .state_build_id = "tg2-0.1.0-bd3074d2-state1",
     .state_size = tg2_state_size,
     .state_save = tg2_state_save,
