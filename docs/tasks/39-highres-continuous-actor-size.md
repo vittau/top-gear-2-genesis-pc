@@ -1,6 +1,6 @@
 # Task 39: continuous actor growth without pop-in at N×
 
-**Status: mapped (owner, 2026-11-11). Not started.** Read `AGENTS.md`,
+**Status: owner-approved; continuous default and Ayers rocks implemented (Sol, 2026-11-11).** Read `AGENTS.md`,
 `HIGHRES.md` §14 and [task 34](34-highres-s4.md) (its "Progress / handoff"
 section) first. Only Opus, Fable or Sol may implement this S4 extension. Use supervised Orca
 orchestration, the shared heavy lock, at most 3 jobs, headless probes, one runtime and no worker CI.
@@ -63,3 +63,68 @@ of its projection, with no visible steps at band boundaries:
 - The CPU cost increment, measured as in task 34.
 
 Poles (task 38) are out of scope unless they share the size code naturally.
+
+## Progress / handoff
+
+Owner played the continuous build and approved it: **“Está ótimo”**. The
+branch is `vittau/tg2-highres-continuous`; `b151a25` makes continuous the N×
+default, and `dce0c67` adds the ordinary Ayers Rock ladder plus survey tools.
+Only `TG2_ACTOR_SIZE=stepped` requests authored stepped sizes. Exact height
+matching to hand-drawn small sprites is not a gate, per owner clarification.
+
+### Requested follow-up completed
+
+- Default-change build, stock G1 and 300-frame Auckland 4×/60-fps actor drive
+  exit 0; hashes remain frame 60 `2A0B972960C5E325`, frame 300
+  `1131D937D70234FD`; four manifests empty.
+- Ayers Rock is country 0, slot 2 / ROM index 1, descriptor `$01BA96`.
+  Password `stage` is difficulty; the tool uses the documented setup-only
+  selector to load the real scene, then runs without simulation/RAM changes.
+- Rocks are ordinary kind `$96`, record `$FF8E08`, art `$FF9C82`, mapping
+  `$011054`, model-0 header `$011090`; a normal 32×16→2×1 ladder. They were
+  missing from the allowlist (fallback 1), not `$82` or a compound handler.
+  `$96` is now the only additionally promoted kind.
+- Ayers 4×/60-fps capture: 4,333 rock presentations, no rock fallbacks,
+  4,015 matched size pairs /154 band changes, max residual 0.000032%; all
+  actor anchor/SAT/palette/priority/replay checks 0. Short Auckland/Canada/
+  rain regressions pass (5,652 /3,832 /4,893 promoted actors).
+- Remaining 13 countries: one validated 900-moving-frame 1× first-race
+  window each, 11,700 frames /79,487 mapper calls total; selected runs exit
+  0, all four manifests empty. All counts are in HIGHRES §14.8 and
+  `build/task39-followup/country-summary.json`. No other kind was fixed.
+  Unknown fallback-1 kinds: `$81/$93/$97/$A1/$A2/$A3/$A4`; native specials
+  include poles, `$82` and tunnels. Model-0 screening found no R2/R3/R4;
+  final-SAT fallbacks 5–7 are outside a 1× policy inventory.
+
+### Explicit unresolved diagnostic
+
+**The complete Ayers drive returned 1 on its road lane/centre audit.**
+Actor checks, road geometry/gap/outlier checks, margins and manifests pass.
+The same fixed input with actors disabled also fails (6,057 stripe /3,990
+centre violations), with identical ending guest RAM. Native sprite removal
+changes the audit's visibility flags, so the raw audit files are not all
+identical. This establishes an existing road diagnostic independent of rock
+sizing; it is not fixed, waived or claimed as an all-road pass. Original
+failures, baseline runs and comparisons are retained under
+`build/task39-followup/{rocks/ayers,road-baseline}`. No road code changed.
+
+### Ready build / evidence
+
+`build/settings.ini` has internal scale **4**, race 60 fps **On**.
+`build/task39/play-continuous.sh` now unsets the size override and exercises
+that approved default. `build/task39-followup/play-ayers-rock.sh` loads the
+local Ayers checkpoint for a quick rock playtest; the worker did not launch
+it visibly. The original synchronized 20-second MP4 remains at
+`build/task39/video/stepped-vs-continuous-4x-60.mp4`.
+
+Follow-up report: `build/task39-followup/worker-report.md`; original task
+39 trace/video/CPU evidence remains under `build/task39/`. The default-change
+commands are in `default-commands.json`, actor/regression commands in
+`rock-commands.json`, bounded survey commands in `survey-commands.json`.
+HIGHRES §14.8 gives per-country native/fallback counts and explicit limits.
+
+No CI, tags, releases, engine changes, generated C edits or submodule pin
+changes. Existing applied submodule dirt is retained. All-country **first
+race** inventory is complete; later tracks/late-race kinds, S6, poles/special
+art and real-platform performance remain unqualified. No runtime is left
+running at completion.

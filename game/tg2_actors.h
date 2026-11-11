@@ -26,11 +26,15 @@ typedef struct Tg2ModelPiece {
  * presentation time. */
 typedef struct Tg2Actor {
     double x, y;                 /* sub-pixel anchor, screen coordinates      */
-    float continuous;           /* projection scale / band-centre scale      */
+    double continuous;         /* projection / fixed model-0 reference      */
+    double projection, depth;   /* unrounded scale and depth + fraction      */
+    short lateral;              /* projection input, for temporal matching   */
+    unsigned short object;      /* car number; scenery uses lateral + depth  */
+    unsigned identity;          /* scenery world depth (16.16), or car slot  */
     unsigned record, art, guest_key, model_key;
     short gx, gy, clip;         /* guest integer anchor, first hidden row    */
     unsigned short first_piece; /* scene piece index when it started (depth) */
-    unsigned short rattr, scale;
+    unsigned short rattr, scale, scale4;
     unsigned short guest_first, guest_count, model_first, model_count;
     unsigned char kind, guest_model, model, level, path, high, fallback, car;
 } Tg2Actor;
@@ -47,8 +51,8 @@ int tg2_actors_active(void);
 /* Qualification only: TG2_ACTOR_LOG=path writes the LOD evidence stream. */
 int tg2_actors_logging(void);
 
-/* Pre-instruction hook sites (game.toml): $B42E/$B4D6 right after the
- * projection's `swap d1`, $B584 mapper entry, $B5FA per mapping header. */
+/* Pre-instruction hook sites (game.toml): $B314 projection input,
+ * $B42E/$B4D6 right after `swap d1`, $B584 mapper, $B5FA mapping header. */
 void tg2_actors_latch(uint32_t pc);
 void tg2_actors_begin(Tg2ActorSet *set);
 /* Returns the new actor's index, or -1 when the object stays native. `set`

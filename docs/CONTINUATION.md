@@ -1,5 +1,17 @@
 # Coordinator continuation — S3 accepted, Steam Deck playtest, then S4
 
+**Task 39 approved follow-up (2026-11-11):** owner played continuous and said
+“Está ótimo”. `b151a25` makes it default; `dce0c67` promotes the ordinary
+Ayers Rock `$96` rock ladder. On the same continuous branch, stock/default
+and short Auckland/Canada/rain actor gates pass. A bounded 900-moving-frame
+1× inventory of the remaining 13 countries is in HIGHRES §14.8; no other
+new kind was fixed. The full Ayers drive still returns 1 on a night-road
+lane/centre diagnostic that also fails with actors disabled; actor invariants
+and road geometry checks pass, and this separate road issue remains open.
+Read task 39's latest handoff and `build/task39-followup/worker-report.md`.
+Play default: `build/task39/play-continuous.sh`; direct Ayers checkpoint:
+`build/task39-followup/play-ayers-rock.sh`, both saved 4× /60 fps On.
+
 **S4 continuation (2026-11-11):** Fable completed the LOD evidence/checkpoint;
 Sol continued the implementation on `vittau/tg2-highres-s4`. Local technical
 qualification is complete; owner visual acceptance is pending. Read task 34's

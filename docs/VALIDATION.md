@@ -1460,3 +1460,101 @@ Remaining: owner S4 visual acceptance; native poles (visible mismatch mapped
 at his request in task 38); S5 HUD/weather/tunnel-opening artwork; full N×
 temporal qualification S6; live switching S7; other-country/platform and
 Deck/GPU qualification. No runtime remains running.
+
+## Task 39 — continuous actor growth (2026-11-11)
+
+Local development evidence on macOS arm64, branch
+`vittau/tg2-highres-continuous`; all builds/heavy work used the shared lock,
+at most 3 build jobs and one headless runtime. S4 was approved/merged before
+this task; owner review of the new motion/default policy remains pending.
+The owner explicitly allowed approximate height agreement with the original
+hand-drawn ladder; continuity is the criterion. HIGHRES §15 has the design.
+
+| Final gate | Evidence/result |
+|---|---|
+| ROM/runtime diagnosis | 13,445 interpolated and 12,621 table projections agree with the raw instructions; `$FF17E0` is always the integer row scale, 12,474 interpolated D4 values differ from it |
+| Motion traces | Auckland/Canada/Bavaria rain, 1,200 controller frames each, 4×/60 fps On; 44,505 matched visible frame pairs /1,721 band crossings; 0 residuals above 0.1%, max 0.000034% |
+| Size change before→after | Cars 42.86→11.82%, trees 75.00→24.52%, signs 100→17.80%, barrels 100→25.46%; new changes follow physical projection, without a band-size term |
+| 4× all-frame actors | Auckland 23,521; Canada 9,308; rain 8,977; floor/SAT/anchor/palette/priority errors 0 |
+| Native sprite-row replay | 528,766 rows in the 4× runs, mismatches 0; directed Linear On 2× adds 6,314 actors /71,318 rows, also 0 |
+| Occlusion | Rain native poles block 1,361 sampled output pixels /10 actor pixels draw over poles; clip/guest-cull/SAT guards retained |
+| Changed/unchanged regions | Union of native and new silhouettes; continuous near/middle/far group limits 80/80/96, stepped 64/80/96. Qualified Canada group max 65.7263; outside mean max 0.3652 (4×), 0.8637 (2× Linear On), within unchanged S3 limits |
+| Stock G1 | 9 configurations, exit 0; Off frame 60 `2A0B972960C5E325`, frame 300 `1131D937D70234FD` |
+| Native boundaries | 32:9 2P native identity and cap/Off/16:9 transitions, exit 0 |
+| Manifests | All four empty in every runtime run, including the original image-threshold failure |
+| Video | 20 s /60 fps /2848×840, 1,200 exact synchronized pictures per side; ending RAM SHA-256 identical |
+
+The initial Canada audit **returned 1** at group mean 69.8417 against the
+old near limit 64: the projected near car is 1.116× as large, increasing area
+24.6%. This is the intended silhouette change. Its pictures and failing
+summary are retained in `build/task39/audit/canada/`. After declaring the
+continuous near tolerance 80, the qualified repeat returns 0. No region or
+metric was removed; unchanged-region limits, independent position/attribute
+gates and the scalar projection gate were preserved. The first MP4 combine
+also returned 8 because this ffmpeg lacks `drawtext`; raster captions plus
+the supported overlay filter resolve it (exit 0).
+
+CPU: fixed [3000,3900), 900 frames, 1280×800, 60-fps races On, full rendering
+and audio, no audit/dump/pacer work. Original S4→new means are 2×
+2.5311→2.7323 ms (+0.2012 ms), 4× 3.1509→3.4553 ms (+0.3044 ms, new mean
+of two runs). New 4× means vary from 3.0133 to 3.8973 ms. Within-branch
+stepped→continuous pairs give +0.0242 ms at 2× and +0.5897/−0.1856 ms at 4×
+in opposite orders. These observations do not resolve a precise 4× increment
+and are not Deck/GPU measurements; raw CPU/layout phase data remain available.
+
+Ignored report: `build/task39/{worker-report.md,qualified-summary.json}`;
+command ledgers `commands.json`, `followup-commands.json`,
+`video-commands.json`, `cost-repeat-commands.json`, `cost-s4-commands.json`;
+`rom-evidence.json`, `growth-new-final.json`, `growth-stepped.json`,
+`growth-before.json`, `video-identity.json`, `video-probe.json`. The MP4 is
+`build/task39/video/stepped-vs-continuous-4x-60.mp4`; bulk PNGs were deleted.
+`build/task39/play-continuous.sh` launches the ready branch build, saved
+scale 4 and race 60 fps On, with continuous selected internally.
+
+No CI, tags, releases, ROM-derived git artifacts, generated C edits, engine
+changes or submodule pin changes. Native poles/special pieces, stock spawn/
+culling and player/HUD/menus/2P remain in scope exactly as before. Default
+continuous, all-country coverage, S6 and real-platform performance await
+their respective owner review/qualification.
+
+### Task 39 approved default / Ayers Rock / bounded survey follow-up
+
+Owner approved the continuous motion (“Está ótimo”). `b151a25` makes it the
+N× default; only `TG2_ACTOR_SIZE=stepped` selects the old size policy.
+Targeted build, G1 and a 300-frame default 4×/60-fps actor drive exit 0,
+stock hashes unchanged, four manifests empty. No new full-matrix repeat.
+
+Ayers Rock (country 0, slot 2, index 1, descriptor `$01BA96`) was captured
+through the documented setup-only track selector. Rocks are ordinary kind
+`$96`, record `$FF8E08`, model 0 32×16 through model 10 2×1; missing allowlist
+entry caused fallback 1. `dce0c67` adds only that kind. A 900-frame 4×/60-fps
+run has 4,333 rock presentations with no rock fallbacks; 4,015 matched size
+pairs /154 band changes, max residual 0.000032%. All actor floor/SAT/anchor/
+palette/priority/native-row replay errors are 0. Short Auckland/Canada/rain
+regressions exit 0 (5,652 /3,832 /4,893 promoted actors, zero invariants).
+
+**Retained failure:** the full Ayers drive exits 1 on road stripe-count and
+centre checks (44,789 /31,138), while geometry/gap/hole/outlier checks and
+actor checks pass. The fixed-input, 121-picture actor-disabled baseline also
+exits 1 on stripe/centre (6,057 /3,990); both settings end with identical
+RAM SHA-256 `b6caf537b95f1b1ea15f61889bad4acdfb884521637908dbd16b5dfc019c1849`.
+Raw audit flags differ with sprite removal, so no bit-identical-road claim
+is made. This is an unresolved night-road diagnostic independent of rock
+sizing, not a passed/waived all-road qualification. No road code changed.
+
+The other 13 countries each have one selected 900-moving-frame first-race
+1× capture: 11,700 frames /79,487 mapper calls, selected runs exit 0 and all
+four manifests empty. Password/race-index assertions verify entry; immobile
+paused attempts are excluded. HIGHRES §14.8 gives per-kind counts. R1-only
+unknown ordinary kinds `$81/$93/$97/$A1/$A2/$A3/$A4` remain unpromoted;
+poles/specials stay native. Snapshot-based model-0 screening finds no R2–R4;
+N× SAT/culling R5–R7 are not measurable by this 1× inventory. This is not
+coverage of all four races or every late-race kind.
+
+Ignored evidence: `build/task39-followup/{default-commands.json,rock-commands.json,
+country-summary.json,country-table.md,rock-growth.json,road-baseline.json,
+road-baseline-comparison.json,worker-report.md}`; per-country evidence under
+`countries/`, initial/resumed valid capture directory named in each summary.
+Ready build uses saved scale 4 and 60 fps On. Scripts:
+`build/task39/play-continuous.sh`, `build/task39-followup/play-ayers-rock.sh`.
+No visible runtime was launched, no CI/tags/releases/engine or pin changes.

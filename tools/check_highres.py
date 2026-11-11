@@ -646,10 +646,18 @@ TRACKS = {
     'auckland': dict(country=0, stage=0, note='straight, curve and hill frames; the tunnel is here'),
     'bavaria-rain': dict(country=5, stage=0, note='Germany slot 1, rainy from the start (docs/PASSWORDS.md)'),
     'canada': dict(country=2, stage=0, note='a dry second track with its own atlas'),
+    'ayers-rock': dict(country=0, stage=0, slot=1,
+                       note='Australasia race 2 (index 1); stage is difficulty, not slot'),
 }
+# Bounded country inventory uses each country's first race; explicit names
+# remain available for the directed actor checks above.
+from tg2_qual_coverage import COUNTRIES, NAMES
+for _country, _name in enumerate(COUNTRIES):
+    TRACKS[f'country-{_country:02d}'] = dict(country=_country, stage=0,
+        note=f'{_name}, first race: {NAMES[(_country, 0)]}')
 
 
-def enter_race_password(r, port, out, country, stage):
+def enter_race_password(r, port, out, country, stage, slot=0):
     args = SimpleNamespace(country=country, stage=stage, mode='off', port=port,
                            out=out, kp=1.0, kd=4.0, kc=0.0, deadband=9.0,
                            target_lat=0.0, nitro=False, nitro_at=10 ** 9,
@@ -658,6 +666,18 @@ def enter_race_password(r, port, out, country, stage):
     coverage.ui.to_password_screen()
     coverage.ui.type_symbols(tg2_password.encode(country=country, stage=stage)['symbols'])
     coverage.ui.submit()
+    if slot:
+        # Existing qualification-only selector (tg2_progress --start-slot):
+        # passwords do not encode slots. Set ONLY the two setup selections
+        # before the guest loads the real scene; race execution stays stock.
+        # ROM table $1B8E8 and stores $1E58/$1E5E: docs/PASSWORDS.md.
+        index = country * 4 + slot
+        descriptor = struct.unpack_from('>I', r.rom.read_bytes(), 0x1B8E8 + index*4)[0]
+        r.wait_frame(r.frame() + 200)
+        r.write_memory(0xFF16BE, f'{index:04X}')
+        r.write_memory(0xFF241C, f'{descriptor:08X}')
+        (out / 'track-selector.json').write_text(json.dumps(dict(
+            index=index, descriptor=descriptor, setup_only=True)))
     state = coverage.press_until_race()
     if state is None:
         raise RuntimeError('never reached a race')
@@ -821,7 +841,7 @@ def check_captures(args):
                            'country': info['country'], 'note': info['note']}
         r.start()
         try:
-            state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+            state = enter_race_password(r, args.port, out, info['country'], info['stage'], info.get('slot', 0))
             r.set_input(0x10)
             for offset in args.offsets:
                 r.wait_frame(state.frame + offset)
@@ -908,6 +928,15 @@ def actor_regions(native, shot, scale, info, native_filter=False):
     for a in info['actors']:
         if not a['promoted'] or not a['pixels']: continue
         x0, y0, x1, y1 = a['box']
+        # Continuous projection deliberately changes the silhouette. Include
+        # BOTH the removed native extent and the new extent in changed-region
+        # accounting, so a smaller projected actor cannot hide removed pixels
+        # in the unchanged-background metric. guest_box is in native pixels.
+        if 'guest_box' in a:
+            gx0, gy0, gx1, gy1 = a['guest_box']
+            origin = a['draw_origin']
+            x0, y0 = min(x0, (gx0+origin)*scale), min(y0, gy0*scale)
+            x1, y1 = max(x1, (gx1+origin)*scale), max(y1, gy1*scale)
         x0, x1 = max(0, math.floor(x0/scale)-2), min(ref.width, math.ceil(x1/scale)+2)
         y0 = max(0, math.floor(y0/scale)-top-2)
         y1 = min(ref.height, math.ceil(min(y1/scale, a['clip']))-top+2)
@@ -918,7 +947,12 @@ def actor_regions(native, shot, scale, info, native_filter=False):
         # The smaller native bands contain only a few authored pixels: their
         # internal colours need not match a filtered detailed asset. Position,
         # size axis, palette, priority and SAT ownership have separate gates.
-        tolerance = dict(near=64, middle=80, far=96)[distance]
+        # Task 39 changes projected silhouette area, even when model 0 is
+        # already the native model (up to 24.6% extra area for the nearest
+        # car). Its explicit near bound is 80; stepped S4 remains 64. Middle
+        # and far stay 80/96, and unchanged pixels retain the S3 limits.
+        continuous = bool(a.get('continuous_size'))
+        tolerance = dict(near=80 if continuous else 64, middle=80, far=96)[distance]
         regions.append(dict(kind=a['kind'], guest_model=a['guest_model'], model=a['model'],
                             distance=distance, box=[x0,y0,x1,y1],
                             mean_abs_diff=round(float(region.mean()), 4), tolerance=tolerance))
@@ -1101,7 +1135,7 @@ def check_drive(args):
                 r.wait_frame(r.frame()+30)  # republish immutable scene history after reset
                 state = r.state_and_frame()
             else:
-                state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+                state = enter_race_password(r, args.port, out, info['country'], info['stage'], info.get('slot', 0))
             if args.save_state: r.command('save_state', path=str(args.save_state.resolve()))
             start = r.frame()
         item['race_start_frame'] = state.frame
@@ -1286,7 +1320,11 @@ def check_lod(args):
     item = {'track': args.track, 'frames': args.frames, 'log': str(log)}
     r.start()
     try:
-        state = enter_race_password(r, args.port, out, info['country'], info['stage'])
+        state = enter_race_password(r, args.port, out, info['country'], info['stage'], info.get('slot', 0))
+        item['race_index'] = r.ram16(0x16BE)
+        item['descriptor'] = r.ram32(0x241C)
+        if args.save_state:
+            r.command('save_state', path=str(args.save_state.resolve()))
         start = r.frame()
         item['race_start_frame'] = state.frame
         pad, previous, snapped = 0, None, False
@@ -1527,6 +1565,7 @@ def main():
     s.add_argument('--mode', default='16:9')
     s.add_argument('--frames', type=int, default=3600)
     s.add_argument('--snapshot-at', type=int, default=1500)
+    s.add_argument('--save-state', type=Path, help='save local checkpoint after actual track entry')
     args = p.parse_args()
     args.exe = args.exe.resolve()
     args.out = args.out.resolve()
