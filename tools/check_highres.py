@@ -908,6 +908,15 @@ def actor_regions(native, shot, scale, info, native_filter=False):
     for a in info['actors']:
         if not a['promoted'] or not a['pixels']: continue
         x0, y0, x1, y1 = a['box']
+        # Continuous projection deliberately changes the silhouette. Include
+        # BOTH the removed native extent and the new extent in changed-region
+        # accounting, so a smaller projected actor cannot hide removed pixels
+        # in the unchanged-background metric. guest_box is in native pixels.
+        if 'guest_box' in a:
+            gx0, gy0, gx1, gy1 = a['guest_box']
+            origin = a['draw_origin']
+            x0, y0 = min(x0, (gx0+origin)*scale), min(y0, gy0*scale)
+            x1, y1 = max(x1, (gx1+origin)*scale), max(y1, gy1*scale)
         x0, x1 = max(0, math.floor(x0/scale)-2), min(ref.width, math.ceil(x1/scale)+2)
         y0 = max(0, math.floor(y0/scale)-top-2)
         y1 = min(ref.height, math.ceil(min(y1/scale, a['clip']))-top+2)

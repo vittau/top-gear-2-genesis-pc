@@ -75,9 +75,15 @@ def measure(path):
                 continue
             best, distance = None, 3.
             for i, p in enumerate(previous):
-                if i in used or p['record'] != a['record'] or p['lateral'] != a['lateral']:
+                if i in used or p['record'] != a['record']:
+                    continue
+                if not a['car'] and p['lateral'] != a['lateral']:
+                    continue
+                if 'identity' in a and p.get('identity') != a['identity']:
                     continue
                 d = abs(a['depth'] - p['depth'])
+                if a['car']:
+                    d += abs(a['x'] - p['x']) * .02
                 if d < distance:
                     best, distance = i, d
             if best is None:

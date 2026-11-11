@@ -26,9 +26,11 @@ typedef struct Tg2ModelPiece {
  * presentation time. */
 typedef struct Tg2Actor {
     double x, y;                 /* sub-pixel anchor, screen coordinates      */
-    float continuous;           /* projection scale / band-centre scale      */
+    double continuous;         /* projection / fixed model-0 reference      */
     double projection, depth;   /* unrounded scale and depth + fraction      */
     short lateral;              /* projection input, for temporal matching   */
+    unsigned short object;      /* car number; scenery uses lateral + depth  */
+    unsigned identity;          /* scenery world depth (16.16), or car slot  */
     unsigned record, art, guest_key, model_key;
     short gx, gy, clip;         /* guest integer anchor, first hidden row    */
     unsigned short first_piece; /* scene piece index when it started (depth) */

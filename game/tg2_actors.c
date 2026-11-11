@@ -242,16 +242,22 @@ static unsigned car_model(unsigned guest, unsigned *level) {
     }
     return guest;
 }
-static float band_ratio(unsigned level, int car, unsigned scale) {
+/* Model 0's authored reference is the geometric centre of its own ROM
+ * depth interval. All audited scenery kinds share that interval [0,2),
+ * cars use [0,1). Resolve by kind's table, never by the CURRENT art band.
+ * Reference scales on the three captured tracks: scenery 2270.0837, cars
+ * 2499.1775. Unlike the small hand-drawn ladder, model 0 is not quantised. */
+static double projection_reference(int car) {
     unsigned table = mem32(car ? 0xFF2226 : 0xFF2222), scales = mem32(0xFF221E);
     int first = -1, last = -1;
-    if (!valid_pointer(table) || !valid_pointer(scales)) return 1;
-    for (int d = 0; d < 127; ++d) if (mem16(table + 2*d) == level) {
-        if (first < 0) first = d;
-        last = d;
+    if (!valid_pointer(table) || !valid_pointer(scales)) return 0;
+    for (int d = 0; d < 127; ++d) {
+        if (mem16(table + 2*d) == 0) {
+            if (first < 0) first = d;
+            last = d;
+        } else if (first >= 0) break;
     }
-    double mid = first < 0 ? 0 : sqrt((double)mem16(scales + first*2) * mem16(scales + (last+1)*2));
-    return mid > 0 ? scale / mid : 1;
+    return first < 0 ? 0 : sqrt((double)mem16(scales + first*2) * mem16(scales + (last+1)*2));
 }
 int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     evidence_hook(0xB584);
@@ -274,6 +280,7 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     a.fallback = !a.car && !tabulated(kind) ? 1 : 0;
     a.level = level; a.rattr = mem16(record + 8); a.scale = ram16(0x17E0);
     a.scale4 = pending.d4 & 65535;
+    a.object = ram16(0x1878);
     a.lateral = pending.lateral;
     /* $B3A2 halves D2 before signed multiplication, then $B422 doubles
      * that product. Preserve the full original unsigned fraction; the far
@@ -282,6 +289,13 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
      * truncation or dependence on the selected art band. */
     unsigned scales = mem32(0xFF221E), row = pending.depth2 / 2;
     a.depth = row + pending.fraction / 65536.0;
+    /* $A094..$A0AA forms scenery's shared fractional depth from camera
+     * position, multiplied by 16; subsequent rows are 4 units apart ($A312).
+     * $B058 copies the active camera ($FF193E for 1P) into $FF17F4.
+     * Adding that coordinate gives a stable world identity,
+     * even when equal kinds/laterals overlap at different depths. */
+    a.identity = a.car ? a.object :
+        (mem32(0xFF17F4) << 4) + (row << 16) + pending.fraction;
     a.projection = valid_pointer(scales) && row < 127 ?
         mem16(scales + 2*row) + (mem16(scales + 2*row + 2) - (double)mem16(scales + 2*row)) *
         pending.fraction / 65536.0 : a.scale;
@@ -296,7 +310,9 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     y += (int16_t)ram16(0x2452) - 128;
     a.y = fmax(a.gy, fmin(a.gy + 255.0/256, y));
     a.clip = (int16_t)ram16(0x1836) + (int16_t)ram16(0x2452) - 128;
-    a.first_piece = piece_index; a.continuous = band_ratio(level, a.car, a.scale);
+    a.first_piece = piece_index;
+    double reference = projection_reference(a.car);
+    a.continuous = reference > 0 ? a.projection / reference : 0;
     unsigned start = set->piece_count;
     if (!capture_model(set, record, a.guest_model, &a.guest_key, &a.guest_first, &a.guest_count)) {
         ++set->dropped; return -1;
@@ -325,7 +341,7 @@ typedef struct {
     unsigned pixels, pieces, inside, matched, position_mismatches, palettes, priorities, guest_palettes, guest_priorities;
     double drawn_x, drawn_y;
     int draw_origin, draw_scale;
-    int box[4];
+    int box[4], guest_box[4];
 } Prepared;
 static Art art_cache[TG2_MAX_ACTORS * 2];
 static Prepared prepared[TG2_MAX_ACTORS];
@@ -380,14 +396,14 @@ static int raster_model(const GVDP *v, unsigned first, unsigned count) {
     return art_count++;
 }
 /* The sole size policy switch. Stepped is the authored size by default;
- * continuous exists only for the requested same-frame visual review pair. */
-static float actor_size_policy(float stepped, float ratio) {
+ * continuous awaits owner motion review before becoming the default. */
+static float actor_size_policy(float stepped, double projected) {
     static int continuous=-1;
     if (continuous<0) {
         const char *s=getenv("TG2_ACTOR_SIZE");
         continuous=s && !strcmp(s,"continuous");
     }
-    return stepped*(continuous?ratio:1);
+    return continuous && projected > 0 ? projected : stepped;
 }
 void tg2_actors_prepare(const GVDP *v, const Tg2ActorSet *set) {
     for (unsigned i=0;i<art_count;++i) free(art_cache[i].texels);
@@ -402,10 +418,12 @@ void tg2_actors_prepare(const GVDP *v, const Tg2ActorSet *set) {
         if (guest<0) continue;
         if (model<0) { model=guest; a->fallback=3; }
         Art *g=&art_cache[guest], *m=&art_cache[model];
+        p->guest_box[0]=a->gx+g->x0; p->guest_box[1]=a->gy+g->y0;
+        p->guest_box[2]=p->guest_box[0]+g->w; p->guest_box[3]=p->guest_box[1]+g->h;
         p->size=m->w>=m->h ? (float)g->w/m->w : (float)g->h/m->h;
         if (p->size>1) { model=guest; p->size=1; a->fallback=4; }
         if (model==guest) a->model=a->guest_model;
-        p->size=actor_size_policy(p->size,a->continuous);
+        p->size=actor_size_policy(p->size,a->fallback?0:a->continuous);
         p->art=model; p->promoted=1;
         for(int n=0;n<g->w*g->h;++n) if(g->texels[n]) {
             p->guest_palettes|=1u<<((g->texels[n]>>4)&3);
@@ -441,7 +459,7 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
         const char *path=getenv("TG2_ACTOR_TRACE"); trace_checked=1;
         if(path && *path) {
             trace=fopen(path,"w");
-            if(trace) fprintf(trace,"frame,index,record,kind,car,level,model,path,x,y,lateral,depth,guest_scale,scale4,projection,size,promoted,fallback,pixels\n");
+            if(trace) fprintf(trace,"frame,index,record,kind,car,level,model,path,x,y,lateral,depth,guest_scale,scale4,projection,size,promoted,fallback,pixels,identity\n");
         }
     }
     for (unsigned i=0;i<prepared_count;++i) {
@@ -499,17 +517,17 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
             }
         }
 traced:
-        if(trace) fprintf(trace,"%llu,%u,%u,%u,%u,%u,%u,%u,%.8f,%.8f,%d,%.8f,%u,%u,%.8f,%.8f,%d,%u,%u\n",
+        if(trace) fprintf(trace,"%llu,%u,%u,%u,%u,%u,%u,%u,%.8f,%.8f,%d,%.8f,%u,%u,%.8f,%.8f,%d,%u,%u,%u\n",
             (unsigned long long)log_frame,i,a->record,a->kind,a->car,a->level,a->model,a->path,
-            a->x,a->y,a->lateral,a->depth,a->scale,a->scale4,a->projection,p->size,p->promoted,a->fallback,p->pixels);
+            a->x,a->y,a->lateral,a->depth,a->scale,a->scale4,a->projection,p->size,p->promoted,a->fallback,p->pixels,a->identity);
     }
 }
 int tg2_actors_json(char *out,int cap) {
     int n=snprintf(out,cap,"[");
     for(unsigned i=0;i<prepared_count && n>0 && n<cap;++i) {
         Prepared *p=&prepared[i]; Tg2Actor *a=&p->actor;
-        n+=snprintf(out+n,cap-n,"%s{\"kind\":%u,\"record\":%u,\"guest_model\":%u,\"model\":%u,\"fallback\":%u,\"promoted\":%d,\"guest\":[%d,%d],\"anchor\":[%.8f,%.8f],\"size\":%.8f,\"clip\":%d,\"first_piece\":%u,\"palette_mask\":%u,\"priority_mask\":%u,\"high\":%u,\"box\":[%d,%d,%d,%d],\"pixels\":%u,\"pieces\":%u,\"inside\":%u,\"matched\":%u,\"position_mismatches\":%u,\"guest_palette_mask\":%u,\"guest_priority_mask\":%u,\"drawn_anchor\":[%.8f,%.8f],\"draw_origin\":%d,\"draw_scale\":%d,\"native_blocked\":%u,\"pole_blocked\":%u,\"pole_overpaint\":%u}",
-            i?",":"",a->kind,a->record,a->guest_model,a->model,a->fallback,p->promoted,a->gx,a->gy,a->x,a->y,p->size,a->clip,a->first_piece,p->palettes,p->priorities,a->high,p->box[0],p->box[1],p->box[2],p->box[3],p->pixels,p->pieces,p->inside,p->matched,p->position_mismatches,p->guest_palettes,p->guest_priorities,p->drawn_x,p->drawn_y,p->draw_origin,p->draw_scale,p->native_blocked,p->pole_blocked,p->pole_overpaint);
+        n+=snprintf(out+n,cap-n,"%s{\"kind\":%u,\"record\":%u,\"guest_model\":%u,\"model\":%u,\"fallback\":%u,\"promoted\":%d,\"guest\":[%d,%d],\"anchor\":[%.8f,%.8f],\"size\":%.8f,\"clip\":%d,\"first_piece\":%u,\"palette_mask\":%u,\"priority_mask\":%u,\"high\":%u,\"box\":[%d,%d,%d,%d],\"pixels\":%u,\"pieces\":%u,\"inside\":%u,\"matched\":%u,\"position_mismatches\":%u,\"guest_palette_mask\":%u,\"guest_priority_mask\":%u,\"drawn_anchor\":[%.8f,%.8f],\"draw_origin\":%d,\"draw_scale\":%d,\"native_blocked\":%u,\"pole_blocked\":%u,\"pole_overpaint\":%u,\"guest_box\":[%d,%d,%d,%d],\"projection\":%.8f,\"depth\":%.8f,\"car\":%u,\"object\":%u}",
+            i?",":"",a->kind,a->record,a->guest_model,a->model,a->fallback,p->promoted,a->gx,a->gy,a->x,a->y,p->size,a->clip,a->first_piece,p->palettes,p->priorities,a->high,p->box[0],p->box[1],p->box[2],p->box[3],p->pixels,p->pieces,p->inside,p->matched,p->position_mismatches,p->guest_palettes,p->guest_priorities,p->drawn_x,p->drawn_y,p->draw_origin,p->draw_scale,p->native_blocked,p->pole_blocked,p->pole_overpaint,p->guest_box[0],p->guest_box[1],p->guest_box[2],p->guest_box[3],a->projection,a->depth,a->car,a->object);
     }
     if(n>0 && n<cap)n+=snprintf(out+n,cap-n,"]");
     return n;

@@ -1148,13 +1148,18 @@ static void mix_pieces(const Scene *a, const Scene *b) {
         for(unsigned j=0;j<b->actors.count;++j) {
             const Tg2Actor *q=&b->actors.actors[j];
             double d=fabs(p->x-q->x)+fabs(p->y-q->y);
-            if(!actor_used[j] && p->record==q->record && d<distance){best=j;distance=d;}
+            int same = p->record==q->record && p->kind==q->kind &&
+                p->identity==q->identity && (p->car || p->lateral==q->lateral);
+            if(!actor_used[j] && same && d<distance){best=j;distance=d;}
         }
         if(best>=0){
             actor_used[best]=1; Tg2Actor *m=&mixed_scene.actors.actors[i];
             float t=(float)phase_num/phase_den;if(mix_reverse)t=1-t;
             m->x=p->x+(b->actors.actors[best].x-p->x)*t;
             m->y=p->y+(b->actors.actors[best].y-p->y)*t;
+            m->continuous=p->continuous+(b->actors.actors[best].continuous-p->continuous)*t;
+            m->projection=p->projection+(b->actors.actors[best].projection-p->projection)*t;
+            m->depth=p->depth+(b->actors.actors[best].depth-p->depth)*t;
         }
     }
     unsigned char used[MAX_PIECES] = {0};

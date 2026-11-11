@@ -84,7 +84,23 @@ continuous run: exit 0, four manifests empty; measured boundary jumps up to
 66.50% (tree), with up to 46.49% unexplained by the precise projection.
 Artifacts and raw-ROM disassembly are under ignored `build/task39/`.
 
-Next: replace band-relative sizing with model-0 projection calibration,
-interpolate its size between guest pictures, qualify traces on three tracks,
-and produce the motion comparison, cost measurements and stock gates.
-Default stays stepped until owner approval, as requested by the spec.
+Second milestone: continuous now uses unrounded projection divided by the
+model-0 reference, independently of the guest band and extent. The ROM's
+level-0 interval gives reference scales 2270.0837 for the audited scenery
+kinds and 2499.1775 for cars. Both size and projection interpolate at 60 fps.
+Runtime evidence exposed same-record objects being confused by the former
+anchor-only matcher; scenery now matches world depth (active camera
+`$FF17F4` ×16 + fractional depth) plus lateral, and cars match their slot.
+The active-camera choice was checked at the raw `$B04C..$B058` wrapper;
+the first 180-frame trace has 11 tyre identities, all moving across ticks.
+
+Auckland 1,200-frame continuous trace: exit 0, four manifests empty, 0
+size/projection residuals over 0.1%; maximum residual below 0.00004%.
+Tree maximum frame growth is 12.35%, barrel 17.81%, tyre 19.30%, car 3.95%
+(physical approach); no extra band-boundary term remains. Trace stays at
+`build/task39/qualified/auckland/actors.csv`. Changed-region checks now cover
+the union of old and new silhouettes, retaining the S4 photometric limits.
+
+Next: finish three-track stepped/new traces, stock and occlusion gates,
+motion video and CPU comparison. Default stays stepped until owner approval,
+as requested by the spec; the final play launcher will set the internal switch.
