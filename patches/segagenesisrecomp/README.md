@@ -101,3 +101,7 @@ then repeat to verify idempotence; preserve existing edits before any reset.
 - `ui-0001-runtime-menu-layout.patch`: apply an optional host policy to all effective standard/extra descriptors and order section rows explicitly for display and controller navigation (applies to `recomp-ui/`; NULL preserves the existing layout).
 - `0052-window-capture-sampler-metadata.patch`: write structured renderer, texture, sampler, source/stride and output geometry beside opt-in exact-frame SDL captures, so filter diagnosis can distinguish a lost toggle from a 1:1 output.
 - `0053-runtime-measure-no-vsync.patch`: keep `--runtime-uncapped` measurements free of SDL software's advertised/simulated VSync, without changing the normal gameplay clock policy.
+
+- `0054-pad-trigger-bindings.patch`: a `GameSpec.pad_trigger_bits` hook lets a game whose accelerate/brake are face buttons OR the GPAD_* bits for LT/RT (already past the player's deadzone) into the same player's mask, additively and with no new setting (Top Gear 2: RT = Genesis B, LT = Genesis A).
+
+- `0055-virtual-controller-axis-probe.patch`: the dev/TCP virtual pad probe takes a pad slot (1 or 2) and a new `virtual_axis` command drives a synthetic controller axis (LT/RT as a 0..32767 pull, sticks signed) so an analog mapping can be tested headlessly through SDL's real gamecontroller path.
