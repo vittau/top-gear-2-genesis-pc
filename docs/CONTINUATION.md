@@ -11,6 +11,14 @@ as it nears 80%, asks the worker to commit/push its progress and write a
 handoff note so another agent can continue. S4 progress and the handoff state
 are recorded in `docs/tasks/34-highres-s4.md` by the worker.
 
+**v0.2.0 published (2026-11-11)** at the owner's explicit request ("está bom
+o suficiente"), from `main` at `a74e308`, with the experimental internal
+resolution row (default 1×, road/background only) included by his decision.
+Tag `v0.2.0`, [CI 43019230068](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/43019230068)
+green on all five jobs, release marked Latest. Notes: `release/v0.2.0.md`.
+Linux tarball SHA-256 `6e6b6b8c9bf7bb93bff7572eaccd6d90c5eee5fb25aa7520d769993cbbbb1fec`,
+`BUILD-INFO` version `0.2.0-ga74e308`. Windows and Intel Mac remain unplayed.
+
 Previous owner decision (2026-11-10): [task 37](tasks/37-intermittent-race-menu-instruments.md)
 is done. A supervised OpenCode worker confirmed the coordinator's static
 diagnosis (BOTH persisted at boot diverted Z80 `$025E..$0261`, four entries of
