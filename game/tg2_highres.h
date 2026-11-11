@@ -43,6 +43,10 @@ int tg2_highres_linear_filter(void);
  * as guest state; every row must be fresh before the filter is composed. */
 void tg2_highres_capture_native(int line, const uint32_t *pixels,
                                 const unsigned char *foreground, int width);
+/* Explicit coverage and true native reference before actor removal. */
+void tg2_highres_capture_actors(int line, const unsigned char *foreground,
+    const unsigned char *occluder, const unsigned short *front,
+    const uint32_t *reference, int width, int actor_free);
 unsigned tg2_highres_filtered_frames(void);
 unsigned tg2_highres_filter_incomplete(void);
 
@@ -110,6 +114,7 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
  * its native (1x) canvas there as a binary PPM (all native rows, before the
  * presented-window crop). */
 void tg2_highres_request_native_dump(const char *path);
+int tg2_highres_native_dump_active(void);
 
 #ifdef __cplusplus
 }

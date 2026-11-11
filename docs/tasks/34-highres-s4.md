@@ -222,3 +222,21 @@ Reduced S3 recipe for the final qualification: `HIGHRES.md` §13.4.
 
 **Uncommitted state:** none. The engine and `recomp-ui` submodules show as
 modified because the project patch stack is applied; never commit those pins.
+
+### Sol continuation — presentation first pass (2026-11-11)
+
+Immutable actor/model snapshots, per-picture indexed art and the RGB/coverage
+painter are now implemented in `game/tg2_actors.*`; `Scene` owns the captured
+metadata and endpoint SAT ownership. The row path exposes explicit foreground,
+plane occluders and native sprite depth, removes promoted SAT entries in host
+composition only, and keeps a native-reference dump; actor anchors interpolate
+with the existing 60-fps endpoint policy. `TG2_ACTORS=0` retains a cost baseline.
+No new hooks, seeds or engine edits were needed.
+
+Build: `flock ~/.cache/tg2-heavy.lock env JOBS=3 tools/build-linux.sh`, exit 0
+(`build/s4/build-present.log`). Snapshot-stage stock G1: exit 0, both canonical
+hashes in all five configurations, all four manifests empty
+(`build/s4/g1-snapshots.log`). Presentation qualification is in progress: this
+is an implementation checkpoint, **not accepted S4**. Next: inspect the first
+same-frame picture and TCP actor table, fix any composition/position defects,
+then add the independent actor checks and execute the reduced acceptance plan.
