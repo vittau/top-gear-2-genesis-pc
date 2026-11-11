@@ -1,6 +1,6 @@
 # Task 34: S4 — detailed sprites at N× with sub-pixel positions
 
-**Status: in progress (worker on `vittau/tg2-highres-s4`); see "Progress / handoff" at the end.**
+**Status: implemented and locally qualified on `vittau/tg2-highres-s4`; owner visual acceptance pending.**
 Read `AGENTS.md` and [CONTINUATION.md](../CONTINUATION.md) first. Handle any
 new S3/Steam Deck playtest defect before starting this step. This brief does
 not start a worker or authorize a release.
@@ -90,202 +90,88 @@ The experimental scale row remains default 1× and applies after restart.
 
 ## Progress / handoff
 
-Updated 2026-11-11 (CHECKPOINT at ~75% of the Claude 5 h window) by the S4
-worker (Claude Fable 5.2), branch `vittau/tg2-highres-s4`. A new agent can
-continue from this section plus `HIGHRES.md` §14.
+Updated 2026-11-11 by the continuing Sol worker. Implementation and local
+technical qualification are complete; **owner visual acceptance is pending**.
+This branch has not been merged or released. No CI, tags, submodule pin
+changes, new engine patches or ROM-derived git artifacts were introduced.
 
-### Decisions already taken (do not reopen)
+### Implemented
 
-- **Size: stepped by default** (authored 1× size of the guest's band). One
-  internal switch `TG2_ACTOR_SIZE=continuous` (env only, no menu row) for ONE
-  extra stepped-vs-continuous same-frame review pair (approaching car or
-  tree). Spend nothing more on continuous.
-- **Position criterion:** drawn N× anchor vs N × captured sub-pixel anchor
-  (< 1 output pixel), and `floor(anchor)` must equal the 1× SAT position for
-  every promoted actor; report the maximum error.
-- **Poles (`$BD/$83/$84`) and tunnel/special pieces (`$8A/$F8/$F9/$FC/$FD`)
-  stay native** in S4, recorded as a follow-up. Verify native poles and
-  promoted actors occlude correctly where they overlap and put one such case
-  in the review pictures if it occurs on the three tracks.
-- **Untabulated kinds fall back to the guest's own model; count fallbacks per
-  track** in the sprite table.
+- Immutable actor/model snapshots at the already validated hooks, detailed
+  original assets, authored stepped sizes, double-precision subpixel anchors,
+  per-row palette RGB/coverage filtering and native clip/depth/priority masks.
+- Explicit foreground ownership replaces S3's RGB-equality-only ambiguity in
+  N× terrain composition. HUD/player car, poles and tunnel/special artwork
+  remain native; 2P and native menus stay excluded.
+- Guest culling and final SAT ownership guards keep an actor native when no
+  guest piece survives or the final/mixed pieces are inconsistent. 60-fps
+  anchors agree with the actual rounded synthesized SAT cell.
+- Native row replay audit, all-frame actor totals, sampled variant/position
+  tables and connected silhouette-group downscale checks in
+  `check_highres.py`. Diagnostic reads share the controller poll.
+- A stock 1× widescreen / 60-fps Off / overscan case now selects its scene
+  before the blanked first row; G3 passes. Framerate comparisons stream data.
 
-### Done (commits)
+### Decisions retained
 
-- `e4b4205` — evidence phase: hooks `$B42E`, `$B4D6`, `$B584` in
-  `game/game.toml` (checked against raw ROM), `game/tg2_actors.c` (projection
-  latch + `TG2_ACTOR_LOG` evidence stream only), `check_highres.py lod`,
-  `tools/analyze_actors.py`, `tools/actor_sheet.py`, `HIGHRES.md` §14.
-- Stock G1 on the build **with** the new hooks: exit 0, frame 60
-  `2A0B972960C5E325`, frame 300 `1131D937D70234FD` in all five
-  configurations, four manifests empty (`build/s4/g1-hooks.log`).
-- 1× 16:9 probe: the displayed scene is selected every picture
-  (`displayed == published`, e.g. 350/350 at frame 3500): `build/s4/probe_scene.py`.
+Stepped by default; only `TG2_ACTOR_SIZE=continuous` for one review pair, no
+menu row. Every promoted actor's floor agrees with the displayed native SAT;
+drawn anchor agrees with N× captured subpixel anchor. Untabulated kinds use
+the guest model, counted. Poles `$BD/$83/$84` and special/tunnel pieces
+`$8A/$F8/$F9/$FC/$FD` remain native.
 
-**No presentation code exists yet.** Nothing is half-edited; the tree builds.
+The operator highlighted the visible pole-detail mismatch in picture 05;
+**[task 38](38-highres-poles.md)** now maps detailed compound head/shaft
+reconstruction and is linked from HIGHRES and the roadmap. It has not started.
 
-### Exact next step: implement presentation (design already worked out)
+### Results and exact evidence
 
-1. **Snapshots (`game/tg2_actors.c`, storage in `Scene` of `tg2_video.c`).**
-   A draft header with the intended API is in `build/s4/tg2_actors.h.draft`
-   (ignored dir; recreate from this text if missing): `Tg2Actor` (sub-pixel
-   anchor, guest anchor, clip row, `first_piece` depth key, guest/detailed
-   model piece ranges, keys, kind, models, fallback, high), `Tg2ActorSet`
-   inside `Scene`, `tg2_actors_object()` at `$B584` returning the actor index
-   that the `$B5FA` hook stores in each `Piece` (`Piece.actor`, −1 = native).
-   - Not promoted (stay native): no latched projection for the same record and
-     X, `$FF1878` = `$FFFE`/`$FD66`, kinds `$82 $83 $84 $BD $8A $F8 $F9 $FC $FD`,
-     invalid pointers, 2P (`$FF189E`).
-   - Screen coordinates: `gx = D1.w + 128`, `gy = D2.w + $FF2452 − 128`
-     (base line: the object occupies rows `< gy`), clip row
-     `$FF1836 + $FF2452 − 128` (rows ≥ clip hidden). `x = gx + (D1 >> 16)/65536`
-     from the latch. `y`: latched `D2.w` (+ `D2 >> 16`/65536 on the `$B42E`
-     path), clamped to `$FF17BC − 2` like `$B434/$B4DC`, minus
-     `h·scale/65536/2^$FF242A` (`h = $FF17DC`, `scale = $FF17E0`), then clamp
-     into `[gy, gy + 255/256]`.
-   - Model pieces relative to the anchor, per 10-byte header
-     (`set, halfw, height, attr, $8888`): `x0 = attr&$800 ? +halfw : −halfw`;
-     piece `dx = x0 + (attr&$800 ? −xoff − pw : xoff)`, `dy = −height + yoff`,
-     `attr = (((hattr|8(A1)) ^ (pa&$1800)) + (pa&$7FF)) | $FF234E`
-     (+`$8000` when `$FF22E8`); later pieces are in front.
-   - Detailed model: scenery 0; cars per `HIGHRES.md` §14.3 rule 2.
-2. **Per-picture prepare** (first race row, with the displayed `GVDP`):
-   rasterise each distinct guest/detailed model to palette indices from
-   `v->vram`, measure opaque extents, `size = guest/detail` on the detailed
-   model's longer axis; `size > 1` → fallback to the guest's model. If the
-   guest model cannot be rasterised the actor stays native.
-3. **Actor-free native row (`tg2_video.c`).** Enable the raster-row seam
-   whenever the scale is above 1 (`filter_raster_enabled`,
-   `scanline_presented`, and the 60 fps `gvdp_capture_presented_scanline`
-   branch). Per race row: walk the SAT like the engine
-   (`genesis_vdp.c sprite_render_line`: 64 sprites, 16 per line,
-   `x == 0 && on_line > 1` masks the rest, 256-pixel budget), skip SAT entries
-   whose matched scene piece belongs to a promoted actor, and recompose only
-   the pixels an actor covered with the engine's rule
-   (`genesis_vdp_compose.h`: plane byte = index | $40 opaque | $80 priority).
-   Record per 1× canvas pixel: `foreground` (not plane B), `occluder`
-   (high-priority plane pixel; in margins the existing rule: plane-B high,
-   weather pixel, window side) and `front` (0 none, `$FFFF` HUD/player car,
-   else scene piece index + 1 of a native mapper sprite). SAT→piece matching
-   must be done on the endpoint's own unmodified SAT (store `sat_piece[64]` in
-   `Scene` in `select_scene`), because `mix_sprites` moves SAT entries on
-   synthesized 60 fps pictures. In the margin sprite loop skip promoted
-   pieces. `hud_row` (HUD edges mode) re-exposes "ordinary SAT sprites" under
-   vacated HUD pixels: skip promoted SAT entries there too.
-   Self-check to add: with no entry flagged, the recomposed row must equal the
-   engine's native row (count mismatches under an env audit).
-4. **Builder (`tg2_highres.c`).** Terrain mask = colour equality AND NOT
-   `foreground` (removes the S3 same-colour ambiguity without changing other
-   pixels). After the rows (and the Linear On filter), paint actors far → near
-   (capture order): per output pixel map to texel space, box filter of width
-   `max(1, 1/(size·N))` texels in premultiplied RGB after the row's own palette
-   (`Tg2RowState.cram`), skip rows ≥ clip·N, skip where
-   `(occluder && !high) || front == $FFFF || front − 1 >= first_piece`.
-   Rows that did not go through the actor-free path keep native sprites, so
-   paint only rows flagged as actor-free.
-5. **1× reference dump.** `tg2_highres {"dump":…}` reads the 1× canvas back
-   from the framebuffer, which will now lack promoted actors. Keep a true 1×
-   reference row (native centre + promoted margin pieces) for the dump.
-6. **60 fps.** Interpolate actor anchors in `mix_pieces` (match by record,
-   nearest anchor), everything else from the nearer endpoint.
-7. **Checks (`tools/check_highres.py`).** New TCP JSON of the prepared actors
-   (kind, record, guest/detailed model, fallback reason, guest anchor,
-   sub-pixel anchor, size, palette lines, priority, drawn N× box, visible
-   pixels, pieces/inside/matched in SAT). Table: counts by kind per track,
-   fallbacks per track, max `floor(anchor) − guest`, max drawn-anchor error,
-   palette/priority agreement; actor-free row self-check; downscale with
-   actor silhouettes. Then gates G1–G3, 2P split, cap, cost with
-   `TG2_ACTORS=0` vs on (no audit), six review pictures + the stepped vs
-   continuous pair, docs (HIGHRES §14/§13, VALIDATION, STATUS).
+`build/s4/worker-report.md` is the full report; `qualified-summary.json` is the
+scalar consolidation. Exact commands/exits are in `final-commands.json`,
+`boundaries-commands.json`, `cost-commands.json` and `pair-commands.json`.
+`HIGHRES.md` §§14.5–14.7 and `VALIDATION.md` record the implemented policy,
+tolerances, resolved findings and results.
 
-### Rebuild / validate
+- Build and stock G1/G3 pass; Off hashes remain frame 60
+  `2A0B972960C5E325`, frame 300 `1131D937D70234FD`; all four manifests empty.
+- 1× Off/16:9/21:9 G3 runs: 5,600 frames each, native centre/state identical.
+  1× 60-fps stock repeat: 360/360 distinct pictures, unchanged sampled RAM,
+  byte-identical WAV SHA-256.
+- Final 4× long audit: 3,301 pictures / 812,488 road rows / 161,582 stripe
+  centres, max centre error 0.5 output px, zero road/margin violations.
+- 89,085 promoted actors across Auckland/Canada/rain: all-frame position,
+  palette, priority and native-row replay mismatches 0; floor/analytic-anchor
+  errors 0, serialized coordinate error ≤2.1e-8 output px. Unknown/model
+  fallbacks 0 per track. Native SAT guards 14/6/15; fully guest-culled objects
+  13,516/5,264/1,257, retained native.
+- Directed 2×/3×/4×, native 32:9 2P, cap/Off/menu boundaries, Linear On,
+  combined 60-fps smoke and actual tunnel/pole overlap cases pass.
+- Local incremental whole-frame CPU: +0.2565 ms at 2×, +0.3831 ms at 4×
+  over 900 fixed input frames, without audits/dumps/pacer work. Not Deck/GPU.
 
-```sh
-git submodule update --init --recursive
-flock ~/.cache/tg2-heavy.lock env JOBS=3 tools/build-linux.sh   # applies patches, regenerates
-python3 -m venv build/venv && build/venv/bin/pip install numpy pillow capstone
-flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py g1
-flock ~/.cache/tg2-heavy.lock build/venv/bin/python tools/check_highres.py lod --track canada --frames 3600
-build/venv/bin/python tools/analyze_actors.py build/highres-check/lod/canada/actors.csv
-build/venv/bin/python tools/actor_sheet.py build/highres-check/lod/canada --all
-```
+The original long command returned 1 solely because the first local-box
+checker assigned a near car's detail to a far sign's overlapping box. Its
+runtime, road, margins and all-frame invariants passed. The corrected
+connected-group `sprite-pairs` check reuses those exact 25 pairs and exits 0;
+all original metrics (including individual patch 114.25) are retained. A
+Canada snow-detail global S3-threshold false positive and matching Linear On
+reference are also documented, rather than hidden or solved by raising the
+unchanged-region tolerance. Final S4 gates pass.
 
-Reduced S3 recipe for the final qualification: `HIGHRES.md` §13.4.
+### Review pictures (ignored local artifacts)
 
-### Evidence (ignored build dirs of this worktree)
+Six native/N× same-frame pictures under `build/s4/review/`:
+`01-far.png`, `02-middle.png`, `03-near-car.png`, `04-near-tree.png`,
+`05-pole-rain.png`, `06-tunnel.png`. Extra requested artifacts:
+`stepped-continuous.png` (frame 221, identical guest RAM) and
+`pole-occlusion.png`. `pictures.json` maps their exact sources and model data.
 
-- `build/highres-check/lod/{auckland,canada,bavaria-rain}/`: `actors.csv`,
-  `snap.{vram,cram,ram,png}`, `actor-sheet.{png,json}`, `lod-summary.json`.
-- `build/s4/`: `{auckland,canada,bavaria-rain}.txt` (ladders),
-  `sheet-*.txt` (art sizes), `g1-hooks.log`, `dis-*.txt`, `xref.py`,
-  `probe_scene.py`, `tg2_actors.h.draft`.
+### Remaining / resume
 
-**Uncommitted state:** none. The engine and `recomp-ui` submodules show as
-modified because the project patch stack is applied; never commit those pins.
-
-### Sol continuation — presentation first pass (2026-11-11)
-
-Immutable actor/model snapshots, per-picture indexed art and the RGB/coverage
-painter are now implemented in `game/tg2_actors.*`; `Scene` owns the captured
-metadata and endpoint SAT ownership. The row path exposes explicit foreground,
-plane occluders and native sprite depth, removes promoted SAT entries in host
-composition only, and keeps a native-reference dump; actor anchors interpolate
-with the existing 60-fps endpoint policy. `TG2_ACTORS=0` retains a cost baseline.
-No new hooks, seeds or engine edits were needed.
-
-Build: `flock ~/.cache/tg2-heavy.lock env JOBS=3 tools/build-linux.sh`, exit 0
-(`build/s4/build-present.log`). Snapshot-stage stock G1: exit 0, both canonical
-hashes in all five configurations, all four manifests empty
-(`build/s4/g1-snapshots.log`). Presentation qualification is in progress: this
-is an implementation checkpoint, **not accepted S4**. Next: inspect the first
-same-frame picture and TCP actor table, fix any composition/position defects,
-then add the independent actor checks and execute the reduced acceptance plan.
-
-The directed 2× actor table (`build/s4/short2/.../drive-summary.json`) sampled
-280 actors: floor/guest-piece/palette/priority mismatches all 0, drawn-anchor
-error ≤1.1e-8 output px (JSON precision), fallback count 0, native-row replay
-mismatches 0. Road checks passed; the margin checker exposed duplicate audit
-rows while the true-native dump pass was active, which is now suppressed.
-The rerun/long 4× qualification is `build/s4/long4` (still running at this
-checkpoint). The player's car is explicitly left native using the ROM's own
-`$B53A..$B542` player-number comparator (`$FF17D6 == $FF1878`), rather than
-assuming every car-table entry is an opponent. Anchor storage is double
-precision so a fraction near 1 cannot round up across an integer boundary.
-
-`check_highres.py drive --actors` adds the independent guest-piece position,
-ROM variant, palette/priority and native SAT replay tables. Optional local
-`--save-state/--load-state` race checkpoints stay ignored and allow short
-per-scale follow-ups after 30 frames of republished scene history. Cost mode
-refuses actor audits. Remaining work: finish the long run, directed other
-scales/weather/poles and filter check, G1/G3/boundaries, CPU A/B, silhouette
-review pictures and the single stepped/continuous pair, then final docs.
-
-The corrected native-reference pass no longer changes crop bookkeeping or
-per-row capture/audit counts. `build/s4/final2` passes with stable 712×400
-pictures and max downscale mean 1.677; `build/s4/qualified4` passes its 3,200-
-frame directed drive (3,299 audited pictures, 830,040 road rows, 172,282 stripe
-centres, maximum centre error 0.5 output px, no road/margin violations).
-Its sampled table covers 4,885 promoted actors plus one native fallback for
-incomplete final SAT ownership: all promoted in-screen pieces match the SAT,
-position/palette/priority mismatches are 0, maximum drawn-anchor error
-2.1e-8 output px including JSON rounding. Added all-frame cumulative totals so
-unsampled scenes are also covered by the final directed checks.
-
-Final guard refinements: never promote an actor whose guest pieces were all
-vertically culled; keep a native fallback for inconsistent mixed pieces; derive
-60-fps integer anchors from the actual synthesized SAT before clamping their
-fraction. The directed 60-fps repeat now passes, including all-frame floor,
-guest-piece, palette/priority and row-replay checks (`build/s4/smoke60-fixed`).
-Plane-A margin extensions and centered HUD now explicitly contribute to actor
-occlusion. A final three-track run of these guards is queued in
-`build/s4/final_core.py` / `final-commands.json`.
-
-The old S3 global downscale limit rejected one Canada snowy-tree frame
-(mean 3.211). Its expected new internal snow detail is now reported separately
-from unchanged pixels: outside actor boxes maximum mean is 0.264, and every
-padded actor-box mean stays within the explicit distance-dependent bounds in
-HIGHRES §14.6. `sprite-pairs` rechecks old pairs with this S4 criterion; Linear
-On uses a matching filtered reference. Do not suppress the original global
-metric. The first follow-up driver accidentally resolved the venv Python
-symlink and lost NumPy; repeat its two offline `sprite-pairs` commands with
-`build/venv/bin/python`, retaining the successful route captures.
+Coordinator: review the pictures with the owner and record his S4 acceptance
+or concrete defects; the implementation is ready for that review. Keep pole
+improvement task 38 visible. S5 HUD/weather/tunnel-opening artwork, full N× +
+60-fps qualification (S6), live switching (S7), other-country/platform and
+Deck/GPU qualification remain unverified here. No runtime or heavy step is
+left running. Only the initial applied patch dirt in both submodules remains;
+never commit those pins.

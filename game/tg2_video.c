@@ -836,6 +836,10 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     if (!line) {
         audit_race_frame = nw == 256 && race(v);
         last_frame_race = audit_race_frame;
+        /* Overscan can return before the first visible race row. Select the
+         * displayed SAT now at 1x too, so 60-fps Off retains margin sprites. */
+        if (last_frame_race && !synthesizing && tg2_highres_present_scale()<=1)
+            select_scene(v);
         highres_wanted = last_frame_race && tg2_highres_present_scale() > 1;
         if (last_frame_race && !reference_pass)
             tg2_highres_picture_start();
@@ -874,8 +878,6 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         return;
     }
     if (!reference_pass) ++wide_lines;
-    if (!line && !synthesizing && tg2_highres_present_scale() <= 1)
-        select_scene(v);
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
     unsigned hbase = (v->reg[13] & 63) << 10;
     int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;

@@ -922,18 +922,40 @@ def actor_regions(native, shot, scale, info, native_filter=False):
         regions.append(dict(kind=a['kind'], guest_model=a['guest_model'], model=a['model'],
                             distance=distance, box=[x0,y0,x1,y1],
                             mean_abs_diff=round(float(region.mean()), 4), tolerance=tolerance))
+    # Occluding actors must be compared together. A tiny far sign's box can
+    # lie inside a nearby car; testing that patch alone would attribute the
+    # car's intentional new detail to the hidden sign's silhouette.
+    groups = []
+    for region in regions:
+        box = region['box'][:]
+        members = [region]
+        changed = True
+        while changed:
+            changed = False
+            for group in groups[:]:
+                a,b,c,d = group['box']
+                if box[0] < c and box[2] > a and box[1] < d and box[3] > b:
+                    box = [min(box[0],a),min(box[1],b),max(box[2],c),max(box[3],d)]
+                    members += group['members']
+                    groups.remove(group)
+                    changed = True
+        groups.append(dict(box=box,members=members))
+    for group in groups:
+        x0,y0,x1,y1 = group['box']
+        group['mean_abs_diff'] = round(float(diff[y0:y1,x0:x1].mean()),4)
+        group['tolerance'] = min(r['tolerance'] for r in group['members'])
     outside = diff[~mask]
     return dict(outside_mean_abs_diff=round(float(outside.mean()), 4) if outside.size else 0,
                 outside_big_diff_ratio=round(float((outside>64).mean()), 6) if outside.size else 0,
-                actor_box_pixels=int(mask.sum()), regions=regions)
+                actor_box_pixels=int(mask.sum()), regions=regions, silhouette_groups=groups)
 
 
 def actor_region_failures(result, mean=2.5, big=.02):
     failures = []
     if result['outside_mean_abs_diff'] > mean or result['outside_big_diff_ratio'] > big:
         failures.append(f"outside actor boxes: {result}")
-    for r in result['regions']:
-        if r['mean_abs_diff'] > r['tolerance']: failures.append(f"actor silhouette/detail box: {r}")
+    for r in result['silhouette_groups']:
+        if r['mean_abs_diff'] > r['tolerance']: failures.append(f"actor silhouette/detail group: {r}")
     return failures
 
 
@@ -956,7 +978,8 @@ def check_sprite_pairs(args):
     brief = dict(ok=not failures, failures=failures, pairs=len(pairs),
                  max_outside_mean=max((p['outside_mean_abs_diff'] for p in pairs),default=0),
                  max_outside_big_ratio=max((p['outside_big_diff_ratio'] for p in pairs),default=0),
-                 max_actor_box_mean=max((r['mean_abs_diff'] for p in pairs for r in p['regions']),default=0))
+                 max_actor_box_mean=max((r['mean_abs_diff'] for p in pairs for r in p['regions']),default=0),
+                 max_silhouette_group_mean=max((r['mean_abs_diff'] for p in pairs for r in p['silhouette_groups']),default=0))
     print(json.dumps(brief,indent=1))
     return int(bool(failures))
 
@@ -1097,7 +1120,11 @@ def check_drive(args):
             if due:
                 # The pictures this step builds also leave their 1x canvas.
                 r.command('tg2_highres', dump=str(out / 'native.ppm'))
-            st = r.step(pad)
+            if args.actors:
+                st, samples = r.step_commands(pad, [('tg2_highres', {})])
+                actor_info = samples[0]
+            else:
+                st = r.step(pad)
             lat = st.lat_units
             d = 0.0 if previous is None else lat - previous
             u = -1.0 * lat - 4.0 * d
@@ -1105,7 +1132,6 @@ def check_drive(args):
             previous = lat
             trace.append([st.frame, st.speed, round(lat, 2), st.curv, st.slope, st.lap])
             if args.actors:
-                actor_info = r.command('tg2_highres')
                 if actor_info['serial'] != actor_serial:
                     actor_serial = actor_info['serial']
                     actor_table_sample(actor_table, actor_info, actor_rom, failures)

@@ -1373,3 +1373,90 @@ on the Deck plus `SHA256SUMS`. Tarball SHA-256:
 `03d41406b7907911e0e404787dec96dbb7c699e8292ad10900d782cc5e2a93a2`.
 No `v*` tag or published release was created; earlier drafts are unchanged.
 Deck listening of the fix is pending.
+
+
+## Task 34 — detailed sprites at N× (S4, 2026-11-11)
+
+Implemented and locally qualified on `vittau/tg2-highres-s4`; **owner visual
+acceptance pending**. Development host: macOS arm64, SDL dummy headless,
+shared heavy lock, max 3 build jobs, one runtime at a time. No CI, tags,
+releases, engine/pin changes or ROM-derived git artifacts. Implementation and
+selection/coverage details: HIGHRES §§14.3–14.7.
+
+| Check / command family (all prefixed by the shared `flock`) | Exit / evidence |
+|---|---|
+| `env JOBS=3 tools/build-linux.sh` | 0; `build/s4/build-boundaries.log` |
+| `check_highres.py g1 --out build/s4/last-gates` | 0; 9 configs; Off `60=2A0B972960C5E325`, `300=1131D937D70234FD` |
+| `verify_widescreen.py --out build/s4/g3-ws-qualified`, scale 1 / 60 fps Off | 0; Off/16:9/21:9, 5,600 frames each; canonical RAM/centre identical at all five frames; real margin sprites and adaptive widths pass |
+| `probe_framerate.py` / `--60fps`, `compare_framerate.py` | 0/0/0; 186 vs 360 changed pictures; 0 sampled RAM-field mismatches; identical WAV SHA-256 `c5c5d9ced414d61e25220853fd3c7d93756d12bdd5036b46fd16240471a3962a` |
+| `check_highres.py split --mode 32:9 --scale 4` | 0; native 2P geometry/hash sequence identical |
+| `check_highres.py cap` | 0; native menus, capped 3×, Off/fixed-aspect transitions |
+| Final Auckland 4× `drive --actors --frames 3200` | Runtime 0; road/margin/actor gates pass; original tool 1 was only the independent-box false positive described below; same-pixel corrected `sprite-pairs` recheck 0 |
+| Canada 3× / 1,800 frames; Bavaria rain 4× / 900 | 0/0; final drive, road/margin/actor gates and pair rechecks pass |
+| Directed Auckland tunnel 2× / 2,000 frames | 0; actual tunnel/road plus near opponent case captured |
+| Linear On 2× / 300; combined 60-fps 2× / 180 | 0/0; corresponding reference filtering, strict position and row-replay gates pass |
+| Stepped/continuous review pair | 0; same frame 221, identical guest RAM SHA-256 `b433c123c7612b0138bd1e9c368b693a41c4b0c16b83fcbef0268d20f4f3f88f` |
+
+All four execution manifests have 0 entries in every qualified run.
+The largest-scale long audit measured 3,301 pictures / 812,488 road rows /
+161,582 stripe centres, maximum centre error 0.5 output pixel, zero road or
+margin violations. Other scales use directed checks, not another full matrix.
+The long audit was repeated only while fixing actual culling/reference
+bookkeeping defects; the final photometric-check correction reused captures.
+
+| Track | Promoted actors (every frame) | Untabulated/model fallbacks | Native final-SAT guards | Fully guest-culled kept native |
+|---|---:|---:|---:|---:|
+| Auckland | 52,156 | 0 | 14 | 13,516 |
+| Canada | 25,077 | 0 | 6 | 5,264 |
+| Bavaria rain | 11,852 | 0 | 15 | 1,257 |
+
+Across 89,085 promoted actors: max floor error 0; independent guest-piece,
+palette and priority mismatches 0; analytic drawn-anchor error 0, ≤2.1e-8
+output pixel after JSON serialization. The native-row opacity/index/priority
+replay audit has 0 mismatches. Sampled native-pole overlap exercises both
+orders: Canada 520 output pixels blocked / 604 painted in front; rain 570 /
+233. Fully culled actors are not resurrected by larger artwork.
+
+The old S3 whole-image limit rejected a snowy-tree Canada picture (mean
+3.211/255) despite the expected internal snow-detail change. S4 preserves the
+original global and individual patch numbers, checks unchanged pixels with
+the same S3 limits, and bounds padded connected silhouette/occlusion groups
+by distance (64/80/96 maximum-channel mean, strictest member for overlaps).
+The original 4× checker also assigned a nearby car's detail to a far sign's
+box: individual patch 114.25, but combined visible group ≤52.9121. Its sole
+failure is resolved by `sprite-pairs` on the exact same 25 pairs (exit 0), not
+by hiding a picture or relaxing the unchanged-region tolerance. Final Canada
+group mean ≤56.0711; unchanged-pixel mean ≤0.3066. HIGHRES §14.6 records the
+scope and expected antialias/detail differences; visual acceptance remains
+required.
+
+Incremental CPU, fixed [3000,3900) route, 900 frames, 1280×800, full audio and
+rendering, no audits/dumps/pacer work, `TG2_ACTORS=0` → On:
+
+| Scale | Whole-frame mean Off → On | Incremental mean | On p95 |
+|---|---:|---:|---:|
+| 2× | 1.4031 → 1.6596 ms | 0.2565 ms | 1.883 ms |
+| 4× | 1.8841 → 2.2672 ms | 0.3831 ms | 2.594 ms |
+
+These are development-host CPU measurements, not Deck/GPU figures. The
+settings file was restored after temporary Linear On/Off checks. Comparison
+helpers stream RAM/VRAM fields and WAV hashes.
+
+Additional resolved boundary: with stock 1×, 60 fps Off and Hide overscan On,
+blanking row 0 could skip scene selection, leaving margin snapshots empty.
+Selecting the same displayed SAT before overscan now passes the complete G3
+repeat. Batched actor diagnostics also retain the controller's existing
+poll cadence. No guest simulation, culling or memory was changed.
+
+Ignored evidence: `build/s4/{qualified-summary.json,worker-report.md}`;
+`final-commands.json`, `boundaries-commands.json`, `cost-commands.json`,
+`pair-commands.json`; per-track folders named in those ledgers. Six review
+pictures in `build/s4/review/`: `01-far.png`, `02-middle.png`,
+`03-near-car.png`, `04-near-tree.png`, `05-pole-rain.png`, `06-tunnel.png`;
+plus `stepped-continuous.png` and `pole-occlusion.png`. `pictures.json` maps
+sources and model data. No captures were committed.
+
+Remaining: owner S4 visual acceptance; native poles (visible mismatch mapped
+at his request in task 38); S5 HUD/weather/tunnel-opening artwork; full N×
+temporal qualification S6; live switching S7; other-country/platform and
+Deck/GPU qualification. No runtime remains running.

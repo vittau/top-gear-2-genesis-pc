@@ -1385,8 +1385,7 @@ completed S3 qualification.
 
 ## 14. S4 — actor evidence and selection policy (task 34)
 
-**Status: presentation implemented; final qualification in progress, owner
-visual acceptance pending.** This section records the bounded captures, raw
+**Status: implemented and locally qualified; owner visual acceptance pending.** This section records the bounded captures, raw
 ROM evidence and implemented selection policy. Addresses were re-read from the ROM with
 `tools/disasm_tg2.py`; where they differ from §3, this section wins.
 
@@ -1442,7 +1441,7 @@ with the `$B4E2..$B514` reading above. `$FF1894` (the remap bias) was 0 in all
 
 | Kind | What (from the sheets) | Tracks | Ladder |
 |---|---|---|---|
-| cars (`$FF8E94 + 10n`) | four opponents, one art block, colour by palette line | all | 25 models: 5 + 3 + 3 + 3 angle frames, then 11 single frames, 64×31 → 4×2 px |
+| cars (`$FF8E94 + 10n`) | four shared car-colour records (including the player), one art block, colour by palette line | all | 25 models: 5 + 3 + 3 + 3 angle frames, then 11 single frames, 64×31 → 4×2 px |
 | `$80`, `$F0` | chevron signs (left / right) | `$F0` all three, `$80` Canada | models 0–10, 31×32 → 3×1 px |
 | `$94` | tree; the kind is a slot with per-track art (poplar on Auckland, snowy pine on Canada, different mapping tables) | Auckland, Canada | models 0–10, 40×104 → 4×8 px, 8 → 1 pieces |
 | `$85` | bush (snow-covered on Canada) | all | models 0–10, 48×24 → 2×1 px |
@@ -1586,9 +1585,10 @@ The S4 check includes each visible actor's silhouette edges in a box padded
 by two native pixels, clipped to its own horizon. It reports per-box RGB
 error (including background/occlusion, never inferred by colour equality).
 Outside those boxes the existing S3 limits remain mean ≤2.5/255 and ≤2% of
-pixels with a channel error above 64. Inside, changed detail/antialiasing is
-bounded by a mean maximum-channel error of 64 (size ≥0.5), 80 (0.15..0.5), or
-96 (size <0.15). Tiny bands need more tolerance because the original asset
+pixels with a channel error above 64. Overlapping boxes are joined into silhouette/occlusion groups, so a far
+sign hidden by a near car is not judged as an isolated sign patch. Each group
+uses the strictest member bound: mean maximum-channel error 64 (size ≥0.5),
+80 (0.15..0.5), or 96 (size <0.15). Tiny bands need more tolerance because the original asset
 may contain only one or two opaque texels. These photometric limits accompany
 independent anchor, guest-piece, SAT, palette and priority gates; visual
 acceptance still belongs to the owner. Linear On compares with the same
@@ -1602,3 +1602,67 @@ policy and keeps `floor(anchor)` equal to that picture's native position.
 A non-rigid piece mix falls back to native rather than promoting an
 inconsistent object. This is a directed combined-mode guard, not S6's full
 N× temporal qualification.
+
+### 14.7 Local qualification (2026-11-11)
+
+All evidence is from this worktree on macOS arm64, headless, with the shared
+heavy lock and ≤3 build jobs. It is development evidence, not a Linux release
+or Deck/GPU qualification. No engine patch/pin changed and no CI ran.
+
+| Gate | Result |
+|---|---|
+| Stock G1 / manifests | 9 configurations pass; Off hashes `60=2A0B972960C5E325`, `300=1131D937D70234FD`; all four manifests empty |
+| Stock G3 widescreen | Off / 16:9 / 21:9, 5,600 frames each; canonical state/centre identical at all five capture frames; margins/adaptive widths pass |
+| Stock G3 60 fps | 186 vs 360 changed pictures over the 360-frame window; sampled RAM fields identical, WAV SHA-256 identical |
+| Native 2P / boundaries | 32:9 at requested 4× remains native and identical; menu/3× cap/Off transitions pass |
+| Auckland 4× long audit | 3,301 pictures; 812,488 measured road rows; 161,582 stripe centres; max centre error 0.5 output px; no road/margin violations |
+| Directed checks | Canada 3×/1,800 frames, Bavaria rain 4×/900, Auckland tunnel 2×/2,000, Linear On 2×/300, combined 60-fps smoke 2×/180 pass |
+
+The stock G3 repeat exposed an existing 1× / 60-fps Off / Hide overscan On
+case: blanking line 0 could return before selecting the displayed scene and
+leave margin sprite snapshots unset. Selecting that same read-only scene
+before overscan fixes it; G3 now verifies both the canonical centre and real
+margin pieces. Actor diagnostics are batched with controller state so an
+extra TCP poll does not change closed-loop steering cadence. The stock
+framerate comparison streams RAM/VRAM fields and hashes WAVs in chunks.
+
+| Track | Promoted actors, all frames | Unknown/model fallback | Incomplete SAT kept native | All guest pieces culled |
+|---|---:|---:|---:|---:|
+| Auckland | 52,156 | 0 | 14 | 13,516 |
+| Canada | 25,077 | 0 | 6 | 5,264 |
+| Bavaria rain | 11,852 | 0 | 15 | 1,257 |
+
+Across those 89,085 promoted actors, maximum floor error, independent guest-
+piece mismatches, palette/priority mismatches and analytic drawn-anchor error
+are all 0. Checking the serialized coordinates adds ≤2.1e-8 output-pixel
+rounding. The native row audit also has 0 sprite opacity/index/priority
+mismatches. Sampled pole overlaps exercise both directions: Canada 520 output
+pixels hidden by native poles / 604 painted in front; rain 570 / 233.
+
+The largest-scale command's original independent-box checker returned 1 for
+a far-sign box covered by a near car (individual patch mean 114.25); its
+runtime, road, margins and actor invariants passed. Rechecking the exact same
+25 native/N× pairs as connected occlusion groups returns 0, max group mean
+52.9121 and outside-box mean 0.3884. Canada and rain group rechecks pass too;
+raw individual and whole-image metrics remain in the reports.
+
+Cost, fixed 900-frame interval [3000,3900), 1280×800, full rendering/audio,
+no audits/dumps/pacer work, same infrastructure with `TG2_ACTORS=0` vs On:
+
+| Scale | Whole-frame CPU mean Off → On | Incremental mean | On p95 |
+|---|---:|---:|---:|
+| 2× | 1.4031 → 1.6596 ms | 0.2565 ms | 1.883 ms |
+| 4× | 1.8841 → 2.2672 ms | 0.3831 ms | 2.594 ms |
+
+Ignored evidence: `build/s4/qualified-summary.json`, `worker-report.md`,
+`final-commands.json`, `boundaries-commands.json`, `cost-commands.json`,
+`pair-commands.json`, and the named run folders in those ledgers. Review
+pictures: `build/s4/review/01-far.png`, `02-middle.png`, `03-near-car.png`,
+`04-near-tree.png`, `05-pole-rain.png`, `06-tunnel.png`, plus
+`stepped-continuous.png` and `pole-occlusion.png`. The policy pair uses the
+same frame 221 and identical guest RAM hash.
+
+Owner acceptance of S4 remains pending. Poles stay native and their visible
+mismatch is explicitly mapped in [task 38](tasks/38-highres-poles.md).
+HUD/weather/tunnel-opening art, full N× temporal qualification, live changes
+and Deck/GPU qualification remain outside this step.

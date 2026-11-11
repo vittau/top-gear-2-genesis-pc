@@ -25,7 +25,10 @@ The owner picked the first items to work on, in this order:
 2. **High-resolution rendering** — design (task 29), S1/S2 (task 31) and
    S3 (task 33) are complete and merged. The owner approved S3's visuals and
    requested a Linux draft for his Steam Deck. Address its new playtest
-   feedback first; [S4/task 34](tasks/34-highres-s4.md) is prepared, not started.
+   feedback first; [S4/task 34](tasks/34-highres-s4.md) is now implemented and
+   locally qualified on its review branch, pending owner visual acceptance.
+   [Detailed compound poles/task 38](tasks/38-highres-poles.md) is an explicit
+   follow-up for the visible native-detail mismatch.
    S3/S4 implementation is restricted to Opus, Fable or Sol.
 3. **Clean FM, separate volumes and better engine/nitro PCM** —
    [task 30](tasks/30-clean-fm-and-pcm.md): finished Music/SFX faders remain;
@@ -111,7 +114,8 @@ Mapped, not started.
 *Owner request, 2026-11-07.*
 
 Render races above 224p in our renderer. This would also give the
-"Internal resolution" option a real meaning; today it is a no-op for TG2.
+"Internal resolution" option a real meaning; it now drives the experimental
+1×..4× race renderer (default 1×, restart required).
 - **Road:** redraw the road from the game's own per-line parameters (curve,
   hill, scale and stripe phase) at N× resolution, instead of upscaling the
   224-line raster. Sub-line interpolation also helps the 60 fps frames.
@@ -125,10 +129,11 @@ Render races above 224p in our renderer. This would also give the
 It uses the same assets, only better, which fits the owner's rule on foreign
 assets.
 
-S3's road rasteriser is accepted and merged. Next, finish the partially
-mapped per-type LOD ladders and capture actor metadata for S4; see
-[task 34](tasks/34-highres-s4.md). Start with any fresh S3/Deck defect the
-owner reports. Detailed scope and remaining boundaries are in HIGHRES §13.
+S3's road rasteriser is accepted and merged. Detailed actor S4 is implemented
+and locally qualified on its review branch; [task 34](tasks/34-highres-s4.md)
+awaits owner visual acceptance. Keep the mapped pole-detail improvement in
+task 38 visible, then continue the separate S5/S6/S7 stages. Address any new
+S3/Deck defect first. Scope, results and boundaries are in HIGHRES §§13–14.
 
 Design and ground truth: [docs/HIGHRES.md](HIGHRES.md) (task 29). It maps the
 per-line road state, the atlas geometry and palette banks, and the sprite LOD
