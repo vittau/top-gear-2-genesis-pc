@@ -361,3 +361,12 @@ untracked files included) were saved as `refs/keep/*-20261111` and as verified b
 and the reports, summaries, review PNGs and the MP4 were archived. Everything is in
 `~/.cache/tg2-worktree-backups/20261111-highres-s4-triggers/` (`manifest.txt`).
 Only the main checkout remains registered.
+
+**v0.3.0 published (2026-11-12 01:04 UTC)** at the owner's request ("Está
+testado, pode tirar release pública"), from `7e19228`. [CI 43131364275](https://github.com/vittau/top-gear-2-genesis-pc/actions/runs/43131364275)
+passed all five jobs, and the release is marked Latest. Linux tarball SHA-256
+`d13cc9b2176487c44e08b3f34d0c2bbbd8266ba17dfa123f8fb8a7db33ad6df7`, version
+`0.3.0-g7e19228`. The README fix `028e221` came after the tag. The triggers
+haven't been tried on real gamepad hardware, Deck N× performance is unmeasured, and
+Windows/Intel Mac remain unplayed. The `deck-triggers-20261111` draft is now
+superseded by v0.3.0.
