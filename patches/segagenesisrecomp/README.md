@@ -113,3 +113,27 @@ isolation. Qualify a fresh stack by applying it and rerunning for a no-op.
 
 - `0056-runtime-ui-header.patch` — declare runtime overlay visibility in an engine header so game adapters share its real API.
 - `ui-0002-runtime-footer-wrap.patch` — word-wrap software runtime descriptions and reserve their full height above the status area without overlapping settings rows.
+
+## Local maintenance (no forks or submodule pin changes)
+
+`python3 tools/apply-engine-patches.py --as-commits` snapshots dirty targets
+first, preserves any previous local maintenance branch, restores the parent
+repo's pins and creates local `tg2/patches` branches in engine/core/UI, with
+one commit per patch. Supplied mail subjects/bodies are retained; legacy bare
+diffs without a Subject use their descriptive filename as the initial subject.
+Edit and commit/rebase on these local branches; never push them.
+
+`python3 tools/apply-engine-patches.py --export` exports the committed local
+histories using `git format-patch`, numbers each target contiguously (`0001`,
+`core-0001`, `ui-0001`), and removes stale patch files. Dirty source edits must
+be committed first. For an unchanged imported commit, a worktree-local Git-dir
+cache preserves its original mail bytes after generating its format-patch;
+new/amended/squashed commits use canonical format-patch output. Thus an unedited
+round trip preserves all patch bytes, while legacy filenames can change to
+the contiguous subject-derived names. `--branch NAME` selects another local
+maintenance branch in both modes.
+
+Export before running a normal build: normal application detaches back to the
+recorded pins and reapplies the files in place, without moving local maintenance
+branches. Phase A snapshots, tracked/untracked tree stamps, read-only `--check`,
+and the single Python implementation behind shell/PowerShell entry points remain.
