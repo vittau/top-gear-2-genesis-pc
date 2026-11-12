@@ -105,9 +105,12 @@ def main():
     # Use the consuming repository's configured identity for recovery commits;
     # a freshly initialized submodule may otherwise inherit a personal global one.
     identity = dict(os.environ)
-    for role in ('AUTHOR', 'COMMITTER'):
-        for field in ('NAME', 'EMAIL'):
-            identity[f'GIT_{role}_{field}'] = git(repo, 'config', f'user.{field.lower()}', text=True).strip()
+    if any(git(path, 'status', '--porcelain', '--untracked-files=all')
+           for path in targets.values()):
+        for role in ('AUTHOR', 'COMMITTER'):
+            for field in ('NAME', 'EMAIL'):
+                identity[f'GIT_{role}_{field}'] = git(
+                    repo, 'config', f'user.{field.lower()}', text=True).strip()
     # Preserve all targets before the first destructive operation.
     for label in ('core', 'engine', 'ui'):
         snapshot(targets[label], label, identity)
