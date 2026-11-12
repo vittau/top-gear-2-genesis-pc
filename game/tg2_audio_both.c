@@ -55,12 +55,6 @@ static int s_mode = TG2_SOUND_SFX;  /* player's choice; stock default */
  * hand the running music's voices to a chip that was never fed them, which is
  * exactly how a live BOTH/SFX switch used to kill the music. */
 static int s_applied = TG2_SOUND_SFX;
-static int s_patched;               /* present/restore nesting depth */
-/* One saved cartridge value per nesting level, so an SFX-side read nested
- * inside a music-side read (or vice versa) restores exactly. */
-#define PATCH_DEPTH 8
-static uint16_t s_patch_stack[PATCH_DEPTH];
-
 static void ram_write16(uint32_t addr, uint16_t v)
 {
     uint16_t o = (uint16_t)(addr & 0xFFFFu);
@@ -185,40 +179,219 @@ static int second_z80_runs_sfx_image(void)
     return ram[0] == 0xC3u && ram[1] == 0x10u && ram[2] == 0x04u;
 }
 
-/* ---- Value presentation hooks -------------------------------------------
- * Both helpers are no-ops unless BOTH is selected.  A present remembers the
- * cartridge's own value on a small stack so the instruction sees the
- * presented value and the next instruction sees the stock one again, even
- * when an SFX-side read happens inside a music-side one. */
-static void present_value(uint16_t want)
+/* Native policy routines below follow the raw USA ROM instruction order.
+ * Preserve guest flags, stack slots and instruction clocks: sound writes are
+ * stamped in this clock domain, including calls into the cartridge drivers. */
+static void policy_tick(unsigned cycles)
 {
-    if (!both_active()) return;
-    uint16_t cur = tg2_ram16(0xFF0000u + RAM_SOUND_MODE);
-    if (s_patched < PATCH_DEPTH) s_patch_stack[s_patched++] = cur;
-    if (cur != want) ram_write16(0xFF0000u + RAM_SOUND_MODE, want);
+    ++g_native_insn_count;
+    g_cycle_accumulator += cycles;
+    g_audio_cycle_counter += cycles;
+    if (g_cycle_accumulator >= g_vblank_threshold) glue_check_vblank();
 }
-
-static void restore_value(void)
+static uint16_t policy_flags(uint16_t value)
 {
-    if (s_patched <= 0) return;
-    uint16_t prev = s_patch_stack[--s_patched];
-    if (tg2_ram16(0xFF0000u + RAM_SOUND_MODE) != prev)
-        ram_write16(0xFF0000u + RAM_SOUND_MODE, prev);
+    g_cpu.SR = (uint16_t)((g_cpu.SR & ~15u) | (!value ? SR_Z : 0) |
+                          (value & 0x8000u ? SR_N : 0));
+    return value;
 }
-
-static void present_sfx(void)   { present_value(0); }   /* SFX-side read */
-static void present_music(void) { present_value(1); }   /* music-side read */
-
-/* Page entry (0x01ED3A) runs in every sound mode, not just BOTH: the page must
- * show the player's choice even when the cartridge word still holds the boot
- * value. BOTH presents MUSIC's 1, so the page's own row and palette are built
- * in stock state and repainted afterwards. */
-static void present_session_value(void)
+static void policy_dword(unsigned reg, uint16_t value, unsigned cycles)
 {
-    uint16_t want = (uint16_t)(s_mode == TG2_SOUND_SFX ? 0 : 1);
-    uint16_t cur = tg2_ram16(0xFF0000u + RAM_SOUND_MODE);
-    if (s_patched < PATCH_DEPTH) s_patch_stack[s_patched++] = cur;
-    if (cur != want) ram_write16(0xFF0000u + RAM_SOUND_MODE, want);
+    g_cpu.D[reg] = (g_cpu.D[reg] & 0xffff0000u) | policy_flags(value);
+    policy_tick(cycles);
+}
+static int policy_test(int offset)
+{
+    uint16_t value = policy_flags(m68k_read16(g_cpu.A[3] + offset));
+    policy_tick(12);
+    return value != 0;
+}
+static void policy_push16(uint16_t value, unsigned cycles)
+{
+    g_cpu.A[7] -= 2;
+    m68k_write16(g_cpu.A[7], value);
+    policy_tick(cycles);
+}
+static uint16_t policy_pop16(void)
+{
+    uint16_t v = m68k_read16(g_cpu.A[7]);
+    g_cpu.A[7] += 2;
+    return v;
+}
+static void policy_push_a3(void)
+{
+    g_cpu.A[7] -= 4;
+    m68k_write32(g_cpu.A[7], g_cpu.A[3]);
+    policy_flags((uint16_t)(g_cpu.A[3] >> 16));
+    if (!(g_cpu.A[3] & 0xffff0000u) && (g_cpu.A[3] & 0xffffu)) g_cpu.SR &= ~SR_Z;
+    policy_tick(12);
+}
+static void policy_pop_a3(void)
+{
+    g_cpu.A[3] = m68k_read32(g_cpu.A[7]);
+    g_cpu.A[7] += 4;
+    policy_tick(12);
+}
+static void policy_sr_restore(void)
+{
+    g_cpu.SR = policy_pop16() & 0xA71Fu;
+    policy_tick(16);
+}
+static void policy_mask_irq(void) { g_cpu.SR = 0x2700; policy_tick(16); }
+static void policy_call(uint32_t target, uint32_t return_pc, unsigned cycles)
+{
+    recomp_push_return(return_pc);
+    uint32_t slot = g_cpu.A[7];
+    int split = g_split_sp_popped;
+    g_split_sp_popped = 0;
+    recomp_call_addr(target);
+    g_split_sp_popped = split;
+    if (g_cpu.A[7] != slot + 4) g_cpu.A[7] += 4;
+    policy_tick(cycles);
+}
+static void policy_test_both(int music)
+{
+    policy_flags((uint16_t)music);
+    policy_tick(12);
+}
+static void policy_sfx_stop(unsigned base)
+{
+    policy_push_a3();
+    policy_call(0x2525c, base, 18);
+    policy_pop_a3();
+    int two = policy_test(-0x6b6a); policy_tick(10);
+    if (two) {
+        policy_push_a3();
+        policy_call(0x2527a, base == 0x252ae ? 0x252ba : base + 14, 18);
+        policy_pop_a3();
+    }
+}
+static void policy_stop(void) /* $25032: stop both independent writers */
+{
+    policy_push16(g_cpu.SR,14); policy_mask_irq();
+    policy_push16((uint16_t)g_cpu.D[0],8);
+    policy_test_both(1); policy_push16(g_cpu.SR,14); policy_tick(10);
+    policy_call(0x24d04,0x25048,20);
+    policy_sr_restore();
+    policy_test_both(0); policy_tick(10);
+    int demo=policy_test(-0x6bce); policy_tick(10);
+    if (!demo) policy_sfx_stop(0x2505c);
+    policy_dword(0,0,4); policy_dword(0,0x7f,8);
+    policy_dword(0,policy_pop16(),8); policy_sr_restore(); policy_tick(16);
+}
+static void policy_track(int finish) /* $251F4 / $2522E */
+{
+    policy_push16(g_cpu.SR,14); policy_mask_irq();
+    int demo=policy_test(-0x6bce); policy_tick(10);
+    if (!demo) {
+        policy_test_both(1); policy_tick(10);
+        policy_call(0x24d22,finish?0x25244:0x2520a,18);
+        uint8_t track;
+        if (finish) {
+            uint8_t a=(uint8_t)g_cpu.D[0], b=6, v=(uint8_t)(a-b);
+            g_cpu.SR=(g_cpu.SR & ~15u)|(!v?SR_Z:0)|(v&128?SR_N:0)|
+                (((a^b)&(a^v)&128)?SR_V:0)|(a<b?SR_C:0);
+            policy_tick(8); track=6;
+        } else {
+            policy_dword(1,m68k_read16(g_cpu.A[3]-0x6d4a),12);
+            policy_dword(1,(uint16_t)g_cpu.D[1]&3,8);
+            track=g_rom[0x2522a+(g_cpu.D[1]&3)];
+            uint8_t a=(uint8_t)g_cpu.D[0], v=(uint8_t)(a-track);
+            g_cpu.SR=(g_cpu.SR & ~15u)|(!v?SR_Z:0)|(v&128?SR_N:0)|
+                (((a^track)&(a^v)&128)?SR_V:0)|(a<track?SR_C:0);
+            policy_tick(14);
+        }
+        int same=(g_cpu.SR&SR_Z)!=0; policy_tick(10);
+        if (!same) {
+            g_cpu.D[0]=(g_cpu.D[0]&0xffffff00u)|track;
+            policy_flags(track); policy_tick(finish?8:14);
+            policy_call(0x24cd4,finish?0x25252:0x25220,18); policy_tick(10);
+        }
+    }
+    policy_sr_restore(); policy_tick(16);
+}
+static void policy_start(void) /* $25078 */
+{
+    policy_push16(g_cpu.SR,14); policy_mask_irq();
+    policy_push16((uint16_t)g_cpu.D[0],8);
+    policy_dword(0,m68k_read16(g_cpu.A[3]-0x600a),12);
+    policy_dword(0,m68k_read16(g_cpu.A[3]-0x6006),12);
+    policy_test_both(1); policy_push16(g_cpu.SR,14); policy_tick(10);
+    policy_call(0x251f4,0x25094,18); policy_sr_restore();
+    policy_push_a3();
+    for (unsigned i=0;i<4;i++) policy_dword(i,i==3?10:0,8);
+    g_cpu.A[4]=0xff862e; policy_tick(12);
+    policy_call(0x70020,0x250b4,20); policy_pop_a3();
+    int two=policy_test(-0x6b6a); policy_tick(10);
+    if (two) {
+        policy_push_a3();
+        for (unsigned i=0;i<4;i++) policy_dword(i,i==3?10:0,8);
+        g_cpu.A[4]=0xff862e; policy_tick(12);
+        policy_call(0x70024,0x250da,20); policy_pop_a3();
+    }
+    policy_dword(0,policy_pop16(),8); policy_sr_restore(); policy_tick(16);
+}
+static void policy_sfx_only_stop(void) /* $25298 */
+{
+    policy_push16(g_cpu.SR,14); policy_test_both(0); policy_tick(10);
+    int demo=policy_test(-0x6bce); policy_tick(10);
+    if (!demo) { policy_mask_irq(); policy_sfx_stop(0x252ae); }
+    policy_sr_restore(); policy_tick(16);
+}
+static void policy_event(int urgent) /* $250E2 / $2511C */
+{
+    policy_test_both(0); policy_tick(10);
+    int blocked=policy_test(-0x6bce); policy_tick(10);
+    if (blocked) { policy_tick(16); return; }
+    blocked=policy_test(-0x60d6); policy_tick(10);
+    if (blocked) { policy_tick(16); return; }
+    if (!urgent) {
+        blocked=policy_test(-0x5ffc); policy_tick(10);
+        if (blocked) { policy_tick(16); return; }
+        policy_flags(m68k_read16(g_cpu.A[4]+0x1a)); policy_tick(12); policy_tick(10);
+        if (!(g_cpu.SR&SR_Z)) { policy_tick(16); return; }
+    }
+    uint8_t b=(uint8_t)g_cpu.D[0];
+    g_cpu.SR=(g_cpu.SR&~15u)|(!b?SR_Z:0)|(b&128?SR_N:0);
+    policy_tick(4); policy_tick(10);
+    if (!b) { policy_tick(16); return; }
+    if (urgent) { m68k_write16(g_cpu.A[3]-0x5ffc,10); policy_flags(10); policy_tick(16); }
+    policy_tick(10); recomp_call_addr(urgent?0x24d36:0x24d3a);
+}
+static void policy_engine_gate(void) /* $252CC */
+{
+    policy_test_both(0); policy_tick(10);
+    int demo=policy_test(-0x6bce); policy_tick(10);
+    if (demo) { policy_tick(16); return; }
+    int active=policy_test(-0x6b46); policy_tick(10);
+    if (!active) recomp_call_addr(0x254b8); else policy_tick(16);
+}
+static void policy_race_block(int irq) /* $6530 / $48E2 */
+{
+    policy_dword(0,0,12);
+    policy_dword(0,(uint16_t)g_cpu.D[0]|m68k_read16(g_cpu.A[3]-0x6bce),12);
+    int demo=(g_cpu.SR&SR_Z)==0; policy_tick(10);
+    if (!demo) {
+        if (irq) {
+            g_cpu.A[4]=0xff8622; policy_tick(12);
+            policy_call(0x70010,0x48f8,20);
+            g_cpu.A[4]=0xff862e; policy_tick(12);
+            policy_call(0x7001c,0x4904,20);
+        } else {
+            policy_call(0x253ee,0x6540,20); policy_call(0x25418,0x6546,20);
+        }
+        g_cpu.A[3]=0xff8408; policy_tick(12);
+    }
+    if (irq) g_split_sp_popped -= 56; /* $4714 MOVEM frame, restored by $490A tail. */
+    recomp_call_addr(irq?0x490a:0x654c);
+}
+static void policy_page_profile(void) /* $1ED2C, approved for all modes */
+{
+    policy_tick(4); /* LEA (A4),A4 */
+    m68k_write16(g_cpu.A[4]+0x12,policy_flags(m68k_read16(g_cpu.A[3]-0x6b68))); policy_tick(16);
+    m68k_write16(g_cpu.A[4]+6,policy_flags(m68k_read16(g_cpu.A[3]-0x5fe6))); policy_tick(16);
+    m68k_write16(g_cpu.A[4]+12,policy_flags(page_value())); policy_tick(16);
+    policy_tick(16);
 }
 
 /* ---- RACE SOUND page value handler ($01F0D4) replacement -----------------
@@ -317,65 +490,19 @@ int tg2_audio_hook(uint32_t pc)
         sfx_cmd_log(g_cpu.D[0], g_cpu.D[1], g_cpu.D[2], g_cpu.D[3]);
         return 0;
 
-    /* --- RACE SOUND page entry: load the value word from $FF240E ----------
-     * The page profile loader copies the cartridge word into the page's value
-     * (A4+$0C) at entry. That word is only written by the menu teardown, so on
-     * a fresh boot (or after a state load) it still holds SOUND EFFECTS while
-     * the player's choice may be MUSIC or BOTH. Present the session choice for
-     * this instruction only: the page then builds its own row and palette from
-     * a stock state, and the frame hook repaints that row as "BOTH".
-     *
-     * Writing the page value after the page was already building (the old
-     * approach) skipped the profile's own palette upload: the first open of
-     * the RACE SOUND page was entirely black and the next one drew mismatched
-     * glyphs, because the tiles were recovered from a half-built row. */
-    case 0x01ED3Au:
-        present_session_value();
-        return 0;
-    case 0x01ED40u:
-        restore_value();
-        return 0;
-
-    /* --- SFX-side policy sites: present 0 while BOTH is live --- */
-    case 0x006530u:                    /* race init: read sound mode */
-    case 0x0048E2u:                    /* race V-int: read sound mode */
-    case 0x0250E2u:
-    case 0x02511Cu:
-    case 0x02504Au:
-    case 0x02529Au:
-    case 0x0252CCu:
-        present_sfx();
-        return 0;
-
-    /* --- music-side policy sites: present 1 while BOTH is live ---
-     * The stock code only reaches these with word == 1; forcing it keeps
-     * music running even if the cartridge word is stale (0) at the moment
-     * a race starts or a guest reset reloads the boot value. */
-    case 0x025088u:                    /* music start/refresh gate */
-    case 0x025200u:                    /* race track start */
-    case 0x02523Au:
-    /* $02503A stops the music ($FF) before the race track is started. That is
-     * a MUSIC-side action: stock SOUND EFFECTS skips it because no music is
-     * playing, but BOTH has the menu music running, so it must see MUSIC's
-     * value or the stop is skipped and the new track is layered on the old. */
-    case 0x02503Au:
-        present_music();
-        return 0;
-
-    /* --- restore before the dependent branch executes (flags already set) */
-    case 0x006538u:
-    case 0x0048EAu:
-    case 0x0250E6u:
-    case 0x025120u:
-    case 0x02503Eu:
-    case 0x02504Eu:
-    case 0x02529Eu:
-    case 0x0252D0u:
-    case 0x02508Cu:
-    case 0x025204u:
-    case 0x02523Eu:
-        restore_value();
-        return 0;
+    case 0x01ED2Cu:
+        policy_page_profile();
+        return 1;
+    case 0x006530u: if (!both_active()) return 0; policy_race_block(0); return 1;
+    case 0x0048E2u: if (!both_active()) return 0; policy_race_block(1); return 1;
+    case 0x025032u: if (!both_active()) return 0; policy_stop(); return 1;
+    case 0x025078u: if (!both_active()) return 0; policy_start(); return 1;
+    case 0x0250E2u: if (!both_active()) return 0; policy_event(0); return 1;
+    case 0x02511Cu: if (!both_active()) return 0; policy_event(1); return 1;
+    case 0x0251F4u: if (!both_active()) return 0; policy_track(0); return 1;
+    case 0x02522Eu: if (!both_active()) return 0; policy_track(1); return 1;
+    case 0x025298u: if (!both_active()) return 0; policy_sfx_only_stop(); return 1;
+    case 0x0252CCu: if (!both_active()) return 0; policy_engine_gate(); return 1;
 
     default:
         return 0;
@@ -603,7 +730,6 @@ void tg2_audio_frame_pre(void)
  * player's choice is a host preference and survives it. */
 void tg2_audio_reset(void)
 {
-    s_patched = 0;
     s_saved_n = 0;
     s_sfx_upload = 0;
     /* A guest reset reboots the cartridge (no race running, so the player's

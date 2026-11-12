@@ -19,7 +19,10 @@ intr_stack = 0x00FFFFFE
 # the restored guest stack, so each caller continuation is an entry too:
 # $001E82 follows `jsr $64C2` (race -> results and next race) and $001E1E
 # follows `jsr $1E764` (title/menu -> game setup) in the top-level loop.
-extra = [0x000200, 0x0065F2, 0x001E18, 0x001E9D8, 0x001EBF6, 0x001E82, 0x001E1E]
+# ROM $6538 BNE/$6546 LEA converge at $654C JSR $12E8; $48EA BNE/
+# $4904 LEA converge at $490A MOVE.W. No other callable entry uses either
+# tail in the discovered stock code; these resume the replaced policy blocks.
+extra = [0x000200, 0x0065F2, 0x001E18, 0x001E9D8, 0x001EBF6, 0x001E82, 0x001E1E, 0x00654C, 0x00490A]
 
 # --- Simultaneous music + SFX (game/tg2_audio_both.c) -----------------------
 # Audited pre-instruction sites. All are stock instruction boundaries checked
@@ -46,21 +49,21 @@ kind = "game_hook"
 addr = 0x0701DA
 kind = "game_hook"
 
-# SFX-side policy reads: present 0 while BOTH is selected.
+# Native BOTH policies; other sound modes retain the stock routines.
 [[widescreen_site]]
 addr = 0x006530
 kind = "game_hook"
 [[widescreen_site]]
 addr = 0x0048E2
 kind = "game_hook"
-# RACE SOUND page entry: the page profile loader copies $FF240E into the page
-# value word (A4+$0C). Present MUSIC's 1 while BOTH is selected so the page
-# builds its own row and palette from a stock state; restore at the RTS.
 [[widescreen_site]]
-addr = 0x01ED3A
+addr = 0x01ED2C
 kind = "game_hook"
 [[widescreen_site]]
-addr = 0x01ED40
+addr = 0x025032
+kind = "game_hook"
+[[widescreen_site]]
+addr = 0x025078
 kind = "game_hook"
 [[widescreen_site]]
 addr = 0x0250E2
@@ -69,63 +72,16 @@ kind = "game_hook"
 addr = 0x02511C
 kind = "game_hook"
 [[widescreen_site]]
-addr = 0x02503A
+addr = 0x0251F4
 kind = "game_hook"
 [[widescreen_site]]
-addr = 0x02504A
+addr = 0x02522E
 kind = "game_hook"
 [[widescreen_site]]
-addr = 0x02529A
+addr = 0x025298
 kind = "game_hook"
 [[widescreen_site]]
 addr = 0x0252CC
-kind = "game_hook"
-
-# Restore the stock word before the branch that consumed the read.
-[[widescreen_site]]
-addr = 0x006538
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x0048EA
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x0250E6
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x025120
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x02503E
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x02504E
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x02529E
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x0252D0
-kind = "game_hook"
-
-# Music-side policy reads: present 1 while BOTH is selected, so music keeps
-# running even when the cartridge word is still at its boot value.
-[[widescreen_site]]
-addr = 0x025088
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x02508C
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x025200
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x025204
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x02523A
-kind = "game_hook"
-[[widescreen_site]]
-addr = 0x02523E
 kind = "game_hook"
 
 # Read-only USA presentation captures, audited with tools/disasm_tg2.py.
