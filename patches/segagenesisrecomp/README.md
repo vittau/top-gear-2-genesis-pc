@@ -25,21 +25,26 @@
 - `0009-tempo-stable-drc-controller.patch`: make the real-time playback ratio tempo-stable. Steady state is an integral estimate of the device's constant clock offset (2 s error low-pass, 50 ppm/s slew) instead of a proportional servo on ring fill, so frame-cadence sawtooth and host jitter cannot modulate the music speed; a fill excursion beyond 25 ms is a hitch, not a clock, and switches to the fast proportional path (300 ms low-pass, 0.5 %/s) so the ring still refills quickly. The control update now uses the real pull-block duration instead of a nominal 12 ms, and the deadband no longer forces the correction back to zero (which was a slow +/-200 ppm triangle wobble).
 
 
-`tools/build-linux.sh` applies these idempotently through
-`tools/apply-engine-patches.sh`, which stamps the tree with a hash of every
-patch file plus the engine and UI commits (so a second run is a no-op even when a later
-patch touches lines an earlier one changed). After adding or regenerating a
-patch, run it once with `--reset`. The submodules stay pinned to their upstream
-commits; local fixes remain visible as its applied working-tree diff.
-
-Windows uses the portable twin `tools/apply-engine-patches.py`: numbered
+`tools/apply-engine-patches.py` is the single applicator; the `.sh` entry
+point execs it for macOS/Linux, and Windows calls Python directly. Numbered
 patches target `segagenesisrecomp/`, `core-*` targets its
-`external/m68k-recomp-core/`, and `ui-*` targets `recomp-ui/`. Both applicators
-share the same stack/pins stamp and resolve it in the repository Git directory,
-including when launched from another directory. Python `--check` inspects each
-patch against the current tree; it does not apply dependencies or prove that a
-clean sequential stack works. Qualify a clean stack by actually applying it,
-then repeat to verify idempotence; preserve existing edits before any reset.
+`external/m68k-recomp-core/`, and `ui-*` targets `recomp-ui/`, in sorted order.
+The submodules remain pinned to upstream; applied fixes stay as working-tree
+diffs. The worktree-local Git-directory stamp records the patch names/content,
+all three pins, and resulting tracked diffs plus untracked file contents.
+Only a matching stack **and** matching trees is a no-op. A missing/old stamp,
+changed stack, or reset/edited tree triggers a full sequential rebuild from
+the pinned commits; `--reset` forces the same process.
+
+Before any reset or clean, each dirty engine, core and UI tree is snapshotted
+to a printed `refs/keep/tg2-patches-<target>-...` reference. A private temporary
+Git index captures tracked and untracked files without altering the user's
+index; core is preserved separately before the parent engine. These references
+are local recovery commits, never new submodule pins. Recover individual files
+with `git show <printed-ref>:<path>`. Ignored build outputs are not cleaned.
+`--check` is read-only: it validates the complete stamp/tree match and exits
+nonzero if reapplication is needed; it no longer checks dependent hunks in
+isolation. Qualify a fresh stack by applying it and rerunning for a no-op.
 
 - `0011-writer-routed-second-sound-chip.patch`: tag every queued FM/PSG write with its writer and, when the game asks for it, feed a second virtual YM2612+SN76489 from the 68K-origin writes while the first chip keeps the Z80 music driver (`audio_set_chip_routing`). Stock modes keep the single chip and are untouched; the per-chip timer/status model keeps chip A's timer B as the music clock (patch 0010's free-running phase included) and gives the 68K side its own. `audio_mixer_chip_output()` exposes each chip's stream for the BOTH acceptance export (`GENESIS_AUDIO_CHIPDUMP`). The 68K no longer stalls the Z80 for its chip writes while routing is on, because those go to the second chip.
 
@@ -53,7 +58,7 @@ then repeat to verify idempotence; preserve existing edits before any reset.
 
 - `0016-photo-freeze-hotkey.patch`: P freezes emulation on the current frame without the game's own PAUSE screen (P or Esc resumes), so a player can line up a clean screenshot of the window. Nothing changes until P is pressed.
 
-- `0017-game-hides-internal-resolution.patch`: a `GameSpec.hide_internal_resolution` flag drops the runtime menu's "Internal resolution" row for games whose own video provider ignores the supersampling scale (Top Gear 2 today: the row did nothing visible).
+- `0017-game-hides-internal-resolution.patch`: a `GameSpec.hide_internal_resolution` flag drops the runtime menu's "Internal resolution" row for games whose own video provider ignores the supersampling scale. Superseded for Top Gear 2 by 0050, which makes the shared row drive its native render scale; retained in the historical stack.
 
 - `0018-quickstate-frame-boundary-and-resume.patch`: a game hook may offer a per-frame instruction as a host-snapshot boundary (`glue_state_boundary`), which parks a queued save at a repeatable point instead of interrupting whatever instruction the save command landed on, and the adapter may name the PC the game fiber restarts at after a load (`state_resume_pc`). Top Gear 2's screens spin on their own hardware flags, so without this a quickstate loaded in a fresh process resumed inside the new process's boot chain and the picture froze while the guest ran on.
 
