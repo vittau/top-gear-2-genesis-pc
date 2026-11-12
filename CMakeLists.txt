@@ -6,7 +6,7 @@ if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING
         "Policy floor for the pinned SDL2 source used by release builds")
 endif()
-project(TopGear2Recomp VERSION 0.3.0 LANGUAGES C CXX)
+project(TopGear2Recomp VERSION 0.4.0 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 # Release identity embedded in the executable (launcher/about and the
