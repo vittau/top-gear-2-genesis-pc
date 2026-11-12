@@ -678,6 +678,13 @@ void tg2_audio_set_race_sound(int mode)
 {
     if (mode < TG2_SOUND_SFX || mode > TG2_SOUND_BOTH) return;
     s_mode = mode;
+    /* The native page profile owns A4+$0C ($FF2560), and its row emitter
+     * reads that choice on every draw. Runtime-menu changes must update the
+     * open page just like its native UP/DOWN handler; do not steer $FF240E
+     * or request a tile repaint. The race RAM overlay is not a menu page. */
+    if (!tg2_race_audio_policy_frozen() &&
+        tg2_ram16(0xff0000u + RAM_MENU_PAGE) == RACE_SOUND_PAGE)
+        ram_write16(0xff2560u, page_value());
     /* Two virtual chips and a second Z80 core only while BOTH is the live
      * choice; stock modes keep the single chip and core so their output stays
      * byte-identical. A change made mid-race is adopted at the next race. */
