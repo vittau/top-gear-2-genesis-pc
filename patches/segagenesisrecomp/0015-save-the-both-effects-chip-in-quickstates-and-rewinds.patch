@@ -1,0 +1,511 @@
+From 5d7830bc467e7109472bfe3ce1b237b5bfc3a3c2 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 13:01:15 -0300
+Subject: [PATCH] Save the BOTH effects chip in quickstates and rewinds
+
+Writer-routed BOTH mode instantiates a second YM2612 and a second SN76489
+(chip 1) for the 68K SFX engine and the race SFX Z80 image. The quickstate
+format carried only chip 0, so a state loaded into a process that was not
+already running that race restored the 68K/Z80 machine into a pair of idle
+effects chips: sustained FM voices (the engine sound started once by race
+init) and the DAC stream stayed silent, while one-shot effects that key
+themselves still played. Rewind snapshots had the same gap.
+
+Chip 1 is written as an optional tagged, length-prefixed trailer after chip
+0's unchanged bytes in ym2612_save_state/psg_save_state, and the loaders skip
+it when it is absent, so a quickstate written by an older build still loads
+and simply leaves chip 1 as it was (the old behaviour). Sections 4/5 of the
+host state container may therefore be shorter than this build writes; the
+loader validates them by reading, not by size. The rollback snapshots carry
+both chips in the same shape.
+---
+ runner/audio/sn76489.c       | 154 +++++++++++++++++++++-------
+ runner/audio/sn76489.h       |   3 +-
+ runner/audio/ym2612.h        |   5 +-
+ runner/audio/ym2612_ymfm.cpp | 188 ++++++++++++++++++++++++++---------
+ runner/host_state.h          |  10 +-
+ 5 files changed, 273 insertions(+), 87 deletions(-)
+
+diff --git a/runner/audio/sn76489.c b/runner/audio/sn76489.c
+index 78f2297..96a106f 100644
+--- a/runner/audio/sn76489.c
++++ b/runner/audio/sn76489.c
+@@ -317,15 +317,36 @@ void psg_reset_leftover_chip(int index)
+ void psg_reset_leftover(void) { psg_reset_leftover_chip(0); }
+ 
+ /* Save-state hooks (own-backend snapshots): the whole SN76489 register/
+- * counter struct + sample-clock remainder. The output scratch is transient
+- * (drained every frame) and is reset on load. */
++ * counter struct + sample-clock remainder. Chip 0's bytes are exactly the
++ * pre-BOTH format; chip 1 (the writer-routed BOTH-mode chip) follows as an
++ * OPTIONAL, tagged, length-prefixed trailer, so a quickstate written before
++ * BOTH existed still loads and leaves chip 1 alone. Chip 1 has to be in the
++ * file: its latch/volume/tone registers and LFSR phase are established by the
++ * driver that started an effect and are not re-sent by a driver resuming
++ * mid-effect. The output scratch is transient and is reset on load. */
+ #include <stdio.h>
++enum {
++    PSG_CHIP1_TAG = 0x31535031,        /* "1PS1" little-endian */
++    PSG_CHIP1_VERSION = 1
++};
++
++static int psg_save_chip(int chip, FILE *f)
++{
++    if (!s_chips[chip].inited) psg_init_chip(chip);
++    if (fwrite(&s_chips[chip].sn, sizeof s_chips[chip].sn, 1, f) != 1) return 0;
++    if (fwrite(&s_chips[chip].leftover_master_cycles,
++               sizeof s_chips[chip].leftover_master_cycles, 1, f) != 1) return 0;
++    return 1;
++}
++
+ int psg_save_state(FILE *f)
+ {
+     if (!s_chips[0].inited) psg_init();
+-    if (fwrite(&s_chips[0].sn, sizeof s_chips[0].sn, 1, f) != 1) return 0;
+-    if (fwrite(&s_chips[0].leftover_master_cycles, sizeof s_chips[0].leftover_master_cycles, 1, f) != 1) return 0;
+-    return 1;
++    if (!psg_save_chip(0, f)) return 0;
++    uint32_t tag = PSG_CHIP1_TAG, version = PSG_CHIP1_VERSION;
++    if (fwrite(&tag, sizeof tag, 1, f) != 1) return 0;
++    if (fwrite(&version, sizeof version, 1, f) != 1) return 0;
++    return psg_save_chip(1, f);
+ }
+ 
+ #include "cosim.h"
+@@ -370,50 +391,115 @@ int psg_cosim_dump(char *buf, int cap) {
+ }
+ #endif /* GENESIS_COSIM */
+ 
++/* Rollback snapshots carry both chips as well: rewinding inside BOTH must
++ * restore the effects chip instead of leaving it at the moment being rewound
++ * away from. Chip 0's layout is the historical one; chip 1 follows unchanged in
++ * the same shape, and a chip-0-only image still loads. */
++static size_t psg_rb_chip_size(int chip)
++{
++    if (!s_chips[chip].inited) psg_init_chip(chip);
++    uint32_t pend = (uint32_t)(s_chips[chip].scratch_write - s_chips[chip].scratch_read);
++    return sizeof s_chips[chip].sn + sizeof s_chips[chip].leftover_master_cycles +
++           sizeof pend + (size_t)pend * 2u * sizeof(int16_t);
++}
++
++static uint8_t *psg_rb_chip_save(int chip, uint8_t *o)
++{
++    if (!s_chips[chip].inited) psg_init_chip(chip);
++    uint32_t pend = (uint32_t)(s_chips[chip].scratch_write - s_chips[chip].scratch_read);
++    memcpy(o, &s_chips[chip].sn, sizeof s_chips[chip].sn); o += sizeof s_chips[chip].sn;
++    memcpy(o, &s_chips[chip].leftover_master_cycles, sizeof s_chips[chip].leftover_master_cycles);
++    o += sizeof s_chips[chip].leftover_master_cycles;
++    memcpy(o, &pend, sizeof pend); o += sizeof pend;
++    memcpy(o, &s_chips[chip].scratch[s_chips[chip].scratch_read], (size_t)pend * sizeof(int16_t));
++    o += (size_t)pend * sizeof(int16_t);
++    memcpy(o, &s_chips[chip].raw_scratch[s_chips[chip].scratch_read], (size_t)pend * sizeof(int16_t));
++    o += (size_t)pend * sizeof(int16_t);
++    return o;
++}
++
++static int psg_rb_chip_load(int chip, const uint8_t *i, size_t len)
++{
++    if (!s_chips[chip].inited) psg_init_chip(chip);
++    uint32_t pend = 0;
++    size_t fixed = sizeof s_chips[chip].sn + sizeof s_chips[chip].leftover_master_cycles + sizeof pend;
++    if (!i || len < fixed) return 0;
++    memcpy(&pend, i + sizeof s_chips[chip].sn + sizeof s_chips[chip].leftover_master_cycles, sizeof pend);
++    if (pend > PSG_SCRATCH_SAMPLES || len != fixed + (size_t)pend * 2u * sizeof(int16_t)) return 0;
++    memcpy(&s_chips[chip].sn, i, sizeof s_chips[chip].sn); i += sizeof s_chips[chip].sn;
++    memcpy(&s_chips[chip].leftover_master_cycles, i, sizeof s_chips[chip].leftover_master_cycles);
++    i += sizeof s_chips[chip].leftover_master_cycles + sizeof pend;
++    memcpy(s_chips[chip].scratch, i, (size_t)pend * sizeof(int16_t));
++    i += (size_t)pend * sizeof(int16_t);
++    memcpy(s_chips[chip].raw_scratch, i, (size_t)pend * sizeof(int16_t));
++    s_chips[chip].scratch_read = 0;
++    s_chips[chip].scratch_write = pend;
++    return 1;
++}
++
++/* Length of one chip's image inside a snapshot, derived from the image. */
++static int psg_rb_chip_span(const uint8_t *i, size_t len, size_t *span)
++{
++    uint32_t pend = 0;
++    const size_t fixed = sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles + sizeof pend;
++    if (!i || len < fixed) return 0;
++    memcpy(&pend, i + sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles, sizeof pend);
++    if (pend > PSG_SCRATCH_SAMPLES) return 0;
++    size_t total = fixed + (size_t)pend * 2u * sizeof(int16_t);
++    if (len < total) return 0;
++    *span = total;
++    return 1;
++}
++
+ size_t psg_rb_save(void *dst, size_t cap)
+ {
+     if (!s_chips[0].inited) psg_init();
+-    uint32_t pend = (uint32_t)(s_chips[0].scratch_write - s_chips[0].scratch_read);
+-    size_t need = sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles + sizeof pend +
+-                  (size_t)pend * 2u * sizeof(int16_t);
++    size_t need = psg_rb_chip_size(0) + psg_rb_chip_size(1);
+     if (!dst) return need;
+     if (cap < need) return 0;
+-    uint8_t *o = (uint8_t *)dst;
+-    memcpy(o, &s_chips[0].sn, sizeof s_chips[0].sn); o += sizeof s_chips[0].sn;
+-    memcpy(o, &s_chips[0].leftover_master_cycles, sizeof s_chips[0].leftover_master_cycles);
+-    o += sizeof s_chips[0].leftover_master_cycles;
+-    memcpy(o, &pend, sizeof pend); o += sizeof pend;
+-    memcpy(o, &s_chips[0].scratch[s_chips[0].scratch_read], (size_t)pend * sizeof(int16_t));
+-    o += (size_t)pend * sizeof(int16_t);
+-    memcpy(o, &s_chips[0].raw_scratch[s_chips[0].scratch_read], (size_t)pend * sizeof(int16_t));
++    uint8_t *o = psg_rb_chip_save(0, (uint8_t *)dst);
++    psg_rb_chip_save(1, o);
+     return need;
+ }
+ 
+ int psg_rb_load(const void *src, size_t len)
+ {
++    if (!src) return 0;
+     if (!s_chips[0].inited) psg_init();
+-    const uint8_t *i = (const uint8_t *)src;
+-    uint32_t pend = 0;
+-    size_t fixed = sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles + sizeof pend;
+-    if (!src || len < fixed) return 0;
+-    memcpy(&pend, i + sizeof s_chips[0].sn + sizeof s_chips[0].leftover_master_cycles, sizeof pend);
+-    if (pend > PSG_SCRATCH_SAMPLES || len != fixed + (size_t)pend * 2u * sizeof(int16_t)) return 0;
+-    memcpy(&s_chips[0].sn, i, sizeof s_chips[0].sn); i += sizeof s_chips[0].sn;
+-    memcpy(&s_chips[0].leftover_master_cycles, i, sizeof s_chips[0].leftover_master_cycles);
+-    i += sizeof s_chips[0].leftover_master_cycles + sizeof pend;
+-    memcpy(s_chips[0].scratch, i, (size_t)pend * sizeof(int16_t));
+-    i += (size_t)pend * sizeof(int16_t);
+-    memcpy(s_chips[0].raw_scratch, i, (size_t)pend * sizeof(int16_t));
+-    s_chips[0].scratch_read = 0;
+-    s_chips[0].scratch_write = pend;
++    size_t first = 0, second = 0;
++    if (!psg_rb_chip_span((const uint8_t *)src, len, &first)) return 0;
++    int both = first < len && psg_rb_chip_span((const uint8_t *)src + first, len - first, &second)
++               && first + second == len;
++    if (first != len && !both) return 0;
++    if (!psg_rb_chip_load(0, (const uint8_t *)src, first)) return 0;
++    if (!both) return 1;    /* chip-0-only image: leave chip 1 as it is */
++    return psg_rb_chip_load(1, (const uint8_t *)src + first, second);
++}
++
++static int psg_load_chip(int chip, FILE *f)
++{
++    if (!s_chips[chip].inited) psg_init_chip(chip);
++    if (fread(&s_chips[chip].sn, sizeof s_chips[chip].sn, 1, f) != 1) return 0;
++    if (fread(&s_chips[chip].leftover_master_cycles,
++              sizeof s_chips[chip].leftover_master_cycles, 1, f) != 1) return 0;
++    s_chips[chip].scratch_read = s_chips[chip].scratch_write = 0;
+     return 1;
+ }
+ 
+ int psg_load_state(FILE *f)
+ {
+     if (!s_chips[0].inited) psg_init();
+-    if (fread(&s_chips[0].sn, sizeof s_chips[0].sn, 1, f) != 1) return 0;
+-    if (fread(&s_chips[0].leftover_master_cycles, sizeof s_chips[0].leftover_master_cycles, 1, f) != 1) return 0;
+-    s_chips[0].scratch_read = s_chips[0].scratch_write = 0;
+-    return 1;
++    if (!psg_load_chip(0, f)) return 0;
++    /* Optional chip-1 trailer; absent in a state written before BOTH existed
++     * (or when the next container section follows instead of the tag). */
++    long at = ftell(f);
++    uint32_t tag = 0;
++    if (at < 0 || fread(&tag, sizeof tag, 1, f) != 1 || tag != PSG_CHIP1_TAG) {
++        if (at >= 0) fseek(f, at, SEEK_SET);
++        return 1;
++    }
++    uint32_t version = 0;
++    if (fread(&version, sizeof version, 1, f) != 1 || version != PSG_CHIP1_VERSION)
++        return 0;
++    return psg_load_chip(1, f);
+ }
+diff --git a/runner/audio/sn76489.h b/runner/audio/sn76489.h
+index c0489bc..038128b 100644
+--- a/runner/audio/sn76489.h
++++ b/runner/audio/sn76489.h
+@@ -35,7 +35,8 @@ size_t psg_render_pair_chip(int index, int16_t *filtered,
+ size_t psg_samples_available_chip(int index);
+ void   psg_reset_leftover_chip(int index);
+ 
+-/* Save-state hooks (own-backend snapshots). Returns 1 on success. */
++/* Save-state hooks (own-backend snapshots): chip 0 plus an optional tagged
++ * trailer for the BOTH-mode chip 1, so an older state still loads. */
+ #include <stdio.h>
+ int psg_save_state(FILE *f);
+ int psg_load_state(FILE *f);
+diff --git a/runner/audio/ym2612.h b/runner/audio/ym2612.h
+index a04cbea..d99bf00 100644
+--- a/runner/audio/ym2612.h
++++ b/runner/audio/ym2612.h
+@@ -57,8 +57,9 @@ size_t ym2612_samples_available(void);
+  * upsampled — we'll match at init time. */
+ uint32_t ym2612_sample_rate(void);
+ 
+-/* Save-state hooks (own-backend snapshots). Full chip + wrapper state;
+- * returns 1 on success. Format is private to a build. */
++/* Save-state hooks (own-backend snapshots). Chip 0's bytes are the historical
++ * format; the BOTH-mode chip 1 follows as an optional tagged trailer, so an
++ * older state still loads (leaving chip 1 alone). 1 on success. */
+ #include <stdio.h>
+ int ym2612_save_state(FILE *f);
+ int ym2612_load_state(FILE *f);
+diff --git a/runner/audio/ym2612_ymfm.cpp b/runner/audio/ym2612_ymfm.cpp
+index 90878bf..74cc7fe 100644
+--- a/runner/audio/ym2612_ymfm.cpp
++++ b/runner/audio/ym2612_ymfm.cpp
+@@ -254,23 +254,61 @@ extern "C" uint32_t ym2612_sample_rate(void) {
+  * ymfm_saved_state (size-prefixed blob; the size is whatever the vendored
+  * ymfm version serializes -- the format is private to a build), plus this
+  * wrapper's sample-clock remainder and output-LPF state. The output scratch
+- * ring is transient (drained every frame) and is reset on load. Only the
+- * canonical chip 0 is in the state format; the second chip is re-synced from
+- * the next frame of 68K writes after a load. */
+-extern "C" int ym2612_save_state(FILE *f) {
+-    if (!s_chips[0].inited) ym2612_init();
++ * ring is transient (drained every frame) and is reset on load.
++ *
++ * Chip 0's bytes are exactly the pre-BOTH format. Chip 1 (the writer-routed
++ * second chip) follows as an OPTIONAL, tagged, length-prefixed trailer, so a
++ * quickstate written before BOTH existed still loads and simply leaves chip 1
++ * alone -- the behaviour it had. Chip 1 has to be in the file: its key-on,
++ * envelope, pan and DAC state is established once by the engine that started
++ * an effect, and a driver that resumes mid-effect only streams data or
++ * frequency writes, so it cannot rebuild it. A quickstate without it reloaded a
++ * running race with an idle effects chip -- the engine sound (and every
++ * sustained FM voice) stayed silent while one-shot effects still keyed.
++ * The same applies to a rewind inside BOTH: see ym2612_rb_save(). */
++enum {
++    YM_CHIP1_TAG = 0x314D5931,          /* "1YM1" little-endian */
++    YM_CHIP1_VERSION = 1
++};
++
++static int save_chip(YmChip &c, FILE *f) {
++    if (!c.inited) ym2612_init_chip(c.index);
+     std::vector<uint8_t> buf;
+     ymfm::ymfm_saved_state st(buf, true);
+-    s_chips[0].chip->save_restore(st);
++    c.chip->save_restore(st);
+     uint32_t n = (uint32_t)buf.size();
+     if (fwrite(&n, sizeof n, 1, f) != 1) return 0;
+     if (n && fwrite(buf.data(), 1, n, f) != n) return 0;
+-    if (fwrite(&s_chips[0].master_accum, sizeof s_chips[0].master_accum, 1, f) != 1) return 0;
+-    if (fwrite(s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev, 1, f) != 1) return 0;
+-    if (fwrite(s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out,  1, f) != 1) return 0;
++    if (fwrite(&c.master_accum, sizeof c.master_accum, 1, f) != 1) return 0;
++    if (fwrite(c.lpf_prev, sizeof c.lpf_prev, 1, f) != 1) return 0;
++    if (fwrite(c.lpf_out,  sizeof c.lpf_out,  1, f) != 1) return 0;
++    return 1;
++}
++
++static int load_chip(YmChip &c, FILE *f) {
++    if (!c.inited) ym2612_init_chip(c.index);
++    uint32_t n = 0;
++    if (fread(&n, sizeof n, 1, f) != 1 || n > (1u << 20)) return 0;
++    std::vector<uint8_t> buf(n);
++    if (n && fread(buf.data(), 1, n, f) != n) return 0;
++    ymfm::ymfm_saved_state st(buf, false);
++    c.chip->save_restore(st);
++    if (fread(&c.master_accum, sizeof c.master_accum, 1, f) != 1) return 0;
++    if (fread(c.lpf_prev, sizeof c.lpf_prev, 1, f) != 1) return 0;
++    if (fread(c.lpf_out,  sizeof c.lpf_out,  1, f) != 1) return 0;
++    c.scratch_read = c.scratch_write = 0;
+     return 1;
+ }
+ 
++extern "C" int ym2612_save_state(FILE *f) {
++    if (!s_chips[0].inited) ym2612_init();
++    if (!save_chip(s_chips[0], f)) return 0;
++    uint32_t tag = YM_CHIP1_TAG, version = YM_CHIP1_VERSION;
++    if (fwrite(&tag, sizeof tag, 1, f) != 1) return 0;
++    if (fwrite(&version, sizeof version, 1, f) != 1) return 0;
++    return save_chip(s_chips[1], f);
++}
++
+ #include "cosim.h"
+ /* Full FM chip state hashed for benchmark regression and differential co-sim.
+  * Same surface as
+@@ -289,68 +327,122 @@ extern "C" uint64_t ym2612_cosim_hash(void) {
+     return h;
+ }
+ 
+-extern "C" size_t ym2612_rb_save(void *dst, size_t cap) {
+-    if (!s_chips[0].inited) ym2612_init();
++/* Rollback snapshots (in memory, same build only) carry both chips: rewinding
++ * inside BOTH restores the effects chip as well, instead of leaving it at the
++ * moment being rewound away from. Chip 0's layout is the historical one; chip 1
++ * follows in the same shape. */
++static size_t rb_chip_size(YmChip &c) {
++    if (!c.inited) ym2612_init_chip(c.index);
+     std::vector<uint8_t> buf;
+     ymfm::ymfm_saved_state st(buf, true);
+-    s_chips[0].chip->save_restore(st);
++    c.chip->save_restore(st);
+     uint32_t n = (uint32_t)buf.size();
+-    uint32_t pend = (uint32_t)(s_chips[0].scratch_write - s_chips[0].scratch_read);
+-    size_t need = sizeof n + n + sizeof s_chips[0].master_accum + sizeof s_chips[0].lpf_prev +
+-                  sizeof s_chips[0].lpf_out + sizeof pend + (size_t)pend * 4u * sizeof(int16_t);
+-    if (!dst) return need;
+-    if (cap < need) return 0;
+-    uint8_t *o = (uint8_t *)dst;
++    uint32_t pend = (uint32_t)(c.scratch_write - c.scratch_read);
++    return sizeof n + n + sizeof c.master_accum + sizeof c.lpf_prev +
++           sizeof c.lpf_out + sizeof pend + (size_t)pend * 4u * sizeof(int16_t);
++}
++
++static uint8_t *rb_chip_save(YmChip &c, uint8_t *o) {
++    if (!c.inited) ym2612_init_chip(c.index);
++    std::vector<uint8_t> buf;
++    ymfm::ymfm_saved_state st(buf, true);
++    c.chip->save_restore(st);
++    uint32_t n = (uint32_t)buf.size();
++    uint32_t pend = (uint32_t)(c.scratch_write - c.scratch_read);
+     std::memcpy(o, &n, sizeof n); o += sizeof n;
+     if (n) { std::memcpy(o, buf.data(), n); o += n; }
+-    std::memcpy(o, &s_chips[0].master_accum, sizeof s_chips[0].master_accum); o += sizeof s_chips[0].master_accum;
+-    std::memcpy(o, s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev); o += sizeof s_chips[0].lpf_prev;
+-    std::memcpy(o, s_chips[0].lpf_out, sizeof s_chips[0].lpf_out); o += sizeof s_chips[0].lpf_out;
++    std::memcpy(o, &c.master_accum, sizeof c.master_accum); o += sizeof c.master_accum;
++    std::memcpy(o, c.lpf_prev, sizeof c.lpf_prev); o += sizeof c.lpf_prev;
++    std::memcpy(o, c.lpf_out, sizeof c.lpf_out); o += sizeof c.lpf_out;
+     std::memcpy(o, &pend, sizeof pend); o += sizeof pend;
+-    std::memcpy(o, &s_chips[0].scratch[s_chips[0].scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
++    std::memcpy(o, &c.scratch[c.scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
+     o += (size_t)pend * 2u * sizeof(int16_t);
+-    std::memcpy(o, &s_chips[0].raw_scratch[s_chips[0].scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
+-    return need;
++    std::memcpy(o, &c.raw_scratch[c.scratch_read * 2], (size_t)pend * 2u * sizeof(int16_t));
++    o += (size_t)pend * 2u * sizeof(int16_t);
++    return o;
+ }
+ 
+-extern "C" int ym2612_rb_load(const void *src, size_t len) {
+-    if (!s_chips[0].inited) ym2612_init();
+-    const uint8_t *i = (const uint8_t *)src;
++static int rb_chip_load(YmChip &c, const uint8_t *i, size_t len) {
++    if (!c.inited) ym2612_init_chip(c.index);
+     const uint8_t *end = i + len;
+     uint32_t n = 0, pend = 0;
+-    if (!src || len < sizeof n) return 0;
++    if (len < sizeof n) return 0;
+     std::memcpy(&n, i, sizeof n); i += sizeof n;
+-    size_t fixed = sizeof s_chips[0].master_accum + sizeof s_chips[0].lpf_prev + sizeof s_chips[0].lpf_out + sizeof pend;
++    size_t fixed = sizeof c.master_accum + sizeof c.lpf_prev + sizeof c.lpf_out + sizeof pend;
+     if (n > (1u << 20) || (size_t)(end - i) < (size_t)n + fixed) return 0;
+     std::memcpy(&pend, i + n + fixed - sizeof pend, sizeof pend);
+     if (pend > FM_SCRATCH_STEREO_SAMPLES ||
+         (size_t)(end - i) != (size_t)n + fixed + (size_t)pend * 4u * sizeof(int16_t)) return 0;
+     std::vector<uint8_t> buf(i, i + n); i += n;
+     ymfm::ymfm_saved_state st(buf, false);
+-    s_chips[0].chip->save_restore(st);
+-    std::memcpy(&s_chips[0].master_accum, i, sizeof s_chips[0].master_accum); i += sizeof s_chips[0].master_accum;
+-    std::memcpy(s_chips[0].lpf_prev, i, sizeof s_chips[0].lpf_prev); i += sizeof s_chips[0].lpf_prev;
+-    std::memcpy(s_chips[0].lpf_out, i, sizeof s_chips[0].lpf_out); i += sizeof s_chips[0].lpf_out;
++    c.chip->save_restore(st);
++    std::memcpy(&c.master_accum, i, sizeof c.master_accum); i += sizeof c.master_accum;
++    std::memcpy(c.lpf_prev, i, sizeof c.lpf_prev); i += sizeof c.lpf_prev;
++    std::memcpy(c.lpf_out, i, sizeof c.lpf_out); i += sizeof c.lpf_out;
+     i += sizeof pend;
+-    std::memcpy(s_chips[0].scratch, i, (size_t)pend * 2u * sizeof(int16_t));
++    std::memcpy(c.scratch, i, (size_t)pend * 2u * sizeof(int16_t));
+     i += (size_t)pend * 2u * sizeof(int16_t);
+-    std::memcpy(s_chips[0].raw_scratch, i, (size_t)pend * 2u * sizeof(int16_t));
+-    s_chips[0].scratch_read = 0;
+-    s_chips[0].scratch_write = pend;
++    std::memcpy(c.raw_scratch, i, (size_t)pend * 2u * sizeof(int16_t));
++    c.scratch_read = 0;
++    c.scratch_write = pend;
+     return 1;
+ }
+ 
+-extern "C" int ym2612_load_state(FILE *f) {
++extern "C" size_t ym2612_rb_save(void *dst, size_t cap) {
+     if (!s_chips[0].inited) ym2612_init();
+-    uint32_t n = 0;
+-    if (fread(&n, sizeof n, 1, f) != 1 || n > (1u << 20)) return 0;
+-    std::vector<uint8_t> buf(n);
+-    if (n && fread(buf.data(), 1, n, f) != n) return 0;
+-    ymfm::ymfm_saved_state st(buf, false);
+-    s_chips[0].chip->save_restore(st);
+-    if (fread(&s_chips[0].master_accum, sizeof s_chips[0].master_accum, 1, f) != 1) return 0;
+-    if (fread(s_chips[0].lpf_prev, sizeof s_chips[0].lpf_prev, 1, f) != 1) return 0;
+-    if (fread(s_chips[0].lpf_out,  sizeof s_chips[0].lpf_out,  1, f) != 1) return 0;
+-    s_chips[0].scratch_read = s_chips[0].scratch_write = 0;
++    size_t need = rb_chip_size(s_chips[0]) + rb_chip_size(s_chips[1]);
++    if (!dst) return need;
++    if (cap < need) return 0;
++    uint8_t *o = rb_chip_save(s_chips[0], (uint8_t *)dst);
++    rb_chip_save(s_chips[1], o);
++    return need;
++}
++
++/* Length of one chip's image inside a snapshot (derived from the image, not
++ * from the live chip, so a snapshot taken at another moment still parses). */
++static int rb_chip_span(const uint8_t *i, size_t len, size_t *span) {
++    uint32_t n = 0, pend = 0;
++    const size_t tail = sizeof(uint32_t) + 2u * sizeof(int32_t) + 2u * sizeof(int32_t)
++                        + sizeof(uint32_t);
++    if (!i || len < sizeof n) return 0;
++    std::memcpy(&n, i, sizeof n);
++    if (n > (1u << 20) || len < sizeof n + (size_t)n + tail) return 0;
++    std::memcpy(&pend, i + sizeof n + n + tail - sizeof pend, sizeof pend);
++    if (pend > FM_SCRATCH_STEREO_SAMPLES) return 0;
++    size_t total = sizeof n + (size_t)n + tail + (size_t)pend * 4u * sizeof(int16_t);
++    if (len < total) return 0;
++    *span = total;
+     return 1;
+ }
++
++extern "C" int ym2612_rb_load(const void *src, size_t len) {
++    if (!src) return 0;
++    if (!s_chips[0].inited) ym2612_init();
++    size_t first = 0, second = 0;
++    if (!rb_chip_span((const uint8_t *)src, len, &first)) return 0;
++    int both = first < len && rb_chip_span((const uint8_t *)src + first, len - first, &second)
++               && first + second == len;
++    if (first != len && !both) return 0;
++    if (!rb_chip_load(s_chips[0], (const uint8_t *)src, first)) return 0;
++    if (!both) return 1;    /* chip-0-only image (older build): leave chip 1 */
++    return rb_chip_load(s_chips[1], (const uint8_t *)src + first, second);
++}
++
++extern "C" int ym2612_load_state(FILE *f) {
++    if (!s_chips[0].inited) ym2612_init();
++    if (!load_chip(s_chips[0], f)) return 0;
++    /* Optional chip-1 trailer. A state written before BOTH existed simply ends
++     * here (or, inside a container that stores sections back to back, the next
++     * section follows and does not carry this tag): chip 1 keeps whatever the
++     * build already had, exactly the old behaviour. */
++    long at = ftell(f);
++    uint32_t tag = 0;
++    if (at < 0 || fread(&tag, sizeof tag, 1, f) != 1 || tag != YM_CHIP1_TAG) {
++        if (at >= 0) fseek(f, at, SEEK_SET);
++        return 1;
++    }
++    uint32_t version = 0;
++    if (fread(&version, sizeof version, 1, f) != 1 || version != YM_CHIP1_VERSION)
++        return 0;
++    return load_chip(s_chips[1], f);
++}
+diff --git a/runner/host_state.h b/runner/host_state.h
+index b4695bd..350a410 100644
+--- a/runner/host_state.h
++++ b/runner/host_state.h
+@@ -140,12 +140,18 @@ static int host_state_load(const char *path)
+     if (fread(body,1,h.bytes,f)!=h.bytes || fgetc(f)!=EOF || ferror(f) ||
+         rom_crc32(body,h.bytes)!=h.crc || !g_game_spec.state_load(body,h.section[0],0)) goto done;
+     /* Check every fixed section and the opaque FM length BEFORE mutating RAM,
+-     * CPU, audio or host simulation. Also retain a rollback for I/O failures. */
++     * CPU, audio or host simulation. Also retain a rollback for I/O failures.
++     * The audio sections may be SHORTER than this build writes: a newer build
++     * appends a tagged, length-prefixed trailer to them (TG2's second virtual
++     * sound chip), and the section readers decide whether the trailer is there.
++     * A too-short or corrupt section still fails in host_machine_read below,
++     * because each reader validates its own length. */
+     backup=tmpfile(); staged=tmpfile(); if (!backup || !staged) goto done;
+     if (!host_machine_write(backup,&expected)) goto done;
+     size_t fm_at=0;
+     for (unsigned i=1;i<HOST_STATE_SECTIONS;++i) {
+-        if (h.section[i]!=expected.section[i]) goto done;
++        if (i<4 && h.section[i]!=expected.section[i]) goto done;
++        if (i>=4 && h.section[i]>expected.section[i]) goto done;
+         if (i<4) fm_at+=h.section[i];
+     }
+     uint32_t fm_size=0,old_fm_size=0;

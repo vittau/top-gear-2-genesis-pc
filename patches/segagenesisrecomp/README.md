@@ -23,6 +23,7 @@ No submodule branch is pushed and no submodule pin is changed.
 | `0012-make-replay-and-execution-diagnostics-opt-in.patch` | Migrate the old diagnostics default and let release users enable replay/evidence for bug reports without normal-play files. |
 | `0013-expose-game-scale-vocabulary-and-runtime-menu-layout.patch` | Use the game render-scale choices and host menu layout after the complete runtime settings surface has been assembled. |
 | `0014-declare-runtime-overlay-visibility.patch` | Expose the host visibility query through a public C header instead of game-side copied prototypes. |
+| `0015-save-the-both-effects-chip-in-quickstates-and-rewinds.patch` | Carry the BOTH-mode effects chip in quickstates and rewinds, as an optional trailer that older states simply do not have, so a race loaded from a menu keeps its engine sound. |
 | `core-0001-dispatch-pushed-rts-targets-with-exact-stack-deltas.patch` | Account every guest stack adjustment before choosing a normal return or a computed tail dispatch. |
 | `ui-0001-apply-runtime-layout-policy-and-wrap-help-footers.patch` | Share explicit section policy across both menu backends and reserve measured software help height above settings rows. |
 
