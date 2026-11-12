@@ -664,25 +664,37 @@ SAT are already available.
 
 ### 7.3 Road strip rasteriser
 
-For each output row `r` (0..H*N):
+The current implementation decodes each captured atlas row into ordered colour
+runs, then reconstructs their boundaries in screen space (see §13.1 and the
+[road-wobble follow-up](reviews/road-wobble.md)). It does not interpolate the
+atlas/template number across time.
 
-1. `src = r / N`, `frac = (r % N) / N`;
-2. resolve rows `src`, `src+1` of the picture; if their atlas rows belong to the
-   same pair family, `k_real = lerp(k(src), k(src+1), frac)`; otherwise use
-   `k(src)`;
-3. bank = bank(src) (nearest, never blended);
-4. `width = width_from_k(k_real)` — the measured ramps in §1.4 (`4 + 2k` with a
-   2/4 px saw-tooth for rows 0–287, `≈4 + 5k` with 4/6 px steps for 288–431),
-   expressed as a per-template slope table rather than a hard-coded constant,
-   so a different track descriptor cannot silently break it;
-5. `centre_real = lerp(centre(src), centre(src+1), frac)`, plus the 60 fps
-   temporal fraction when synthesising;
-6. per output column `c`: `src_x = (c - origin)/N`; the strip spans
-   `[centre- width/2, centre + width/2]`; inside, sample the authored atlas at
-   `src_x - centre` (nearest for interior texels; the silhouette column uses
-   analytic coverage so the edge is smooth at N×);
-7. colour = captured CRAM[bank|nibble]; the row's ground/panorama rows use the
-   same per-column mapping with their own scroll.
+1. Group adjacent road rows into continuous bands: same atlas pair family,
+   width-index step at most 8. A missing road row, crest jump or family change
+   breaks the band.
+2. Fit both silhouettes across each complete band with a bounded smoothing
+   spline on the scanline lattice: squared displacement plus 64 times squared
+   second difference. Every observed boundary stays within **2 native pixels**
+   of its authored position. The small pentadiagonal solve is game-owned in
+   `tg2_road_fit.c`; active bounds participate in the fit rather than clipping
+   a finished curve.
+3. Fit inner colour boundaries independently, matching the authored texel-kind
+   sequence. Repeated structures share one fit across stripe gaps; other
+   structures supply no observations. Colours, palette banks and stripe phase
+   remain discrete and belong to the source row. Near the vanishing point a
+   common reduction of a row's displacements preserves at least one quarter of
+   each authored run's width, preventing inverted/vanishing lane marks.
+4. For output sub-row `j`, use `t = (j + 0.5)/N - 0.5`. Interpolate fitted
+   boundaries toward the adjacent row only inside the same band. Inner runs
+   interpolate one-to-one only for matching structures; otherwise carry their
+   fitted position with the silhouette.
+5. Integrate the captured CRAM colours over each output pixel's exact overlap
+   with these intervals. Exterior artwork follows the silhouette; sprite, HUD,
+   car and plane-A ownership/composition is unchanged.
+
+The fit operates on the exact captured picture being presented, including
+60-fps interpolated pictures. It reads no newer live projection state and has
+no temporal smoothing or accumulating offset. Scale 1 never enters this path.
 
 Hills, crests and multiple road bands per frame fall out of the per-row/band
 classification the capture already provides (the atlas row ranges encode the
@@ -1141,12 +1153,13 @@ Linear Off retains the accepted nearest art and unchanged analytic road.
   - road silhouettes are decoded from that row's captured plane-B atlas.
     Continuous bands share an atlas family and a width-index step of at most 8;
     crests and family changes start another band;
-  - a local quadratic fit over ±5 rows removes integer centre/width wobble,
-    bounded to 1.5 native pixels from the authored edge. Sub-lines interpolate
-    the fitted edges only inside the same continuous band;
-  - the atlas's colour runs retain their relative positions inside the road.
-    Corresponding runs interpolate only when neighbouring rows have the same
-    texel sequence; palette and stripe phase stay with the source row;
+  - the road-wobble follow-up replaces the ±5-row quadratic with a constrained
+    whole-band fit (§7.3), bounded to **2 native pixels** from each authored
+    boundary. Sub-lines interpolate fitted edges only within a band;
+  - inner colour boundaries receive their own fits, with matching texel
+    sequences linked across stripe gaps. Run order and a minimum quarter of
+    authored run width are preserved; palette and stripe phase stay with the
+    source row. See [the evidence and limits](reviews/road-wobble.md);
   - analytic coverage applies to every colour boundary, including the road
     silhouette, borders and lane marks (the smooth-edge decision, §9.1);
   - pixels that are not scenery are preserved: the terrain test compares the
@@ -1209,8 +1222,9 @@ Box downsampling averages each N×N output block. Error is the mean of the
 maximum RGB channel difference per native pixel (0–255). The pre-existing
 acceptance bounds are mean ≤2.5 and at most 2% of pixels with a channel error
 >64. Differences concentrate at road, border and lane boundaries: the fitted
-silhouette may move ≤1.5 native pixels, and sub-lines interpolate within its
-continuous band. The audit checks the actual lane counts and centres against
+silhouette in that original qualification could move ≤1.5 native pixels, and
+sub-lines interpolated within its continuous band. The later road-wobble fit
+uses a 2-pixel bound and has its own before/after qualification linked above. The audit checks the actual lane counts and centres against
 the analytic plan (centre tolerance 1.5 output pixels), retaining source stripe
 phase rather than blending templates.
 

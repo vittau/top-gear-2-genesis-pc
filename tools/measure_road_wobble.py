@@ -3,14 +3,14 @@
 
 Requires NumPy. Enable TG2_ROAD_AUDIT_DIR and TG2_ROAD_BOUNDARY_AUDIT=1 in
 trace builds. .edges holds source-row geometry, .nxroad measures built pixels.
-No image, ROM or dump is loaded wholesale. Output is scalar JSON only.
+Frame evidence is processed one file at a time. Output is scalar JSON only.
 """
 import argparse
 import csv
 import json
 from pathlib import Path
 import numpy as np
-from check_road_artifacts import load_nx
+from check_road_artifacts import load_nx, NX_FIT_LIMIT
 
 
 def geometry(path):
@@ -36,7 +36,10 @@ def measure(before, after):
                       for kind in ('outer', 'inner')}
               for which in ('before', 'after')}
     files = 0
-    for a in sorted((before/'audit').glob('*.edges')):
+    paths = sorted((before/'audit').glob('*.edges'))
+    if {p.name for p in paths} != {p.name for p in (after/'audit').glob('*.edges')}:
+        raise ValueError('different source-boundary frame sets')
+    for a in paths:
         b = after/'audit'/a.name
         if not b.exists():
             raise ValueError(f'missing matched frame {b}')
@@ -89,6 +92,10 @@ def measure(before, after):
                                 max_deviation_from_interpolated_authored=deviation)
     if not files:
         raise ValueError('no matched .edges files')
+    if any(t['max_deviation'] > NX_FIT_LIMIT+1e-7 for t in totals['after'].values()):
+        raise ValueError('fitted source boundary exceeds authored envelope')
+    if presented['after']['max_deviation_from_interpolated_authored'] > NX_FIT_LIMIT+1/256:
+        raise ValueError('presented silhouette exceeds interpolated authored envelope')
     return dict(frames=files, units='native pixels / native row squared',
                 source_boundaries=totals, presented_silhouettes=presented)
 

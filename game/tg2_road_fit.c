@@ -79,4 +79,3 @@ void tg2_road_fit(const double *raw, const unsigned char *seen, int n,
     }
     for (int i = 0; i < n; ++i) out[i] = raw[i];
 }
-
