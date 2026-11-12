@@ -166,11 +166,12 @@ static const char *const tg2_internal_scale_labels[] = {
     "1x (off)", "2x", "3x", "4x"};
 static const GameInternalScale tg2_internal_scale = {
     tg2_internal_scales, tg2_internal_scale_labels, 4,
-    "Experimental: redraws the road at N times the internal resolution from "
-    "the game's own per-line road data. Sprites, HUD and sky keep native "
-    "detail. Applies next launch. 1x (off) restores the stock picture.",
-    "Experimental: the road is redrawn at 2x-4x from the game's per-line road "
-    "data. Applies next launch."};
+    "Experimental: redraws the road, cars and roadside scenery at N times the "
+    "internal resolution, using the game's most detailed artwork; objects grow "
+    "smoothly as they approach. HUD, sky and poles keep native detail. "
+    "Applies next launch. 1x (off) restores the stock picture.",
+    "Experimental: road, cars and scenery are redrawn at 2x-4x with smooth "
+    "growth. Applies next launch."};
 
 static void tg2_vblank(void) { recomp_call_addr(0xFF01EAu); }
 static void tg2_hblank(void) { recomp_call_addr(0xFFF9FEu); }
