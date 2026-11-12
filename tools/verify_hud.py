@@ -4,6 +4,7 @@
 Run --record-baseline before rebuilding the renderer, then run normally.
 Requires Pillow. Captures, dumps and logs stay under build/hud/.
 """
+from regression import boot_hashes
 import argparse
 import hashlib
 import json
@@ -190,9 +191,9 @@ for name, _, _, _ in runs:
     summary['manifests'][name] = 'all four empty'
 for name in ('off-centered', 'off-edges'):
     text = (a.out/name/'stderr.log').read_text()
-    for frame, expected in ((60, '2A0B972960C5E325'), (300, '1131D937D70234FD')):
+    for frame, expected in boot_hashes().items():
         assert f'frame={frame} w=320 h=224 hash=0x{expected}' in text, (name, frame)
-    summary[name] = dict(exit=0, hashes={'60': '2A0B972960C5E325', '300': '1131D937D70234FD'})
+    summary[name] = dict(exit=0, hashes={str(f): h for f, h in boot_hashes().items()})
 for ratio in ('16-9', '21-9'):
     old, centered = a.out/f'before-{ratio}', a.out/f'centered-{ratio}'
     old_hashes = re.findall(r'\[FBHASH\].*', (old/'stderr.log').read_text())

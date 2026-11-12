@@ -6,6 +6,7 @@ with the same route files as verify_hud and tg2_video(top=1) snapshots.
 The parent build/hud contains the pre-investigation wide captures.
 Outputs: JSON evidence and before/after crops, all under the ignored build tree.
 """
+from regression import boot_hashes
 import argparse
 import json
 from pathlib import Path
@@ -48,7 +49,7 @@ for name in ('off',) + NAMES:
     summary[name] = dict(width=image.width, margin=margin, red_bounds=red_bounds(image), manifests=0)
     if name == 'off':
         log = (a.out/name/'stderr.log').read_text()
-        for frame,h in ((60,'2A0B972960C5E325'),(300,'1131D937D70234FD')):
+        for frame,h in boot_hashes().items():
             assert f'frame={frame} w=320 h=224 hash=0x{h}' in log
         continue
     snapshots = [json.loads(f.read_text()) for f in (a.out/name).glob('state-*.json')]

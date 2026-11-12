@@ -21,6 +21,7 @@ Everything is read-only guest access plus the engine's dev probes
 controller; no physical gamepad is needed.
 """
 from __future__ import annotations
+from regression import boot_hashes
 
 import argparse
 import json
@@ -43,8 +44,8 @@ TWO_PLAYER = 0x189E
 CONTROL_RECT_2P = ((100, 80, 211, 95), (100, 192, 211, 207))
 CONTROL_RECT = (100, 136, 211, 151)    # native 256x224, inclusive
 
-HASH60 = 0x2A0B972960C5E325
-HASH300 = 0x1131D937D70234FD
+HASH60 = int(boot_hashes()[60], 16)
+HASH300 = int(boot_hashes()[300], 16)
 
 failures: list[str] = []
 

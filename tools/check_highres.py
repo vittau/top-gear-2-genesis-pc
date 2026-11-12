@@ -24,6 +24,7 @@ All guest-state access is read-only; controller/UI input drives the real game.
 Captures remain under ignored build/. Launcher qualification restores settings.
 """
 from __future__ import annotations
+from regression import boot_hashes
 
 import argparse
 import hashlib
@@ -41,7 +42,7 @@ from tg2_runner import Runner, manifest_counts  # noqa: E402
 from tg2_coverage import Coverage  # noqa: E402
 import tg2_password  # noqa: E402
 
-CANON = {60: '2A0B972960C5E325', 300: '1131D937D70234FD'}
+CANON = boot_hashes()
 MANIFESTS = ('dispatch_misses.toml', 'floor_coverage.toml',
              'interior_label_misses.toml', 'floor_unsafe.toml')
 

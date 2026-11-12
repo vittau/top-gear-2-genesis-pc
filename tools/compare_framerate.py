@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare private deterministic race captures; emit reviewable scalar evidence."""
+from regression import boot_hashes
 import argparse
 from collections import Counter
 import hashlib
@@ -27,7 +28,7 @@ def read_fields(path):
 def capture(path, start, count):
     summary = json.loads((path / 'summary.json').read_text())
     assert summary['exit'] == 0
-    assert summary['cold_boot'] == {'60': '2A0B972960C5E325', '300': '1131D937D70234FD'}
+    assert summary['cold_boot'] == {str(f): h for f, h in boot_hashes().items()}
     scalar = [read_fields(path / f'ram-{f}.ram') for f in range(start, start + count + 1)]
     summary['counter_deltas'] = {k: dict(Counter((y[k] - x[k]) % (1 << (FIELDS[k][1] * 8))
                                                 for x, y in zip(scalar, scalar[1:])))

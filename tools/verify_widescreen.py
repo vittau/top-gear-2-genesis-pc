@@ -5,6 +5,7 @@ Requires Pillow. All ROM-derived captures remain in the ignored output directory
 No guest state writes, pause/step, or savestates; uses only controller input,
 read-only dumps, and the free-running TCP presentation configuration.
 """
+from regression import boot_hashes
 import argparse
 import json
 import os
@@ -195,9 +196,9 @@ for mode in a.modes.split(','):
             d['video'].get('margin_pieces', 0) for d in diagnostics)
     if mode == 'off':
         text = (out/'stderr.log').read_text()
-        for frame, expected in [(60, '2A0B972960C5E325'), (300, '1131D937D70234FD')]:
+        for frame, expected in boot_hashes().items():
             assert f'frame={frame} w=320 h=224 hash=0x{expected}' in text
-        summary[mode]['hashes'] = {'60':'2A0B972960C5E325', '300':'1131D937D70234FD'}
+        summary[mode]['hashes'] = {str(f): h for f, h in boot_hashes().items()}
     if mode != 'off' and (a.out/'off/frame-2800.ram').exists():
         from PIL import Image, ImageChops
         for frame in FRAMES:

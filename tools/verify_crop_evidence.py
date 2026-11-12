@@ -14,6 +14,7 @@ Reads only the artifacts already on disk (no game process):
   python3 tools/verify_crop_evidence.py --root build/crop --out build/crop/evidence.json
 """
 from __future__ import annotations
+from regression import boot_hashes
 
 import argparse
 import glob
@@ -30,7 +31,7 @@ MENU_FRAMES = (600, 1350)
 EXPECTED = {  # mode -> (race width, menu width)
     'off': (256, 320), '16-9': (356, 398), '21-9': (467, 523),
 }
-STOCK_HASHES = {60: '2A0B972960C5E325', 300: '1131D937D70234FD'}
+STOCK_HASHES = boot_hashes()
 
 
 def png_size(path: Path):
