@@ -68,7 +68,7 @@ jobs:
         run: echo "${TG2_ROM_SHA256}  ${TG2_ROM_PATH}" | sha256sum -c -
 
       - name: Compute build version
-        run: echo "TG2_VERSION=0.3.0-g$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+        run: echo "TG2_VERSION=$(python3 tools/release/project_version.py)-g$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -258,7 +258,9 @@ jobs:
         shell: pwsh
         run: |
           $short = (git rev-parse --short=7 HEAD)
-          "TG2_VERSION=0.3.0-g$short" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $version = (python tools/release/project_version.py)
+          if ($LASTEXITCODE) { throw 'Reading project version failed' }
+          "TG2_VERSION=$version-g$short" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Restore pinned SDL2 tarball
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -335,7 +337,7 @@ jobs:
         run: echo "${TG2_ROM_SHA256}  ${TG2_ROM_PATH}" | shasum -a 256 -c -
 
       - name: Compute build version
-        run: echo "TG2_VERSION=0.3.0-g$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+        run: echo "TG2_VERSION=$(python3 tools/release/project_version.py)-g$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
 
       - name: Restore pinned SDL2 tarball
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

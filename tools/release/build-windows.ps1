@@ -13,11 +13,15 @@ param(
     [Parameter(Mandatory = $true)][string]$SdlSource,
     [string]$BuildDir = 'build-release\windows',
     [string]$OutDir = 'build-release\dist\windows',
-    [string]$Version = '0.3.0',
+    [string]$Version = '',
     [int]$Jobs = 8
 )
 $ErrorActionPreference = 'Continue'   # CMake warnings on stderr must not throw
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not $Version) {
+    $Version = (& python "$repo/tools/release/project_version.py")
+    if ($LASTEXITCODE) { throw 'Reading project version failed' }
+}
 if (-not [IO.Path]::IsPathRooted($BuildDir)) { $BuildDir = Join-Path $repo $BuildDir }
 if (-not [IO.Path]::IsPathRooted($OutDir)) { $OutDir = Join-Path $repo $OutDir }
 $Rom = (Resolve-Path -LiteralPath $Rom).Path

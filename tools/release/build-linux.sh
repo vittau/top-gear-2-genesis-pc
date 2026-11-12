@@ -18,7 +18,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 build="$repo/build-release/linux"
 out="$repo/build-release/dist/linux"
-version="0.3.0"
+version=$(python3 "$repo/tools/release/project_version.py")
 jobs="${JOBS:-3}"
 rom=""
 sdl=""

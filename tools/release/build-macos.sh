@@ -14,7 +14,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 build="$repo/build-release/macos"
 out="$repo/build-release/dist/macos"
-version="0.3.0"
+version=$(python3 "$repo/tools/release/project_version.py")
 jobs="${JOBS:-3}"
 architectures="arm64;x86_64"
 rom=""

@@ -22,6 +22,7 @@ import argparse
 import datetime
 import os
 import re
+from project_version import project_version
 import shutil
 import subprocess
 import sys
@@ -276,7 +277,7 @@ def stage_flat(args, binary_name, assets, sdl_license):
 
 def numeric_version(version):
     match = re.match(r"(\d+(?:\.\d+){0,2})", version)
-    return match.group(1) if match else "0.3.0"
+    return match.group(1) if match else project_version()
 
 
 INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
