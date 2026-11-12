@@ -526,24 +526,13 @@ be extended to N× (§8, S3).
 
 ### 5.5 The engine's "Internal resolution" option
 
-Today the row is hidden for TG2 by patch 0017 because `tg2_video` owns rows and
-the engine's HD path is bypassed (`main.c`: `s_hd_requested && !ui_open &&
-!s_video_frame.owner`). The engine's HD renderer is a *supersampled VDP
-re-render* plus a GPU upscale — it cannot produce N× road geometry, so
-un-hiding it as-is would repeat the old no-op.
-
-Proposal: keep the row (patch 0017 stays), and let the game provider own the
-scale through its own Mod row:
-
-```ini
-[mods.highres]
-scale = 2          ; 1 (off) | 2 | 3 | 4
-```
-
-If the owner prefers one control, the later implementation can instead consume
-`g_app_config.internal_scale` (patch 0033 exposes it to `GameVideo`) and drop
-the `hide_internal_resolution` flag — decision in §9. Either way the value is a
-*render scale*, not a window scale.
+Patch 0017 originally hid this row because the engine's supersampled VDP
+renderer could not affect TG2's custom picture. It is superseded by patch
+0050: TG2 now uses the shared **Internal resolution** row and its
+`settings.ini` `internal_scale` value for the native 1×–4× render scale.
+`hide_internal_resolution` is no longer active for TG2. Patch 0017 stays in
+the historical patch stack; the proposed separate `[mods.highres]` setting
+was not adopted. See §9 and §13 for the implemented surface.
 
 ### 5.6 Weather, tunnels, hills, night
 

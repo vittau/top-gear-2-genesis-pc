@@ -158,9 +158,9 @@ static int tg2_state_load(const void *data, size_t size, int apply)
 static uint32_t tg2_state_resume_pc(void) { return s_state_resume_site; }
 /* Experimental render scale (owner decisions 4, 5 and 6). `values` are the
  * settings.ini internal_scale numbers tg2_highres_scale() understands, in row
- * order; 1 keeps the stock picture. S7 extends this surface (NTSC exclusion,
- * live switching, launcher text); S3 only needs the row to exist and drive the
- * scale. */
+ * order; 1 keeps the stock picture. The shared launcher and runtime row use
+ * this vocabulary; changes require restart. NTSC exclusion and live switching
+ * remain S7 work. */
 static const int tg2_internal_scales[] = {1, 2, 3, 4};
 static const char *const tg2_internal_scale_labels[] = {
     "1x (off)", "2x", "3x", "4x"};

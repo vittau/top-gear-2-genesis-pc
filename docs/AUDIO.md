@@ -17,10 +17,9 @@ impacts — on chip B, the latter on a second Z80 core). Verified headless, on a
 null sink, and with the persisted-BOTH boot regression. Stock modes are
 byte-identical. Owner listening confirmation is required.
 
-Task 30 (§13) adds four player options on top of that: **Music volume**,
-**SFX volume**, **Clean FM** (YM3438 core, no ladder distortion) and **Clean
-engine samples** (band-limited reconstruction of the DAC stream). All four
-default to the stock sound, which stays byte-identical.
+Task 30 (§13) provides **Music volume** and **SFX volume**, both defaulting
+to 100% of the stock sound, which stays byte-identical. Clean FM and Clean
+engine samples were withdrawn after owner listening; see §13.5.
 
 ## 1. The setting
 

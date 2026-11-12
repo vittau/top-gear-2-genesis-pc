@@ -175,7 +175,7 @@ placement = centered   ; or edges
 ```
 
 The renderer applies it through `tg2_video_set_hud_mode(0|1)` /
-`tg2_video_get_hud_mode()` in `game/tg2_video.h` without resetting the scene;
+the renderer’s private `tg2_video_get_hud_mode()` without resetting the scene;
 probes can force it with `TG2_HUD_MODE=centered|edges`. It has no effect with
 widescreen Off, in menus or in split-screen. Resets and state loads retain the
 presentation preference.
