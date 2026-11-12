@@ -8,7 +8,7 @@ No CI, tags, release, merge, engine fork, or submodule pin changes.
 
 - Launcher choices now report their registry name and description. RACE SOUND reports label `RACE SOUND`, the stock/music/effects/Both explanation, and `Sound effects`, `Music`, `Both` choices. HUD reports its own HUD text.
 - Both volume features now report `enabled=1`, `option_count=1`; their existing integer descriptors report labels `Music volume` / `SFX volume`, range 0–100, step 5, default/current 100. This was a real launcher defect: `launcher_imgui.cpp` iterates `feature.option_count` before calling `feature_option_get`, so the prior zero hid the descriptors. This is verified from the compiled code path, without a visible launcher session.
-- Development builds acquire `~/.cache/tg2-heavy.lock` internally and default to three jobs. Invoke `tools/build-linux.sh` directly; an outer lock on the same file would nest. Linux/macOS release shell builders also default to three jobs; CI supplies explicit `--jobs` values, unchanged. The Windows PowerShell default remains eight because its CI call uses that default and this task explicitly preserves CI behavior.
+- Development builds default to three jobs and use the documented outer-wrapper convention: `flock ~/.cache/tg2-heavy.lock tools/build-linux.sh`. The script does not acquire this lock internally, so callers following AGENTS.md cannot deadlock on a nested lock. Linux/macOS release shell builders also default to three jobs; CI supplies explicit `--jobs` values, unchanged. The Windows PowerShell default remains eight because its CI call uses that default and this task explicitly preserves CI behavior.
 - Python is the sole patch applicator; the shell entry point execs it. Its worktree-local stamp includes patch names/content, all three pins, and resulting engine/core/UI tree hashes, including untracked file contents. A mismatch snapshots all dirty targets before any reset/clean, restores the pins, and applies all 45 patches in sorted order (42 engine, two core, one UI). Recovery commits use the consuming repository's configured identity. Clean application does not require an author configuration.
 - Removed the specified write-only audio/actor/row fields and unused menu macros; kept raw handler offsets. Removed unused CHOICE/INT status strings, retired probe controls, the obsolete FM-model probe, and duplicate layout defaults.
 - The recompiler initializes the layout to zero, defaults the four omitted address keys to zero, and leaves the absent level-mode array empty (`recompiler/src/game_config.c`, layout parsing). All 35 regenerated C files have identical SHA-256 hashes.
@@ -29,7 +29,7 @@ Before source edits, initialized the pinned recursive submodules and actually ap
 flock ~/.cache/tg2-heavy.lock env JOBS=3 tools/build-linux.sh
 ```
 
-Exit 0; log `build/phase-a/baseline-build.log`. After changes, `tools/build-linux.sh` (internal lock, default three jobs) exits 0; log `build/phase-a/final-build.log`. An intermediate compile identified one remaining presentation-scale call in actors; it was updated before the successful build and final captures.
+Exit 0; log `build/phase-a/baseline-build.log`. The initial final build exits 0; log `build/phase-a/final-build.log`. Review subsequently removed the internal lock from the shell wrapper; see the follow-up verification below. An intermediate compile identified one remaining presentation-scale call in actors; it was updated before the successful build and final captures.
 
 The ignored `build/phase-a/capture.py` converts `game/baseline-route.json` into an exact-frame input script, captures 5,400 frames per case, hashes every 60 frames, and records full stock WAVs. Both baseline and final capture commands run under the shared heavy lock and exit 0. Off means widescreen, race 60 fps, overscan crop and other presentation options off, native scale 1. On means fixed 16:9, race 60 fps and the default overscan crop on, centered HUD, native scale 1. Each is tested in SFX and MUSIC modes.
 
@@ -137,4 +137,17 @@ controllers, Deck performance and a visible launcher/playtest were not run.
 - `9c292b8` — Remove write-only renderer state and retired probe controls.
 - `a2c9c7a` — Refresh audio and high-resolution option documentation.
 - `8331ace` — Allow clean patch application without a Git author configuration.
-- `cb622ff` — Document the development builder's internal heavy lock.
+- `cb622ff` — Historical internal-lock note, superseded by the review follow-up below.
+
+## Review follow-up: outer build lock
+
+Removed the development builder's internal `flock` and restored the existing
+AGENTS.md/documentation convention. The default remains `JOBS=3`. This avoids
+a child waiting forever on the same lock already held by the caller; no game,
+engine, generated source, or CI behavior changes.
+
+Verification: `bash -n tools/build-linux.sh` and
+`flock ~/.cache/tg2-heavy.lock tools/build-linux.sh`; build evidence is in
+`build/phase-a/review-outer-lock-build.log`. Both commands exit 0; the wrapped
+build completes without nesting the lock and uses the default three jobs.
+No framebuffer/audio recapture is needed for this shell-only fix.
