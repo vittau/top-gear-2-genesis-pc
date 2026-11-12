@@ -112,3 +112,4 @@ isolation. Qualify a fresh stack by applying it and rerunning for a no-op.
 - `0055-virtual-controller-axis-probe.patch`: the dev/TCP virtual pad probe takes a pad slot (1 or 2) and a new `virtual_axis` command drives a synthetic controller axis (LT/RT as a 0..32767 pull, sticks signed) so an analog mapping can be tested headlessly through SDL's real gamecontroller path.
 
 - `0056-runtime-ui-header.patch` — declare runtime overlay visibility in an engine header so game adapters share its real API.
+- `ui-0002-runtime-footer-wrap.patch` — word-wrap software runtime descriptions and reserve their full height above the status area without overlapping settings rows.
