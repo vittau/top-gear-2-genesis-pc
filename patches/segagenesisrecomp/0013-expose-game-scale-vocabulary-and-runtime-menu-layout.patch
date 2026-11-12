@@ -1,32 +1,22 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 0036860984dde95bee4fecb978235fec4666fe9f Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
-Date: Mon, 9 Nov 2026 19:00:00 -0300
-Subject: [PATCH] Let a game supply its own Internal resolution vocabulary
+Date: Thu, 12 Nov 2026 10:52:20 -0300
+Subject: [PATCH] Expose game scale vocabulary and runtime menu layout
 
-The shared "Internal resolution" row offers the engine's supersampling ladder
-(1,2,4,...64) and drives the engine's HD path. A game whose video provider
-reads the render scale itself supplies a GameInternalScale instead: the same
-row key and the same settings.ini value (internal_scale), with the game's own
-values and labels, its own row description for the in-game menu, and an
-optional note for the launcher. The launcher path seeds the row from the
-current value and writes the chosen one back into g_app_config. NULL keeps
-every existing game unchanged.
-
-Numbered after the task-32 diagnostics rows (0045-0049) because it rewrites
-the same menu lines; it stacks on top of them rather than the other way round.
+Use the game render-scale choices and host menu layout after the complete runtime settings surface has been assembled.
 ---
- runner/game_spec.h | 18 ++++++++++++++++++
- runner/main.c      | 60 ++++++++++++++++++++++++++++++++++++++++++++++++++-----
- 2 files changed, 72 insertions(+), 6 deletions(-)
+ runner/game_spec.h | 19 ++++++++++++++++
+ runner/main.c      | 56 ++++++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 71 insertions(+), 4 deletions(-)
 
 diff --git a/runner/game_spec.h b/runner/game_spec.h
+index ddb05a1..7a82ee1 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
-@@ -37,6 +37,22 @@
-     const char *name;       /* matched against the request "cmd" field */
+@@ -38,6 +38,22 @@ typedef struct {
      void      (*handler)(int id, const char *json_line);
  } GameDebugCommand;
-+
+ 
 +/* Optional game-owned vocabulary for the shared "Internal resolution" row.
 + * The row normally offers the engine's supersampling ladder (1,2,4,...64) and
 + * drives the engine's own HD path. A game whose video provider reads the
@@ -42,10 +32,19 @@ diff --git a/runner/game_spec.h b/runner/game_spec.h
 +    const char *description;  /* in-game (Esc) menu row text, or NULL */
 +    const char *note;         /* launcher note drawn under the row, or NULL */
 +} GameInternalScale;
- 
++
  typedef struct GameSpec {
      const GameVideo *video;          /* NULL = native VDP presentation only */
-@@ -309,6 +325,8 @@
+     /* Custom-video mode for a fresh install (no saved [mods.widescreen]
+@@ -67,6 +83,7 @@ typedef struct GameSpec {
+      * returned RecompRuntimeUiItem array and its strings must stay valid for
+      * the lifetime of the menu. get/set receive the item's key. */
+     const struct RecompRuntimeUiItem *(*runtime_ui_items)(size_t *count);
++    const struct RecompRuntimeUiLayout *runtime_ui_layout;
+     int (*runtime_ui_get)(const char *key, int *out);
+     int (*runtime_ui_set)(const char *key, int value);
+     /* Game-owned additive features may compose with the common video provider. */
+@@ -317,6 +334,8 @@ typedef struct GameSpec {
      /* Non-zero hides the runtime menu's "Internal resolution" row, for games
       * whose own video provider ignores the supersampling scale. */
      int hide_internal_resolution;
@@ -55,9 +54,10 @@ diff --git a/runner/game_spec.h b/runner/game_spec.h
  
  /*
 diff --git a/runner/main.c b/runner/main.c
+index 3c68575..3a0f502 100644
 --- a/runner/main.c
 +++ b/runner/main.c
-@@ -337,6 +337,32 @@
+@@ -337,6 +337,32 @@ static const char *const s_hd_labels[]={"Native","2x","4x","8x","16x","32x","64x
  static const RecompRuntimeUiItem s_hd_items[]={
      {"video.internal_resolution","Video","Internal resolution (restart)","Applies next launch. Unsupported hardware keeps native presentation.",RECOMP_RUNTIME_UI_CHOICE,0,6,1,s_hd_labels,7,NULL}
  };
@@ -90,7 +90,7 @@ diff --git a/runner/main.c b/runner/main.c
  static const RecompRuntimeUiItem s_video_mod_items[]={
      {"mods.widescreen.enabled","Mods","Widescreen","Opt-in custom scene renderer with expanded objects and screen-anchored HUD.",RECOMP_RUNTIME_UI_BOOL,0,1,1},
      {"mods.widescreen.aspect","Mods","Aspect ratio","Adaptive follows the whole window without a 32:9 cap.",RECOMP_RUNTIME_UI_CHOICE,0,3,1,s_mod_aspects,4}
-@@ -364,7 +390,8 @@
+@@ -364,7 +390,8 @@ static int runtime_ui_get(void *p, const RecompRuntimeUiItem *i, int *out) {
      else if (!strcmp(i->key,"mods.diagnostics.enabled")) *out=g_app_config.replay_diagnostics;
      else if (!strcmp(i->key,"states.slot")) *out = s_quickstate_slot;
      else if (!strcmp(i->key,"video.internal_resolution")) {
@@ -100,7 +100,7 @@ diff --git a/runner/main.c b/runner/main.c
      }
      else if (g_game_spec.runtime_ui_get && g_game_spec.runtime_ui_get(i->key, out)) return 1;
      else return 0; return 1;
-@@ -372,8 +399,9 @@
+@@ -372,8 +399,9 @@ static int runtime_ui_get(void *p, const RecompRuntimeUiItem *i, int *out) {
  static int runtime_ui_set(void *p, const RecompRuntimeUiItem *i, int v) {
      RuntimeUiContext *c = (RuntimeUiContext *)p;
      if(!strcmp(i->key,"video.internal_resolution")) {
@@ -112,7 +112,7 @@ diff --git a/runner/main.c b/runner/main.c
      }
      if (!strcmp(i->key,"states.slot")) { if (v<1 || v>9) return 0; s_quickstate_slot=v; return 1; }
      if(!strcmp(i->key,"audio.bypass_filter")) {
-@@ -2588,6 +2616,11 @@
+@@ -2657,6 +2685,11 @@ static int run_recomp_launcher(const char *ltitle, const char *initial_rom, char
          ls.audio_freq       = g_app_config.audio_freq;
          ls.volume           = g_app_config.volume;
          ls.skip_launcher    = g_app_config.skip_launcher;
@@ -124,7 +124,7 @@ diff --git a/runner/main.c b/runner/main.c
  #ifdef RECOMP_LAUNCHER_HAS_REWIND_ENABLED
          ls.rewind_enabled   = g_app_config.rewind_enabled;
  #endif
-@@ -2626,6 +2659,14 @@
+@@ -2695,6 +2728,14 @@ static int run_recomp_launcher(const char *ltitle, const char *initial_rom, char
          gi.rom_noun             = "ROM";
          gi.pad_mode_supported   = 1;   /* 3-Button / 6-Button selector */
          gi.pad_mode_selectable  = 1;
@@ -139,7 +139,7 @@ diff --git a/runner/main.c b/runner/main.c
  #ifdef RECOMP_LAUNCHER_HAS_REWIND_DEPTH
          gi.has_rewind_depth     = 1;
  #endif
-@@ -2700,6 +2741,12 @@
+@@ -2769,6 +2810,12 @@ static int run_recomp_launcher(const char *ltitle, const char *initial_rom, char
              g_app_config.volume           = ls.volume;
              g_app_config.audio_freq       = ls.audio_freq;
              g_app_config.skip_launcher    = ls.skip_launcher;
@@ -152,7 +152,15 @@ diff --git a/runner/main.c b/runner/main.c
  #ifdef RECOMP_LAUNCHER_HAS_REWIND_ENABLED
              g_app_config.rewind_enabled   = ls.rewind_enabled != 0;
  #endif
-@@ -3790,7 +3837,7 @@
+@@ -3839,6 +3886,7 @@ int main(int argc, char *argv[])
+         cfg.menu.callbacks.context = &s_runtime_ui; cfg.menu.callbacks.get_value = runtime_ui_get;
+         cfg.menu.callbacks.set_value = runtime_ui_set; cfg.menu.callbacks.run_action = runtime_ui_action;
+         cfg.menu.callbacks.save = runtime_ui_save;
++        cfg.menu.layout = g_game_spec.runtime_ui_layout;
+         cfg.menu.callbacks.visibility_changed = input_gameplay_capture_changed;
+         cfg.features = RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN | RECOMP_RUNTIME_UI_STANDARD_WINDOW_SCALE |
+             RECOMP_RUNTIME_UI_STANDARD_VIEW_MODE | RECOMP_RUNTIME_UI_STANDARD_LINEAR_FILTER |
+@@ -3859,7 +3907,7 @@ int main(int argc, char *argv[])
              items[count++]=s_audio_filter_item;
              items[count++]=s_diagnostics_item;
              if (!g_game_spec.hide_internal_resolution) {

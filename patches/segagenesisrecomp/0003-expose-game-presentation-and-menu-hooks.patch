@@ -1,0 +1,514 @@
+From 843320e8607731dd0df6580c7dfad12be50e75e9 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 10:52:19 -0300
+Subject: [PATCH] Expose game presentation and menu hooks
+
+Let the game own settings, native video geometry, app identity and player defaults without embedding game policy in the runner.
+---
+ runner/app_config.c |   6 +-
+ runner/game_spec.h  |  29 +++++++
+ runner/game_video.h |  34 +++++++-
+ runner/main.c       | 200 ++++++++++++++++++++++++++++++++++++++++----
+ 4 files changed, 251 insertions(+), 18 deletions(-)
+
+diff --git a/runner/app_config.c b/runner/app_config.c
+index 0701202..041453b 100644
+--- a/runner/app_config.c
++++ b/runner/app_config.c
+@@ -4,6 +4,7 @@
+ #include "app_config.h"
+ #include "input_map.h"
+ #include "game_video.h"
++#include "game_spec.h"
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -407,7 +408,10 @@ static int video_mod_commit(void *ctx,const char *image)
+     (void)ctx;(void)image;s_mod_error[0]=0;
+     /* Keep any controller rebindings the launcher already persisted. */
+     app_config_reload_preserving_mods(s_mod_settings);
+-    if(app_config_save(s_mod_settings))return 1;
++    if(app_config_save(s_mod_settings))
++        return !g_game_spec.save_settings ||
++               g_game_spec.save_settings(s_mod_settings);
++    fprintf(stderr,"[mods] app_config_save failed: %s\n", s_mod_settings);
+     MOD_COPY(s_mod_error,"Unable to save widescreen settings.ini");return 0;
+ }
+ static const char *video_mod_error(void *ctx) { (void)ctx;return s_mod_error; }
+diff --git a/runner/game_spec.h b/runner/game_spec.h
+index f36db11..778fb99 100644
+--- a/runner/game_spec.h
++++ b/runner/game_spec.h
+@@ -26,6 +26,7 @@
+ #include <stdint.h>
+ #include "game_video.h"
+ struct RecompLauncherCModProvider;
++struct RecompRuntimeUiItem;
+ 
+ /*
+  * One per-game TCP debug command. The handler receives the request id
+@@ -44,7 +45,22 @@ typedef struct GameSpec {
+      * "21:9" or "32:9" enables it. A saved choice, including off, still wins. */
+     const char *video_default;
+     unsigned logical_players;       /* 0 = native two ports; host input/UI capacity */
++    /* Host players live out of the box, before settings.ini: 0/1 keeps the
++     * shared default (player 1 only), 2 also enables player 2's default
++     * bindings (right-hand keyboard set + second gamepad). A saved
++     * [input.pN] device still wins, so an existing settings.ini is untouched
++     * and a single-controller setup keeps one player alive. */
++    unsigned default_players;
+     void (*load_settings)(const char *settings_path);
++    /* Game-owned settings written into the same settings.ini after the
++     * engine's shared sections have been rewritten. Return 1 on success. */
++    int  (*save_settings)(const char *settings_path);
++    /* Game-owned rows appended to the in-game recomp-ui settings menu. The
++     * returned RecompRuntimeUiItem array and its strings must stay valid for
++     * the lifetime of the menu. get/set receive the item's key. */
++    const struct RecompRuntimeUiItem *(*runtime_ui_items)(size_t *count);
++    int (*runtime_ui_get)(const char *key, int *out);
++    int (*runtime_ui_set)(const char *key, int value);
+     /* Game-owned additive features may compose with the common video provider. */
+     const struct RecompLauncherCModProvider *(*mods)(
+         const struct RecompLauncherCModProvider *base);
+@@ -66,6 +82,15 @@ typedef struct GameSpec {
+      * Hedgehog". Build/backend/debug identity belongs in logs and About. */
+     const char *display_name;
+     const char *short_name;          /* "Sonic1" — shows up in info / ping */
++    /* Optional desktop identity (basename of the .desktop file, no suffix).
++     * Set before any SDL video init, including the launcher. NULL preserves
++     * SDL's default. The environment may override it for host integration. */
++    const char *app_id;
++    /* Optional embedded RGBA8 icon, row-major, width*4 bytes per row. Immutable
++     * game-owned pixels; SDL copies them when the gameplay window is created.
++     * Native Wayland uses app_id + installed desktop metadata instead. */
++    const uint8_t *icon_rgba;
++    int icon_width, icon_height;
+     /* Box-art file staged next to the exe under assets/img/, e.g.
+      * "boxart-sonic3.tga". NULL => the shared "boxart.tga" (single-boxart
+      * repos). Needed when several game modes build into ONE exe dir (the
+@@ -273,6 +298,10 @@ typedef struct GameSpec {
+      * use this to swap interpreter execution for native execution
+      * one function at a time during divergence hunting. NULL+0 is
+      * legal and means "no overrides". */
++
++    /* Non-zero hides the runtime menu's "Internal resolution" row, for games
++     * whose own video provider ignores the supersampling scale. */
++    int hide_internal_resolution;
+ } GameSpec;
+ 
+ /*
+diff --git a/runner/game_video.h b/runner/game_video.h
+index 5a2722d..578b4d3 100644
+--- a/runner/game_video.h
++++ b/runner/game_video.h
+@@ -45,6 +45,15 @@ typedef struct GameVideo {
+      * unsupported row. NULL retains the legacy enabled/width qualification.
+      * This does not enable scene hooks, change simulation or configure a mode. */
+     int (*renderer_enabled)(void);
++    /* Optional presented scanline window: crop empty bands without touching
++     * the guest picture. Called once per completed frame, after every row was
++     * produced, so a provider may decide from that frame's actual pixels.
++     * Returning 1 with 0 <= first < last <= native_h makes the presentation
++     * path shift rows [first,last) to the top of the framebuffer and report a
++     * last-first tall image to screenshots, hashes, the runtime overlay and
++     * the logical canvas. Guest output, per-line captures and the margin
++     * audit are unaffected. NULL/false keeps the machine's own height. */
++    int (*present_window)(int native_w, int native_h, int *first, int *last);
+     /* Request immutable native plane/sprite inputs before evaluation. Only
+      * requested rows pay for plane capture. Presentation providers are consumed
+      * synchronously into owned pixels/masks/colors. NULL raster retains the
+@@ -76,6 +85,26 @@ typedef struct GameVideo {
+      * Never enters disk states, deterministic RB images, or netplay digests. */
+     size_t (*presentation_state_save)(void *dst, size_t capacity);
+     int (*presentation_state_load)(const void *src, size_t size, int apply);
++    /* Optional end-of-frame composition for a presented picture larger than
++     * the machine's native geometry (a game-owned render scale). Called once
++     * per completed frame, after every native row was produced and before the
++     * presented-window crop, screenshots, hashes and upload. `pixels` is the
++     * runner framebuffer with `stride_pixels` per row and room for a picture up
++     * to MAX_SCREEN_HEIGHT rows; the provider may rewrite it in place and must
++     * not read or write guest state. Return the number of complete rows it
++     * wrote: a value above native_h selects that presented height, anything
++     * else keeps the machine's own picture and height. NULL keeps the machine's
++     * picture. */
++    int (*present_frame)(uint32_t *pixels, int stride_pixels, int width,
++                         int native_w, int native_h);
++    /* Optional: the provider owns the presented row width even while its
++     * viewport mode is off (a game-owned render scale is not a widescreen
++     * mode). Returning non-zero makes width() publish the presented canvas
++     * width for the frame without changing enabled() / the viewport policy,
++     * so a game's render-scale provider gets a wider canvas with widescreen
++     * off and every UI row still reports the real option state. NULL keeps
++     * the enabled()-gated width. */
++    int (*presented_width)(void);
+ } GameVideo;
+ 
+ /* Host-local derived frame plan, never deterministic machine/snapshot state.
+@@ -103,7 +132,10 @@ static inline GameVideoFrame game_video_prepare_frame(const GameVideo *video,
+     if(!video || native_w<=0 || native_h<=0)return frame;
+     /* Width may publish simulation state. Always do it before local ownership
+      * or texture eligibility, including when the selected renderer declines. */
+-    if(video->enabled && video->enabled() && video->width)
++    int publish_width=video->enabled ? video->enabled() : 0;
++    if(!publish_width && video->width && video->presented_width &&
++       video->presented_width())publish_width=1;
++    if(publish_width && video->width)
+         frame.requested_width=video->width(drawable_w,drawable_h,native_w,native_h);
+     int valid_width=frame.requested_width>=native_w;
+     frame.viewport=valid_width;
+diff --git a/runner/main.c b/runner/main.c
+index 0f4388f..1afef1b 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -223,7 +223,10 @@ static int run_picker_cmd(const char *cmd, char *out, size_t max_len)
+  * interlace height. Custom presentation grows the stride/texture dynamically;
+  * it is not limited by the VDP's 512px plane or a fixed aspect-ratio preset. */
+ #define NATIVE_SCREEN_STRIDE 512
+-#define MAX_SCREEN_HEIGHT 480
++/* A game-owned render scale may present a picture taller than the VDP's own
++ * geometry (present_frame, game_video.h). 896 = 4 x 224 covers the largest
++ * supported high-resolution picture; interlace mode 2 (448) still fits. */
++#define MAX_SCREEN_HEIGHT 896
+ static int s_frame_stride = NATIVE_SCREEN_STRIDE;
+ #define MAX_SCREEN_WIDTH s_frame_stride
+ 
+@@ -332,6 +335,7 @@ static int runtime_ui_get(void *p, const RecompRuntimeUiItem *i, int *out) {
+     else if (!strcmp(i->key,"video.internal_resolution")) {
+         *out=0;for(int n=0;n<7;++n)if(s_hd_scales[n]==g_app_config.internal_scale)*out=n;
+     }
++    else if (g_game_spec.runtime_ui_get && g_game_spec.runtime_ui_get(i->key, out)) return 1;
+     else return 0; return 1;
+ }
+ static int runtime_ui_set(void *p, const RecompRuntimeUiItem *i, int v) {
+@@ -381,11 +385,18 @@ static int runtime_ui_set(void *p, const RecompRuntimeUiItem *i, int v) {
+             s_frame_texture_filtered = mode != SDL_ScaleModeNearest;
+     } else if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_VOLUME)) {
+         g_app_config.volume = v; audio_set_master_volume(v);
++    } else if (g_game_spec.runtime_ui_set && g_game_spec.runtime_ui_set(i->key, v)) {
++        return 1;
+     } else return 0; return 1;
+ }
++static int runner_save_settings(const char *path) {
++    if (!app_config_save(path)) return 0;
++    if (g_game_spec.save_settings) return g_game_spec.save_settings(path);
++    return 1;
++}
+ static void runtime_ui_save(void *p) {
+     (void)p;
+-    if(!app_config_save(exe_relative("settings.ini")))
++    if(!runner_save_settings(exe_relative("settings.ini")))
+         fprintf(stderr,"[NOTE] Could not save runtime settings.ini\n");
+ }
+ static int runtime_ui_action(void *p, const RecompRuntimeUiItem *i) {
+@@ -404,6 +415,60 @@ static int runtime_ui_key(SDL_Keycode k) {
+     case SDLK_LEFT:return RECOMP_RUNTIME_UI_INPUT_LEFT; case SDLK_RIGHT:return RECOMP_RUNTIME_UI_INPUT_RIGHT;
+     case SDLK_RETURN:case SDLK_SPACE:return RECOMP_RUNTIME_UI_INPUT_ACCEPT; case SDLK_ESCAPE:return RECOMP_RUNTIME_UI_INPUT_BACK; default:return -1; }
+ }
++/* Controller-only operation of the runtime menu. Back+RB (the pad's overlay
++ * binding) opens or closes it; the D-pad moves, A accepts, B goes back and X
++ * closes. The keyboard path above is unchanged. */
++int runner_runtime_ui_open(void) {
++    return s_runtime_ui.ui && recomp_runtime_ui_is_open(s_runtime_ui.ui);
++}
++static void runtime_ui_gamepad(void) {
++    if (!s_runtime_ui.ui) return;
++    uint32_t pad = gamepad_overlay_mask();
++    static uint32_t prev_pad, repeat_dir, repeat_at;
++    static int combo_prev;
++    const uint32_t combo_bits = GP_OVERLAY_BACK | GP_OVERLAY_RB;
++    const int combo = (pad & combo_bits) == combo_bits;
++    if (combo && !combo_prev && !recomp_runtime_ui_wants_text_input(s_runtime_ui.ui)) {
++        recomp_runtime_ui_handle_input(s_runtime_ui.ui, RECOMP_RUNTIME_UI_INPUT_TOGGLE, 1, 0);
++        combo_prev = combo; prev_pad = pad; return;
++    }
++    combo_prev = combo;
++    if (!recomp_runtime_ui_is_open(s_runtime_ui.ui) ||
++        recomp_runtime_ui_wants_text_input(s_runtime_ui.ui)) {
++        prev_pad = pad; repeat_dir = 0; return;
++    }
++    uint32_t press = pad & ~prev_pad;
++    prev_pad = pad;
++    int dir_input = -1;
++    if (press & GP_OVERLAY_UP) dir_input = RECOMP_RUNTIME_UI_INPUT_UP;
++    else if (press & GP_OVERLAY_DOWN) dir_input = RECOMP_RUNTIME_UI_INPUT_DOWN;
++    else if (press & GP_OVERLAY_LEFT) dir_input = RECOMP_RUNTIME_UI_INPUT_LEFT;
++    else if (press & GP_OVERLAY_RIGHT) dir_input = RECOMP_RUNTIME_UI_INPUT_RIGHT;
++    if (dir_input >= 0)
++        recomp_runtime_ui_handle_input(s_runtime_ui.ui, dir_input, 1, 0);
++    else if (press & GP_OVERLAY_A)
++        recomp_runtime_ui_handle_input(s_runtime_ui.ui, RECOMP_RUNTIME_UI_INPUT_ACCEPT, 1, 0);
++    else if (press & GP_OVERLAY_B)
++        recomp_runtime_ui_handle_input(s_runtime_ui.ui, RECOMP_RUNTIME_UI_INPUT_BACK, 1, 0);
++    else if (press & GP_OVERLAY_X)
++        recomp_runtime_ui_handle_input(s_runtime_ui.ui, RECOMP_RUNTIME_UI_INPUT_TOGGLE, 1, 0);
++    if (recomp_runtime_ui_is_open(s_runtime_ui.ui)) {
++        uint32_t dir = pad & (GP_OVERLAY_UP | GP_OVERLAY_DOWN |
++                              GP_OVERLAY_LEFT | GP_OVERLAY_RIGHT);
++        uint32_t now = SDL_GetTicks();
++        if (dir != repeat_dir) {
++            repeat_dir = dir;
++            repeat_at = now + 350;
++        } else if (dir && (int32_t)(now - repeat_at) >= 0) {
++            int input = (dir & GP_OVERLAY_UP) ? RECOMP_RUNTIME_UI_INPUT_UP
++                      : (dir & GP_OVERLAY_DOWN) ? RECOMP_RUNTIME_UI_INPUT_DOWN
++                      : (dir & GP_OVERLAY_LEFT) ? RECOMP_RUNTIME_UI_INPUT_LEFT
++                                                : RECOMP_RUNTIME_UI_INPUT_RIGHT;
++            recomp_runtime_ui_handle_input(s_runtime_ui.ui, input, 1, 1);
++            repeat_at = now + 90;
++        }
++    }
++}
+ #endif
+ 
+ static void widescreen_setup(void)
+@@ -474,6 +539,10 @@ static uint32_t s_cram[192];
+ 
+ static int s_screen_width  = 320;
+ static int s_screen_height = 224;
++/* Interlace mode 2 (the only source of a double-height native picture). A
++ * presented picture may also be taller than 224 for an unrelated reason (a
++ * game-owned render scale), so the height alone must never imply interlace. */
++static int s_screen_interlaced;
+ 
+ /* Some games render two local views as stacked halves of a double-height VDP
+  * frame. Opted-in netplay targets may present only the local peer's half. The
+@@ -481,8 +550,8 @@ static int s_screen_height = 224;
+ static int netplay_peer_view_active(void)
+ {
+ #if GENESIS_HAS_RECOMP_NET && GENESIS_NETPLAY_PEER_VIEW
+-    return genesis_netplay_active() && s_screen_height > 240 &&
+-           (s_screen_height & 1) == 0;
++    return genesis_netplay_active() && s_screen_interlaced &&
++           s_screen_height > 240 && (s_screen_height & 1) == 0;
+ #else
+     return 0;
+ #endif
+@@ -518,7 +587,8 @@ static int display_logical_height(void)
+ {
+     if (netplay_peer_view_active())
+         return s_screen_height / 2;
+-    if (s_screen_height > 240 && s_interlace_display_mode == INTERLACE_DISPLAY_TV)
++    if (s_screen_interlaced && s_screen_height > 240 &&
++        s_interlace_display_mode == INTERLACE_DISPLAY_TV)
+         return (s_screen_height + 1) / 2;
+     return s_screen_height;
+ }
+@@ -1617,7 +1687,14 @@ int runner_write_screenshot_file(const char *path)
+ {
+     char full_path[512];
+     const char *resolved = resolve_runner_path(path, full_path, sizeof(full_path));
+-    int ok = png_write_argb(resolved, s_framebuf,
++    /* The runtime menu is composited into s_present_buf, so an open menu is
++     * part of what the player sees and belongs in the capture. Closed, the
++     * verified raw framebuffer stays the capture source (existing probes). */
++    const uint32_t *source = s_framebuf;
++#if RECOMP_LAUNCHER
++    if (recomp_runtime_ui_is_open(s_runtime_ui.ui)) source = s_present_buf;
++#endif
++    int ok = png_write_argb(resolved, source,
+                             s_screen_width, s_screen_height,
+                             MAX_SCREEN_WIDTH) == 0;
+     if (ok)
+@@ -2210,7 +2287,7 @@ static int run_recomp_launcher(const char *ltitle, const char *initial_rom, char
+                 g_input_map.p[p].pad_type     = (ls.pad_mode[p] == 1) ? PAD_6BUTTON : PAD_3BUTTON;
+                 g_input_map.p[p].deadzone_pct = ls.deadzone[p];
+             }
+-            app_config_save(settings_ini);
++            runner_save_settings(settings_ini);
+             if (lr == 0 && *rom_path_io) rom_cfg_write(rom_cfg_path, *rom_path_io);
+         }
+     }
+@@ -2339,6 +2416,13 @@ static void replay_view(GenesisReplayView *v,int apply)
+ 
+ int main(int argc, char *argv[])
+ {
++    /* SDL2's Wayland app id and X11 resource class must agree with the
++     * desktop entry. Set these before the launcher can initialize video. */
++    if (g_game_spec.app_id && *g_game_spec.app_id) {
++        SDL_setenv("SDL_VIDEO_WAYLAND_WMCLASS", g_game_spec.app_id, 0);
++        SDL_setenv("SDL_VIDEO_X11_WMCLASS", g_game_spec.app_id, 0);
++        SDL_SetHintWithPriority("SDL_APP_ID", g_game_spec.app_id, SDL_HINT_DEFAULT);
++    }
+     init_exe_dir(argv[0]);
+     const char *user_dir=getenv("GENESIS_USER_DIR");
+     if(user_dir && *user_dir) {
+@@ -2348,6 +2432,16 @@ int main(int argc, char *argv[])
+         snprintf(s_data_dir,sizeof s_data_dir,"%s/",user_dir);
+     }
+     input_map_init_defaults();   /* today's mapping; app_config_load may override */
++    /* Games that ship a two-player mode enable player 2's default bindings
++     * here, before settings.ini is read: a saved [input.pN] device (including
++     * "none") still wins, and a single connected controller stays player 1,
++     * because player 2's gamepad source is the second pad only. */
++    if (g_game_spec.default_players > 1) {
++        unsigned n = g_game_spec.default_players;
++        if (n > INPUT_MAX_PLAYERS) n = INPUT_MAX_PLAYERS;
++        for (unsigned p = 1; p < n; ++p)
++            g_input_map.p[p].device = INPUT_DEV_KEYBOARD | INPUT_DEV_GAMEPAD;
++    }
+ #if GENESIS_HAS_RECOMP_NET
+     GenesisNetplayConfig netplay_config;
+     genesis_netplay_config_defaults(&netplay_config);
+@@ -2578,6 +2672,19 @@ int main(int argc, char *argv[])
+     app_config_defaults();
+     app_config_load(settings_ini);   /* also seeds g_input_map controller bindings */
+     if (g_game_spec.load_settings) g_game_spec.load_settings(settings_ini);
++    /* Effective player map: one line, so a capture/log proves which devices
++     * are live (a game default or a saved [input.pN] device). */
++    {
++        fprintf(stderr, "[input]");
++        for (int p = 0; p < INPUT_MAX_PLAYERS; ++p) {
++            int d = g_input_map.p[p].device;
++            if (!d) continue;
++            fprintf(stderr, " p%d=%s%s", p + 1,
++                    (d & INPUT_DEV_KEYBOARD) ? "keyboard" : "",
++                    (d & INPUT_DEV_GAMEPAD) ? ((d & INPUT_DEV_KEYBOARD) ? "+gamepad" : "gamepad") : "");
++        }
++        fprintf(stderr, "\n");
++    }
+ #if GENESIS_HAS_RECOMP_NET && RECOMP_LAUNCHER
+     {
+         /* Content identity for the lobby: the ROM's SHA-256, when a ROM is
+@@ -2662,17 +2769,22 @@ int main(int argc, char *argv[])
+                           s_script_right_frame || debug_port_cli || start_turbo ||
+                           no_launcher || getenv("GENESIS_NO_LAUNCHER") != NULL);
+ #if RECOMP_LAUNCHER
+-        if (!positional_rom && !automation) {
++        if ((!positional_rom || force_launcher) && !automation) {
+             static char cached_rom[600];
+             int booted_cached = 0;
+-            if (g_app_config.skip_launcher && !force_launcher &&
++            if (!force_launcher && g_app_config.skip_launcher &&
+                 rom_cfg_read(rom_cfg_path, cached_rom, sizeof cached_rom)) {
+                 FILE *probe = fopen(cached_rom, "rb");
+                 if (probe) { fclose(probe); rom_path = cached_rom; booted_cached = 1; }
+             }
+             if (!booted_cached) {
+                 char initial_rom[600] = "";
+-                rom_cfg_read(rom_cfg_path, initial_rom, sizeof initial_rom);
++                /* --launcher with a cartridge already detected next to the
++                 * executable opens the launcher ON that cartridge, so the
++                 * player can change mods before starting. A plain double-click
++                 * still boots straight in. */
++                if (rom_path) snprintf(initial_rom, sizeof initial_rom, "%s", rom_path);
++                else rom_cfg_read(rom_cfg_path, initial_rom, sizeof initial_rom);
+                 char ltitle[200];
+                 snprintf(ltitle, sizeof ltitle, "%s",
+                          g_game_spec.display_name ? g_game_spec.display_name : "Genesis");
+@@ -2952,6 +3064,18 @@ int main(int argc, char *argv[])
+         fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+         return 1;
+     }
++    if (g_game_spec.icon_rgba && g_game_spec.icon_width > 0 &&
++        g_game_spec.icon_width <= 1024 && g_game_spec.icon_height > 0 &&
++        g_game_spec.icon_height <= 1024) {
++        SDL_Surface *icon = SDL_CreateRGBSurfaceWithFormatFrom(
++            (void *)g_game_spec.icon_rgba, g_game_spec.icon_width,
++            g_game_spec.icon_height, 32, g_game_spec.icon_width * 4,
++            SDL_PIXELFORMAT_RGBA32);
++        if (icon) {
++            SDL_SetWindowIcon(window, icon);
++            SDL_FreeSurface(icon);
++        }
++    }
+     fprintf(stderr, "[VIDEO] window %dx%d (%s)\n", win_w, win_h,
+             (custom_video_on || ws_armed()) ? "16:9 widescreen" : "4:3");
+ 
+@@ -3054,17 +3178,30 @@ int main(int argc, char *argv[])
+             cfg.features &= ~RECOMP_RUNTIME_UI_STANDARD_VIEW_MODE;
+         }
+         {
+-            static RecompRuntimeUiItem items[8]; unsigned count=0;
++            static RecompRuntimeUiItem items[16]; unsigned count=0;
+             if (game_video_has_viewport(g_game_spec.video)) {
+                 memcpy(items,s_video_mod_items,sizeof s_video_mod_items); count=2;
+             }
+             if(g_game_spec.video && g_game_spec.video->interpolate)
+                 items[count++]=s_presentation_item;
+             items[count++]=s_audio_filter_item;
+-            memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
++            if (!g_game_spec.hide_internal_resolution) {
++                memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
++            }
+             if (!g_game_spec.state_unavailable_reason || !g_game_spec.state_unavailable_reason()) {
+                 memcpy(items+count,s_quickstate_items,sizeof s_quickstate_items);count+=3;
+             }
++            if (g_game_spec.runtime_ui_items) {
++                size_t game_count = 0;
++                const RecompRuntimeUiItem *game_items =
++                    g_game_spec.runtime_ui_items(&game_count);
++                if (game_items && count + game_count <=
++                        sizeof items / sizeof items[0]) {
++                    memcpy(items + count, game_items,
++                           game_count * sizeof items[0]);
++                    count += (unsigned)game_count;
++                }
++            }
+             cfg.extra_items=items;cfg.extra_item_count=count;
+         }
+         s_runtime_ui.ui = recomp_runtime_ui_create_standard(&cfg);
+@@ -3473,7 +3610,9 @@ session_begin:;
+             }
+             gamepad_handle_event(&ev);
+ #if RECOMP_LAUNCHER
+-            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE && !recomp_runtime_ui_is_open(s_runtime_ui.ui)) {
++            if (ev.type == SDL_KEYDOWN && (ev.key.keysym.sym == SDLK_ESCAPE ||
++                                           ev.key.keysym.sym == SDLK_F1) &&
++                !recomp_runtime_ui_is_open(s_runtime_ui.ui)) {
+                 recomp_runtime_ui_open(s_runtime_ui.ui); continue;
+             }
+             if (recomp_runtime_ui_is_open(s_runtime_ui.ui) && (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP)) {
+@@ -3556,14 +3695,15 @@ session_begin:;
+         if (!running) break; /* Close must not execute another game/render tick. */
+         {
+             uint32_t pad = gamepad_overlay_mask();
+-            uint32_t menu = GP_OVERLAY_BACK | GP_OVERLAY_RB;
+             uint32_t rewind = GP_OVERLAY_BACK | GP_OVERLAY_R3;
+             if ((pad & rewind) == rewind && (prev_overlay_pad & rewind) != rewind)
+                 overlay_request = 1;
+-            else if ((pad & menu) == menu && (prev_overlay_pad & menu) != menu)
+-                overlay_request = 2;
+             prev_overlay_pad = pad;
+         }
++#if RECOMP_LAUNCHER
++        /* Back+RB is the controller's overlay binding for the runtime menu. */
++        runtime_ui_gamepad();
++#endif
+         if (overlay_request) {
+ #if GENESIS_HAS_RECOMP_NET
+             if (!genesis_netplay_active())
+@@ -3724,6 +3864,34 @@ session_begin:;
+            * the existing interlace display modes (tv squash / raw) take over
+            * from here, same as the clownmdemu path. */
+           s_screen_height = gvdp_output_height(&g_machine.vdp);
++          s_screen_interlaced = gvdp_interlace_double(&g_machine.vdp);
++          /* A game-owned render scale may have already written a taller
++           * presented picture into the framebuffer (present_frame). It reports
++           * the number of complete rows it wrote; everything below (crop,
++           * hashes, screenshots, the logical canvas, the texture) follows it. */
++          if (completed && s_video_frame.owner && s_video_frame.owner->present_frame) {
++              int presented = s_video_frame.owner->present_frame(
++                  s_framebuf, MAX_SCREEN_WIDTH, s_screen_width,
++                  gvdp_active_width(&g_machine.vdp), s_screen_height);
++              if (presented > s_screen_height && presented <= MAX_SCREEN_HEIGHT)
++                  s_screen_height = presented;
++          }
++          if (s_video_frame.owner && s_video_frame.owner->present_window) {
++              int first = 0, last = 0;
++              if (s_video_frame.owner->present_window(s_screen_width, s_screen_height,
++                                                      &first, &last) &&
++                  first >= 0 && last > first && last <= s_screen_height) {
++                  /* Presentation-only crop: the provider produced every row
++                   * unchanged (captures, hashes of guest output and the margin
++                   * audit still see them), and the empty bands are shifted out
++                   * here before any screenshot, hash, overlay or upload. */
++                  for (int y = 0; y < last - first; y++)
++                      memcpy(s_framebuf + (size_t)y * MAX_SCREEN_WIDTH,
++                             s_framebuf + (size_t)(y + first) * MAX_SCREEN_WIDTH,
++                             (size_t)s_screen_width * sizeof(uint32_t));
++                  s_screen_height = last - first;
++              }
++          }
+           if (!completed) {                        /* reverse-debug quit */
+               fprintf(stderr,genesis_replay_finished()?"[session] diagnostic replay completed\n":
+                   "[session] tick stopped by the post-drain hook (reverse-debug quit)\n");

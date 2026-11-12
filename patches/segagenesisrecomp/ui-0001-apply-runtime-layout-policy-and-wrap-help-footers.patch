@@ -1,17 +1,57 @@
-From a992a529f9fb2a8703433a0ffe1fbed029e4aea2 Mon Sep 17 00:00:00 2001
+From f43d60a4a3e3b80370b1e8e8b39cc5af810dc3f8 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
-Date: Thu, 12 Nov 2026 09:59:13 -0300
-Subject: [PATCH] Wrap software runtime help and reserve its measured height
+Date: Thu, 12 Nov 2026 10:52:20 -0300
+Subject: [PATCH] Apply runtime layout policy and wrap help footers
 
+Share explicit section policy across both menu backends and reserve measured software help height above settings rows.
 ---
- src/common/recomp_runtime_ui.c | 98 +++++++++++++++++++++++++++-------
- 1 file changed, 79 insertions(+), 19 deletions(-)
+ src/common/recomp_runtime_settings.c |   4 +
+ src/common/recomp_runtime_ui.c       | 113 ++++++++++++++++++++++-----
+ src/recomp_runtime_ui.h              |  10 +++
+ 3 files changed, 108 insertions(+), 19 deletions(-)
 
+diff --git a/src/common/recomp_runtime_settings.c b/src/common/recomp_runtime_settings.c
+index 5358de4..8599621 100644
+--- a/src/common/recomp_runtime_settings.c
++++ b/src/common/recomp_runtime_settings.c
+@@ -203,6 +203,10 @@ RecompRuntimeUi *recomp_runtime_ui_create_standard(
+         count += standard->extra_item_count;
+     }
+ 
++    if (standard->menu.layout && standard->menu.layout->section_name)
++        for (size_t i = 0; i < count; ++i)
++            items[i].section = standard->menu.layout->section_name(items[i].section);
++
+     RecompRuntimeUiConfig menu = standard->menu;
+     menu.items = items;
+     menu.item_count = count;
 diff --git a/src/common/recomp_runtime_ui.c b/src/common/recomp_runtime_ui.c
-index f6671e2..ea91798 100644
+index 809061c..ea91798 100644
 --- a/src/common/recomp_runtime_ui.c
 +++ b/src/common/recomp_runtime_ui.c
-@@ -643,12 +643,13 @@ static void outline(void *pixels, int width, int height, int pitch, int x, int y
+@@ -238,6 +238,21 @@ RecompRuntimeUi *recomp_runtime_ui_create(const RecompRuntimeUiConfig *config) {
+         name[len] = '\0';
+         ui->sections[ui->section_count++] = name;
+     }
++    /* Explicit host order controls both visible rows and controller focus.
++     * Unlisted sections retain first-seen order after the listed ones. */
++    if (config->layout && config->layout->section_order) {
++        size_t next = 0;
++        for (size_t i = 0; i < config->layout->section_count; ++i) {
++            for (size_t j = next; j < ui->section_count; ++j) {
++                if (!same_text(ui->sections[j], config->layout->section_order[i])) continue;
++                const char *section = ui->sections[j];
++                memmove(ui->sections + next + 1, ui->sections + next,
++                        (j - next) * sizeof(*ui->sections));
++                ui->sections[next++] = section;
++                break;
++            }
++        }
++    }
+     return ui;
+ }
+ 
+@@ -628,12 +643,13 @@ static void outline(void *pixels, int width, int height, int pitch, int x, int y
      rect(pixels,width,height,pitch,x+w-thickness,y,thickness,h,color,255);
  }
  
@@ -29,7 +69,7 @@ index f6671e2..ea91798 100644
          if (*p >= 0x80) continue;
          if (cursor + 5 * scale > max_x) break;
          uint64_t bits = glyph_bits(*p);
-@@ -663,6 +664,47 @@ static void draw_text(void *pixels, int width, int height, int pitch, int x,
+@@ -648,6 +664,47 @@ static void draw_text(void *pixels, int width, int height, int pitch, int x,
      }
  }
  
@@ -77,7 +117,7 @@ index f6671e2..ea91798 100644
  static int text_width(const char *text, int scale) {
      int count = 0;
      if (!text) return 0;
-@@ -837,15 +879,33 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
+@@ -822,15 +879,33 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
           panel_w-pad*2,scale,border,255);
  
      int list_y = panel_y + 32 * scale + header_extra;
@@ -115,7 +155,7 @@ index f6671e2..ea91798 100644
      for (int line = 0; line < visible && first + (size_t)line < count; ++line) {
          size_t index = first + (size_t)line;
          int y = list_y + line * row_h;
-@@ -880,18 +940,18 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
+@@ -865,18 +940,18 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
          }
      }
  
@@ -145,3 +185,31 @@ index f6671e2..ea91798 100644
      if (ui->status_frames) {
          int status_w = text_width(ui->status, scale);
          draw_text(pixels,width,height,pitch,panel_x+panel_w-pad-status_w,
+diff --git a/src/recomp_runtime_ui.h b/src/recomp_runtime_ui.h
+index 8d7775e..42dc9ad 100644
+--- a/src/recomp_runtime_ui.h
++++ b/src/recomp_runtime_ui.h
+@@ -130,6 +130,15 @@ typedef struct RecompRuntimeUiCallbacks {
+                     const char *value);
+ } RecompRuntimeUiCallbacks;
+ 
++/* Optional host policy over the effective standard + extra descriptors.
++ * The policy and all strings it returns must outlive the menu. */
++typedef struct RecompRuntimeUiLayout {
++    /* Maps effective descriptor sections when create_standard is used. */
++    const char *(*section_name)(const char *section);
++    const char *const *section_order;
++    size_t section_count;
++} RecompRuntimeUiLayout;
++
+ typedef struct RecompRuntimeUiConfig {
+     const char *title;
+     const char *subtitle;
+@@ -161,6 +170,7 @@ typedef struct RecompRuntimeUiConfig {
+      * the default, where every row can take the selection.
+      */
+     uint32_t navigation_flags;
++    const RecompRuntimeUiLayout *layout;
+ } RecompRuntimeUiConfig;
+ 
+ enum {

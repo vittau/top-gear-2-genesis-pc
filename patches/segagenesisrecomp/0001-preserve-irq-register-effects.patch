@@ -1,11 +1,9 @@
-From 669e84d5a70546196c0c6d49a4c6c8e95e326d26 Mon Sep 17 00:00:00 2001
+From fcefbdcd4b462967bd497db21f541e10bb611c75 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
-Date: Thu, 5 Nov 2026 14:56:00 -0300
-Subject: [PATCH] Preserve guest register effects across interrupt delivery
+Date: Thu, 12 Nov 2026 10:52:19 -0300
+Subject: [PATCH] Preserve IRQ register effects
 
-Only restore the interrupted PC, SR and stack after guest RTE.
-ISRs preserve their own general registers and raster handlers may carry
-address-register state between scanlines; restoring all registers loses it.
+Keep guest ISR register changes, including raster pointers, when returning to native code.
 ---
  runner/glue.c | 24 +++++++++++++++++++++---
  1 file changed, 21 insertions(+), 3 deletions(-)
@@ -59,6 +57,3 @@ index 230d760..973552e 100644
          recomp_interrupt_context_leave(saved_split_sp_popped);
      }
  }
--- 
-2.56.0
-

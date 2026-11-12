@@ -1,32 +1,15 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 7c9055e8acb9aac3fa3547b365c8b418d02f6bc1 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
-Date: Sat, 7 Nov 2026 11:15:00 -0300
-Subject: [PATCH] Exact guest stack delta for every SP-touching instruction
+Date: Thu, 12 Nov 2026 10:52:20 -0300
+Subject: [PATCH] Dispatch pushed RTS targets with exact stack deltas
 
-The split-function stack counter (_sp_popped, carried into tails through
-g_split_sp_popped) decides at an RTS whether the guest left a synthetic jump
-target on the stack (MOVE.L #target,-(SP); RTS) or simply returns. Only the
-MOVE/MOVEA/MOVEM/PEA forms and ADDQ/SUBQ #n,SP credited it, so any arithmetic
-or logical instruction with a stack effective address moved the guest SP
-without the counter noticing. A loop that pushes a word and pops it through
-ADD.W (SP)+,Dn therefore drifted the delta negative by two bytes per pass, and
-the RTS turned a plain return into a dispatch to whatever value sat in the
-return slot.
-
-Top Gear 2 (USA) hits it at the end of the sprite loop in func $7336: sixteen
-passes of `move.w d0,-(sp)` / `add.w (sp)+,d0` left the delta at -32, so the
-RTS at $754A dispatched the $650C pushed by the enclosing `bsr.w $7336` at
-$6508. $650C is an interior label of func $64C2, so the dispatch was recorded
-as an interior-label miss and declined: the whole scene-init continuation
-($650C..$6656, which calls $2520, $2628 and $F7FA) was skipped for the rest
-of the session in every race from Greece onward.
-
-One rule now covers every mnemonic, and the has_sp_adjust pre-scan and the
-single emission point in emit_instr share it, so the two cannot disagree.
-
+Account every guest stack adjustment before choosing a normal return or a computed tail dispatch.
 ---
+ profiles/genesis/code_generator.c | 176 +++++++++++++++++-------------
+ 1 file changed, 102 insertions(+), 74 deletions(-)
+
 diff --git a/profiles/genesis/code_generator.c b/profiles/genesis/code_generator.c
-index 2a02db3..b8d1479 100644
+index 2a02db3..f6f49d8 100644
 --- a/profiles/genesis/code_generator.c
 +++ b/profiles/genesis/code_generator.c
 @@ -1963,6 +1963,77 @@ static void emit_mem_shift(FILE *f, const M68KInstr *instr,
@@ -124,7 +107,26 @@ index 2a02db3..b8d1479 100644
      if (ws_site_for_kind(addr, WS_SITE_GAME_HOOK, WS_SITE_GAME_HOOK))
          fprintf(f, "  if (genesis_game_instruction_hook(0x%06Xu)) return; /* game-owned extension */\n", addr);
  
-@@ -2599,15 +2680,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+@@ -2016,6 +2097,18 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+ 
+     /* ------------------------------------------------------------------ */
+     case MN_RTS:
++        /* A negative net stack delta means the guest left a synthetic
++         * return target on the stack (MOVE.L/PEA ...,-(SP); RTS). This is
++         * a computed tail transfer, not a return to the native C caller.
++         * Pop exactly the target longword and carry any earlier stack
++         * adjustment across the split-function dispatch chain. */
++        fprintf(f, "  if (%s < 0) {\n",
++                *has_sp_adjust ? "_sp_popped" : "g_split_sp_popped");
++        fprintf(f, "    uint32_t _rts_target = m68k_read32(g_cpu.A[7]); g_cpu.A[7] += 4;\n");
++        fprintf(f, "    %s += 4;\n", *has_sp_adjust ? "_sp_popped" : "g_split_sp_popped");
++        emit_split_tail_call_expr(f, "    ", "_rts_target", *has_sp_adjust,
++                                  estimate_cycles(instr));
++        fprintf(f, "  }\n");
+         /* A stack skip can discard MORE than one return slot (SMPS's
+          * stop-track command uses addq.w #8,sp). Carry the complete count
+          * through the C callers; a boolean loses the second unwind and
+@@ -2599,15 +2692,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
              /* Update N,Z; clear V,C */
              emit_flags_logic(f, src_expr, sz);
          }
@@ -140,7 +142,7 @@ index 2a02db3..b8d1479 100644
          break;
      }
  
-@@ -2621,10 +2693,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+@@ -2621,10 +2705,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
          } else {
              fprintf(f, "  g_cpu.A[%d] = (uint32_t)(%s);\n", areg, src_expr);
          }
@@ -151,7 +153,7 @@ index 2a02db3..b8d1479 100644
          break;
      }
  
-@@ -2640,8 +2708,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+@@ -2640,8 +2720,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
      case MN_PEA: {
          emit_ea_addr(f, instr, instr->src_ea, &er, addr_expr);
          fprintf(f, "  g_cpu.A[7] -= 4; m68k_write32(g_cpu.A[7], %s);\n", addr_expr);
@@ -160,7 +162,7 @@ index 2a02db3..b8d1479 100644
          break;
      }
  
-@@ -2672,10 +2738,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+@@ -2672,10 +2750,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
          if (mode == 1) {
              /* ADDQ to An: no flags */
              fprintf(f, "  g_cpu.A[%d] += %uu;\n", reg, imm);
@@ -171,7 +173,7 @@ index 2a02db3..b8d1479 100644
          } else {
              /* RMW: use emit_ea_load_ex with rmw=1 so (An)+ doesn't
               * double-increment (read suppresses increment, store does it) */
-@@ -2728,11 +2790,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+@@ -2728,11 +2802,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
  
          if (mode == 1) {
              fprintf(f, "  g_cpu.A[%d] -= %uu;\n", reg, imm);
@@ -183,7 +185,7 @@ index 2a02db3..b8d1479 100644
          } else {
              /* RMW: suppress (An)+ increment on read */
              emit_ea_load_ex(f, instr, ea, sz, &er, tmp, src_expr, 1);
-@@ -3617,18 +3674,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
+@@ -3617,18 +3686,6 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
              else
                  fprintf(f, "  }\n");
          }
@@ -202,7 +204,7 @@ index 2a02db3..b8d1479 100644
          break;
      }
  
-@@ -5115,47 +5160,18 @@ bool codegen_emit(const GenesisRom *rom, const FunctionList *funcs,
+@@ -5115,47 +5172,18 @@ bool codegen_emit(const GenesisRom *rom, const FunctionList *funcs,
              }
          }
  

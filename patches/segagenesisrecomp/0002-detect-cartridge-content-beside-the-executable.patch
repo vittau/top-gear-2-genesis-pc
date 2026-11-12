@@ -1,11 +1,9 @@
-From 4cb4d731862f628cd509a4ab59ee5339eafdff2b Mon Sep 17 00:00:00 2001
+From 9dcd4afde7eae3d4e6c70dca33788637541dedf7 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
-Date: Thu, 5 Nov 2026 15:01:05 -0300
-Subject: [PATCH] Find exact cartridge content beside the executable or in cwd
+Date: Thu, 12 Nov 2026 10:52:19 -0300
+Subject: [PATCH] Detect cartridge content beside the executable
 
-Use the GameSpec CRC and size rather than filenames or extensions.
-Search native executable and AppImage directories before launching a picker.
-Keep explicit command-line ROM identity validation unchanged.
+Find the required ROM by content before opening the launcher; users need no fixed filename.
 ---
  runner/main.c           | 29 ++++++++++++++
  runner/rom_autodetect.h | 85 +++++++++++++++++++++++++++++++++++++++++
@@ -150,6 +148,3 @@ index 0000000..219b7e1
 +    return found;
 +}
 +#endif
--- 
-2.56.0
-

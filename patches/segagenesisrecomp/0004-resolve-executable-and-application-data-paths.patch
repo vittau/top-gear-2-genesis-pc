@@ -1,0 +1,400 @@
+From d22418414cbf5a33b73872704851b9f06a845587 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 10:52:19 -0300
+Subject: [PATCH] Resolve executable and application data paths
+
+Anchor assets, cartridge lookup and writable user data to the actual image or macOS bundle rather than inherited launcher state.
+---
+ runner/app_paths.h         | 139 +++++++++++++++++++++++++++++++++++++
+ runner/diagnostic_replay.c |   7 ++
+ runner/main.c              | 128 ++++++++++++++++++++++++++++++++--
+ 3 files changed, 267 insertions(+), 7 deletions(-)
+ create mode 100644 runner/app_paths.h
+
+diff --git a/runner/app_paths.h b/runner/app_paths.h
+new file mode 100644
+index 0000000..930ceb2
+--- /dev/null
++++ b/runner/app_paths.h
+@@ -0,0 +1,139 @@
++/* Locations of user data in a packaged macOS release.
++ *
++ * A plain folder keeps the historical rule: settings, logs, saves and assets
++ * live beside the executable. A .app bundle breaks that rule:
++ *
++ *   X.app/Contents/MacOS/X
++ *       SDL_GetBasePath() reports Contents/Resources for a bundled app, which
++ *       is where the assets ship, but the folder the player sees and drops the
++ *       cartridge into is the one containing X.app. User data therefore goes
++ *       beside the .app when that folder is writable, otherwise to
++ *       ~/Library/Application Support/TG2Recomp/. An app installed in an
++ *       Applications folder always uses Application Support, which also
++ *       holds the cartridge the launcher imports.
++ *
++ * The helpers are compiled on macOS only; other platforms keep the plain
++ * folder layout in runner/main.c. Windowed Linux AppImages are anchored by
++ * the existing $APPIMAGE handling in init_exe_dir().
++ */
++#ifndef GENESIS_APP_PATHS_H
++#define GENESIS_APP_PATHS_H
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#if defined(__APPLE__) || defined(GENESIS_APP_PATHS_TEST)
++
++static void genesis_path_strip_trailing_separators(char *path)
++{
++    size_t n;
++    if (!path) return;
++    n = strlen(path);
++    while (n > 1 && (path[n - 1] == '/' || path[n - 1] == '\\'))
++        path[--n] = '\0';
++}
++
++/* Absolute directory of the running image, with a trailing separator. */
++#if defined(__APPLE__)
++#include <mach-o/dyld.h>   /* _NSGetExecutablePath: no /proc/self/exe */
++#include <unistd.h>
++#include <sys/stat.h>
++
++static int genesis_macos_executable_dir(char *out, size_t cap)
++{
++    char raw[4096];
++    char resolved[4096];
++    char *separator;
++    uint32_t size = sizeof raw;
++    if (!out || cap < 3) return 0;
++    if (_NSGetExecutablePath(raw, &size) != 0 || !raw[0]) return 0;
++    if (!realpath(raw, resolved))
++        snprintf(resolved, sizeof resolved, "%s", raw);
++    separator = strrchr(resolved, '/');
++    if (separator) separator[1] = '\0';
++    else snprintf(resolved, sizeof resolved, "./");
++    snprintf(out, cap, "%s", resolved);
++    return 1;
++}
++#endif
++
++/* Write the X.app bundle root (".../X.app/") when exe_dir is its
++ * Contents/MacOS directory. */
++static int genesis_macos_bundle_root(const char *exe_dir, char *out, size_t cap)
++{
++    char buffer[1024];
++    char *macos;
++    char *contents;
++    if (!exe_dir || !*exe_dir || !out || cap < 2) return 0;
++    snprintf(buffer, sizeof buffer, "%s", exe_dir);
++    genesis_path_strip_trailing_separators(buffer);
++    macos = strrchr(buffer, '/');
++    if (!macos || strcmp(macos + 1, "MacOS") != 0) return 0;
++    *macos = '\0';
++    contents = strrchr(buffer, '/');
++    if (!contents || strcmp(contents + 1, "Contents") != 0) return 0;
++    *contents = '\0';
++    /* A bundle folder is conventionally *.app; refuse lookalikes such as
++     * .../Contents/MacOS that are not actually inside an application. */
++    {
++        size_t length = strlen(buffer);
++        if (length < 5 || strcmp(buffer + length - 4, ".app") != 0) return 0;
++    }
++    snprintf(out, cap, "%s/", buffer);
++    return 1;
++}
++
++/* Write the folder containing X.app (".../") for a bundled executable. */
++static int genesis_macos_bundle_parent(const char *exe_dir, char *out, size_t cap)
++{
++    char root[1024];
++    char *slash;
++    if (!genesis_macos_bundle_root(exe_dir, root, sizeof root)) return 0;
++    genesis_path_strip_trailing_separators(root);
++    slash = strrchr(root, '/');
++    if (!slash) {
++        snprintf(out, cap, "./");
++        return 1;
++    }
++    slash[1] = '\0';
++    snprintf(out, cap, "%s", root);
++    return 1;
++}
++
++/* 1 when the folder holding X.app is an Applications folder (/Applications,
++ * ~/Applications or a subfolder of either). An installed app keeps user data
++ * and the imported cartridge in Application Support instead of loose files
++ * beside the bundle; any other folder stays a portable layout. */
++static int genesis_macos_is_installed_location(const char *parent)
++{
++    const char *at = parent;
++    if (!parent) return 0;
++    while ((at = strstr(at, "Applications")) != NULL) {
++        int starts = at == parent || at[-1] == '/';
++        char end = at[12];
++        if (starts && (end == '/' || end == '\0')) return 1;
++        at += 12;
++    }
++    return 0;
++}
++
++#if defined(__APPLE__)
++static int genesis_path_is_writable(const char *path)
++{
++    if (!path || !*path) return 0;
++    return access(path, W_OK | X_OK) == 0;
++}
++
++/* ~/Library/Application Support/TG2Recomp/ (created on demand). */
++static int genesis_macos_app_support(char *out, size_t cap)
++{
++    const char *home = getenv("HOME");
++    if (!home || !*home || !out || cap < 2) return 0;
++    snprintf(out, cap, "%s/Library/Application Support/TG2Recomp/", home);
++    mkdir(out, 0700);   /* EEXIST is fine; Library/Application Support exists */
++    return 1;
++}
++#endif
++
++#endif
++#endif /* GENESIS_APP_PATHS_H */
+diff --git a/runner/diagnostic_replay.c b/runner/diagnostic_replay.c
+index 3ddda98..5588ac2 100644
+--- a/runner/diagnostic_replay.c
++++ b/runner/diagnostic_replay.c
+@@ -331,6 +331,13 @@ int genesis_replay_init(const char *directory, const char *playback,
+   view_fn = fn;
+   initialized = 1;
+   snprintf(folder, sizeof folder, "%s", directory);
++  /* The runner base directory is habitually passed with a trailing separator;
++   * strip it so joined paths never contain a doubled slash. */
++  {
++    size_t n = strlen(folder);
++    while (n && (folder[n - 1] == '/' || folder[n - 1] == '\\')) folder[--n] = '\0';
++    if (!n) { folder[0] = '.'; folder[1] = '\0'; }
++  }
+   if (playback) {
+     playing = 1;
+     snprintf(path, sizeof path, "%s", playback);
+diff --git a/runner/main.c b/runner/main.c
+index 1afef1b..eee452e 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -55,6 +55,8 @@
+ 
+ static char s_exe_dir[512] = "";
+ static char s_data_dir[512] = "";
++/* s_data_dir is a separate cartridge library: search it and import picks. */
++static int s_rom_library;
+ 
+ static double benchmark_process_cpu_seconds(void)
+ {
+@@ -88,8 +90,7 @@ static uint64_t benchmark_process_cpu_cycles(void)
+ }
+ 
+ static void init_exe_dir(const char *argv0)
+-{
+-    /* Try platform API first */
++{    /* Try platform API first */
+ #ifdef _WIN32
+     GetModuleFileNameA(NULL, s_exe_dir, sizeof(s_exe_dir) - 1);
+ #else
+@@ -115,13 +116,25 @@ static void init_exe_dir(const char *argv0)
+     }
+ #endif
+     {
++        /* $APPIMAGE is only authoritative for THIS process. AppImage exports
++         * it to the whole child environment, so a plain binary launched from a
++         * terminal/launcher that is itself an AppImage inherits a stranger's
++         * APPIMAGE (owner report: logs, settings.ini, evidence and save states
++         * landed in ~/.local/bin instead of next to the executable). Resolve
++         * the real image first and honor APPIMAGE only when the running
++         * executable actually lives inside the AppImage mount ($APPDIR). */
++        ssize_t r = readlink("/proc/self/exe", s_exe_dir, sizeof(s_exe_dir) - 1);
++        if (r > 0) s_exe_dir[r] = '\0';
++        else s_exe_dir[0] = '\0';
++
+         const char *appimg = getenv("APPIMAGE");
+-        if (appimg && appimg[0]) {
++        const char *appdir = getenv("APPDIR");
++        int in_appimage = appimg && appimg[0] && appdir && appdir[0] &&
++                          strncmp(s_exe_dir, appdir, strlen(appdir)) == 0;
++        if (in_appimage) {
+             strncpy(s_exe_dir, appimg, sizeof(s_exe_dir) - 1);
+-        } else {
+-            ssize_t r = readlink("/proc/self/exe", s_exe_dir, sizeof(s_exe_dir) - 1);
+-            if (r > 0) s_exe_dir[r] = '\0';
+-            else if (argv0) strncpy(s_exe_dir, argv0, sizeof(s_exe_dir) - 1);
++        } else if (!s_exe_dir[0] && argv0) {
++            strncpy(s_exe_dir, argv0, sizeof(s_exe_dir) - 1);
+         }
+     }
+ #endif
+@@ -189,6 +202,7 @@ static int run_picker_cmd(const char *cmd, char *out, size_t max_len)
+ 
+ 
+ #include "cmd_server.h"
++#include "app_paths.h"
+ #include "game_spec.h"
+ #include "game_layout.h"
+ #include "gamepad.h"
+@@ -2178,6 +2192,11 @@ static int run_recomp_launcher(const char *ltitle, const char *initial_rom, char
+         RecompLauncherCGameInfo gi;
+         memset(&gi, 0, sizeof gi);
+         gi.name                 = g_game_spec.display_name;
++#ifdef __APPLE__
++        /* Cocoa treats a window icon as the application-wide Dock/Cmd+Tab
++         * icon. Preserve the bundle's multi-resolution ICNS in the launcher. */
++        gi.window_icon_path = NULL;
++#endif
+         gi.region               = "NTSC-U (USA)";
+         gi.expected_crc         = g_game_spec.expected_rom_crc32;
+         gi.has_expected_crc     = g_game_spec.expected_rom_crc32 != 0;
+@@ -2414,6 +2433,78 @@ static void replay_view(GenesisReplayView *v,int apply)
+     }
+ }
+ 
++#ifdef __APPLE__
++/* A double-clicked TG2Recomp.app runs from X.app/Contents/MacOS. Anchor the
++ * cartridge search and user data on the folder the player actually sees (the
++ * one containing X.app), and fall back to Application Support when the app
++ * sits in a read-only location such as /Applications. Assets are unaffected:
++ * SDL_GetBasePath() already reports Contents/Resources for a bundle. */
++static void macos_bundle_paths(void)
++{
++    char exe_dir[sizeof s_exe_dir];
++    char parent[sizeof s_exe_dir];
++    char data_dir[sizeof s_data_dir];
++    if (!genesis_macos_executable_dir(exe_dir, sizeof exe_dir)) return;
++    snprintf(s_exe_dir, sizeof s_exe_dir, "%s", exe_dir);
++    if (!genesis_macos_bundle_parent(exe_dir, parent, sizeof parent)) return;
++    snprintf(s_exe_dir, sizeof s_exe_dir, "%s", parent);
++    if (genesis_macos_is_installed_location(parent) &&
++        genesis_macos_app_support(data_dir, sizeof data_dir)) {
++        snprintf(s_data_dir, sizeof s_data_dir, "%s", data_dir);
++        s_rom_library = 1;
++        fprintf(stderr, "[paths] installed app; user data and cartridge: %s\n", s_data_dir);
++    } else if (genesis_path_is_writable(parent)) {
++        snprintf(s_data_dir, sizeof s_data_dir, "%s", parent);
++    } else if (genesis_macos_app_support(data_dir, sizeof data_dir)) {
++        snprintf(s_data_dir, sizeof s_data_dir, "%s", data_dir);
++        s_rom_library = 1;
++        fprintf(stderr, "[paths] bundle folder is read-only; user data: %s\n", s_data_dir);
++    }
++}
++#endif
++
++/* Copy a picked cartridge into the user data folder, so later launches find
++ * it there without the player keeping the original or picking it again.
++ * Only used when that folder is separate from the one beside the app (a
++ * macOS app in Applications or a read-only folder). The caller has already
++ * checked the cartridge identity. Returns the path to boot from. */
++static const char *import_rom_into_library(const char *rom_path,
++                                           const uint8_t *data, size_t size)
++{
++    static char imported[1024];
++    const char *name = rom_path;
++    const char *s1 = strrchr(rom_path, '/');
++    const char *s2 = strrchr(rom_path, '\\');
++    const char *sep = (s1 && s2) ? (s1 > s2 ? s1 : s2) : (s1 ? s1 : s2);
++    if (sep) name = sep + 1;
++    if (!*name) return rom_path;
++    int n = snprintf(imported, sizeof imported, "%s%s", s_data_dir, name);
++    if (n < 0 || (size_t)n >= sizeof imported) return rom_path;
++    if (strcmp(imported, rom_path) == 0) return rom_path;
++    if (genesis_rom_matches_file(imported, g_game_spec.expected_rom_crc32,
++                                 g_game_spec.expected_rom_size))
++        return imported;   /* already imported */
++    FILE *probe = fopen(imported, "rb");
++    if (probe) {
++        /* A different file already has this name; leave both alone. */
++        fclose(probe);
++        fprintf(stderr, "[ROM] not importing: %s exists and is not this cartridge\n", imported);
++        return rom_path;
++    }
++    char temp[1040];
++    snprintf(temp, sizeof temp, "%s.part", imported);
++    FILE *f = fopen(temp, "wb");
++    int ok = f && fwrite(data, 1, size, f) == size;
++    if (f && fclose(f) != 0) ok = 0;
++    if (!ok || rename(temp, imported) != 0) {
++        remove(temp);
++        fprintf(stderr, "[ROM] could not import the cartridge into %s\n", s_data_dir);
++        return rom_path;
++    }
++    fprintf(stderr, "[ROM] imported cartridge: %s\n", imported);
++    return imported;
++}
++
+ int main(int argc, char *argv[])
+ {
+     /* SDL2's Wayland app id and X11 resource class must agree with the
+@@ -2424,6 +2515,9 @@ int main(int argc, char *argv[])
+         SDL_SetHintWithPriority("SDL_APP_ID", g_game_spec.app_id, SDL_HINT_DEFAULT);
+     }
+     init_exe_dir(argv[0]);
++#ifdef __APPLE__
++    macos_bundle_paths();
++#endif
+     const char *user_dir=getenv("GENESIS_USER_DIR");
+     if(user_dir && *user_dir) {
+         if(!path_is_absolute(user_dir) || strlen(user_dir)>sizeof s_data_dir-2) {
+@@ -2734,12 +2828,17 @@ int main(int argc, char *argv[])
+      * s_exe_dir also names the external AppImage directory, when applicable;
+      * SDL_GetBasePath handles native executable paths on macOS/Windows/Linux.
+      * An explicit CLI ROM remains authoritative and is identity-checked below. */
++    const int rom_from_cli = rom_path != NULL;
++    int rom_detected = 0;
+     if (!rom_path && g_game_spec.expected_rom_crc32) {
+         static char detected_rom[2048];
+         char *base = SDL_GetBasePath();
+         int found = genesis_find_rom_in_directory(s_exe_dir,
+             g_game_spec.expected_rom_crc32, g_game_spec.expected_rom_size,
+             detected_rom, sizeof detected_rom);
++        if (!found && s_rom_library) found = genesis_find_rom_in_directory(s_data_dir,
++            g_game_spec.expected_rom_crc32, g_game_spec.expected_rom_size,
++            detected_rom, sizeof detected_rom);
+         if (!found && base) found = genesis_find_rom_in_directory(base,
+             g_game_spec.expected_rom_crc32, g_game_spec.expected_rom_size,
+             detected_rom, sizeof detected_rom);
+@@ -2749,6 +2848,7 @@ int main(int argc, char *argv[])
+         SDL_free(base);
+         if (found) {
+             rom_path = detected_rom;
++            rom_detected = 1;
+             fprintf(stderr, "[ROM] found matching cartridge: %s\n", rom_path);
+         } else {
+             fprintf(stderr, "[ROM] No matching %s cartridge found (CRC32 %08X). "
+@@ -2966,6 +3066,16 @@ int main(int argc, char *argv[])
+ #endif
+         if(!genesis_replay_mods(p,replay_path)) {fprintf(stderr,"[feedback-replay] cannot restore recorded mods\n");return 1;}
+     }
++    /* A cartridge picked in the launcher (or remembered from a pick) moves
++     * into the library; one found by the search or named on the command line
++     * stays where it is. */
++    if (s_rom_library && !rom_from_cli && !rom_detected && g_game_spec.expected_rom_crc32) {
++        const char *library_rom = import_rom_into_library(rom_path, rom_raw, rom_raw_len);
++        if (library_rom != rom_path) {
++            rom_path = library_rom;
++            rom_cfg_write(rom_cfg_path, rom_path);
++        }
++    }
+     uint32_t replay_rom_crc=rom_crc32(rom_raw,rom_raw_len);
+     /* --- Load input script (if requested) before the SDL window opens
+      * so any parse error fails fast without a flash of black window. */
+@@ -3064,6 +3174,9 @@ int main(int argc, char *argv[])
+         fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+         return 1;
+     }
++#ifndef __APPLE__
++    /* SDL's Cocoa backend assigns NSApp.applicationIconImage here. The
++     * embedded cross-platform 32px window icon must not replace bundle ICNS. */
+     if (g_game_spec.icon_rgba && g_game_spec.icon_width > 0 &&
+         g_game_spec.icon_width <= 1024 && g_game_spec.icon_height > 0 &&
+         g_game_spec.icon_height <= 1024) {
+@@ -3076,6 +3189,7 @@ int main(int argc, char *argv[])
+             SDL_FreeSurface(icon);
+         }
+     }
++#endif
+     fprintf(stderr, "[VIDEO] window %dx%d (%s)\n", win_w, win_h,
+             (custom_video_on || ws_armed()) ? "16:9 widescreen" : "4:3");
+ 

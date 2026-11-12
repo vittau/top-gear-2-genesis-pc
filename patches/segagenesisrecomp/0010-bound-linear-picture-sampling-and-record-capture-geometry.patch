@@ -1,19 +1,18 @@
-From 53d020edcbe9c453c8786727d363a053865ca0e2 Mon Sep 17 00:00:00 2001
+From acfda2159e83ce7e8bc76c3983ca70ffacc7df60 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
-Date: Sat, 7 Nov 2026 20:00:14 -0300
-Subject: [PATCH] Clamp linear presentation to the active picture and honor
- filter defaults
+Date: Thu, 12 Nov 2026 10:52:20 -0300
+Subject: [PATCH] Bound linear picture sampling and record capture geometry
 
-Use an exactly-sized streaming texture for linear CPU presentation; preserve nearest uploads. Add opt-in exact-frame SDL-output captures for edge validation.
+Filter only the active picture and export sampler metadata so diagnostic captures explain output scaling.
 ---
- runner/main.c | 71 +++++++++++++++++++++++++++++++++++++++++++++++++--
- 1 file changed, 69 insertions(+), 2 deletions(-)
+ runner/main.c | 85 +++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 83 insertions(+), 2 deletions(-)
 
 diff --git a/runner/main.c b/runner/main.c
-index 8b3798a..e8ee0fe 100644
+index a9f4be7..12ad549 100644
 --- a/runner/main.c
 +++ b/runner/main.c
-@@ -762,6 +762,29 @@ static const GenesisScanlineProducer s_custom_producer = {
+@@ -948,6 +948,29 @@ static const GenesisScanlineProducer s_custom_producer = {
      own_custom_row_enabled, own_custom_row
  };
  
@@ -43,13 +42,14 @@ index 8b3798a..e8ee0fe 100644
  static void custom_video_prepare(void)
  {
      int dw = 0, dh = 0;
-@@ -1725,6 +1748,39 @@ int runner_write_screenshot_file(const char *path)
+@@ -2050,6 +2073,53 @@ int runner_write_presented_screenshot_file(const char *path)
      return ok;
  }
  
 +/* Opt-in exact-frame capture of the SDL output, including scaling/bars.
 + * Guest framebuffer screenshots retain their existing semantics. */
-+static void capture_presented_window(SDL_Renderer *renderer, unsigned frame)
++static void capture_presented_window(SDL_Renderer *renderer, unsigned frame,
++                                     SDL_Texture *texture, const SDL_Rect *source)
 +{
 +    const char *frames = getenv("GENESIS_WINDOW_CAPTURE_FRAMES");
 +    const char *prefix = getenv("GENESIS_WINDOW_CAPTURE_PREFIX");
@@ -66,10 +66,23 @@ index 8b3798a..e8ee0fe 100644
 +    if (!match) return;
 +    int w, h;
 +    SDL_Rect viewport;
++    int lw, lh, tw, th; float sx, sy; SDL_ScaleMode mode;
++    SDL_RenderGetLogicalSize(renderer, &lw, &lh);
++    SDL_RenderGetScale(renderer, &sx, &sy);
++    SDL_QueryTexture(texture, NULL, NULL, &tw, &th);
++    SDL_GetTextureScaleMode(texture, &mode);
++    SDL_RendererInfo info; SDL_GetRendererInfo(renderer, &info);
 +    SDL_GetRendererOutputSize(renderer, &w, &h);
 +    SDL_RenderGetViewport(renderer, &viewport);
 +    uint32_t *pixels = malloc((size_t)w * h * sizeof *pixels);
 +    if (!pixels) return;
++    char metadata[1024];
++    snprintf(metadata, sizeof metadata, "%s-%u.json", prefix, frame);
++    FILE *f = fopen(metadata, "w");
++    if (f) {
++        fprintf(f, "{\"frame\":%u,\"renderer\":\"%s\",\"output\":[%d,%d],\"logical\":[%d,%d],\"viewport\":[%d,%d,%d,%d],\"scale\":[%.9g,%.9g],\"texture\":[%d,%d],\"source\":[%d,%d,%d,%d],\"pitch_pixels\":%d,\"saved_filter\":%d,\"active_filter\":%d,\"sampler\":%d}\n", frame, info.name, w,h,lw,lh,viewport.x,viewport.y,viewport.w,viewport.h,sx,sy,tw,th,source->x,source->y,source->w,source->h,s_frame_stride,g_app_config.linear_filter,s_frame_texture_filtered,(int)mode);
++        fclose(f);
++    }
 +    SDL_RenderSetViewport(renderer, NULL);
 +    if (!SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, pixels, w * 4)) {
 +        char path[1024];
@@ -83,7 +96,7 @@ index 8b3798a..e8ee0fe 100644
  /* =========================================================================
   * Frame logging (main-loop version, works in ALL build modes)
   * ========================================================================= */
-@@ -2394,7 +2450,9 @@ static void local_states_modal(SDL_Renderer *renderer, SDL_Texture *game,
+@@ -2724,7 +2794,9 @@ static void local_states_modal(SDL_Renderer *renderer, SDL_Texture *game,
          if (dw > s_screen_width) dw = s_screen_width;
          SDL_Rect dst = {(s_screen_width - dw) / 2, 0, dw, s_screen_height};
          SDL_RenderClear(renderer);
@@ -94,7 +107,7 @@ index 8b3798a..e8ee0fe 100644
          SDL_RenderCopy(renderer, panel, NULL, &dst);
          SDL_RenderPresent(renderer);
      }
-@@ -3164,6 +3222,9 @@ int main(int argc, char *argv[])
+@@ -3585,6 +3657,9 @@ int main(int argc, char *argv[])
      }
      s_video_renderer = renderer;
      s_video_texture = &texture;
@@ -104,18 +117,18 @@ index 8b3798a..e8ee0fe 100644
      GenesisHdGpu *hd_gpu=NULL;
      int hd_checked=0;
      {
-@@ -4345,7 +4406,10 @@ session_begin:;
+@@ -4778,7 +4853,10 @@ session_begin:;
              }
              peer_view_was_active = peer_view_is_active;
          }
 +        if (frame_texture == texture)
 +            frame_texture = linear_picture(renderer, texture, present_src, s_frame_stride * 4, &src);
          SDL_RenderCopy(renderer, frame_texture, &src, NULL);
-+        capture_presented_window(renderer, frame_num);
++        capture_presented_window(renderer, frame_num, frame_texture, &src);
  #if GENESIS_HAS_RECOMP_NET
          /* Process the peer INPUT and emit our CONFIRM before the blocking
           * present, so confirmation delivery overlaps vsync as well. */
-@@ -4420,7 +4484,9 @@ session_begin:;
+@@ -4853,7 +4931,9 @@ session_begin:;
                  }
                  SDL_Rect active={0,0,s_screen_width,s_screen_height};
                  SDL_UpdateTexture(texture,&active,pixels,s_frame_stride*(int)sizeof(uint32_t));
@@ -126,7 +139,7 @@ index 8b3798a..e8ee0fe 100644
                  now=SDL_GetPerformanceCounter();
                  if(now<at) {
                      Uint64 wait_begin=now;
-@@ -4714,6 +4780,7 @@ session_begin:;
+@@ -5150,6 +5230,7 @@ session_begin:;
      if (s_framebuf != s_native_storage) free(s_framebuf);
      if (s_present_buf != s_present_storage) free(s_present_buf);
      gamepad_shutdown();
@@ -134,5 +147,3 @@ index 8b3798a..e8ee0fe 100644
      SDL_DestroyRenderer(renderer);
      SDL_DestroyWindow(window);
      genesis_replay_shutdown();
--- 
-2.54.0 (Apple Git-157)

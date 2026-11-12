@@ -1,0 +1,981 @@
+From d1e595139cfa787b49e0294d00e507c02ce9c049 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 10:52:19 -0300
+Subject: [PATCH] Save quickstates at guest boundaries and present feedback
+
+Resume the saved guest callers and keep requests queued for a safe boundary; show results without changing hashed game pixels.
+---
+ runner/cmd_server.c              | 103 +++++++++++-
+ runner/game_spec.h               |   7 +
+ runner/glue.c                    |  70 +++++++-
+ runner/glue.h                    |   7 +
+ runner/host_state.h              |  88 ++++++----
+ runner/include/genesis_runtime.h |   1 +
+ runner/main.c                    | 268 ++++++++++++++++++++++++++++++-
+ runner/overlay_draw.c            | 137 ++++++++++++++++
+ runner/overlay_draw.h            |  14 ++
+ 9 files changed, 664 insertions(+), 31 deletions(-)
+
+diff --git a/runner/cmd_server.c b/runner/cmd_server.c
+index 3997259..0308abb 100644
+--- a/runner/cmd_server.c
++++ b/runner/cmd_server.c
+@@ -522,12 +522,103 @@ static void handle_load_state(int id, const char *json)
+     send_file_action_result(id, "load_state", path, runner_load_state_file(path));
+ }
+ 
++extern int runner_write_presented_screenshot_file(const char *path);
++
+ static void handle_screenshot(int id, const char *json)
+ {
+     char path[256];
+     if (!json_get_str(json, "path", path, sizeof(path)))
+         snprintf(path, sizeof(path), "tcp_screenshot.png");
+-    send_file_action_result(id, "screenshot", path, runner_write_screenshot_file(path));
++    /* "presented":1 captures the composited window (game picture plus host
++     * overlays such as the state notice); the default stays the verified
++     * guest framebuffer every existing probe compares. */
++    if (json_get_int(json, "presented", 0))
++        send_file_action_result(id, "screenshot", path,
++                                runner_write_presented_screenshot_file(path));
++    else
++        send_file_action_result(id, "screenshot", path, runner_write_screenshot_file(path));
++}
++
++/* Dev-only: the runner's own input seam, so a headless probe can drive the
++ * runtime menu and the quickstate hotkeys with real SDL key events and the
++ * held-key state they imply. {"key":"return","down":1,"shift":0} */
++extern int runner_debug_key(const char *name, int down, int shift);
++extern int runner_debug_ui_open(const char *section);
++extern int runner_debug_ui_row_count(void);
++extern int runner_debug_ui_row(int index, char *label, size_t label_cap,
++                               char *value, size_t value_cap, int *selected);
++
++static void handle_key(int id, const char *json)
++{
++    char name[24] = {0};
++    if (!json_get_str(json, "name", name, sizeof(name))) {
++        send_err(id, "missing name");
++        return;
++    }
++    /* "held":1 (default) presses; 0 releases. Spelled "held" so the value of
++     * "name" ("down", "up") can never be matched as a JSON key. */
++    int down = json_get_int(json, "held", 1);
++    int shift = json_get_int(json, "shift", 0);
++    if (runner_debug_key(name, down, shift)) send_ok(id);
++    else send_err(id, "unknown key (return escape space tab up down left right f1..f9)");
++}
++
++extern int runner_debug_virtual_pad(int attach, const char *button, int down);
++
++static void handle_virtual_pad(int id, const char *json)
++{
++    char button[24] = {0};
++    json_get_str(json, "button", button, sizeof(button));
++    if (runner_debug_virtual_pad(json_get_int(json, "attach", 0), button,
++                                 json_get_int(json, "held", 1)))
++        send_ok(id);
++    else
++        send_err(id, "virtual controller unavailable or unknown button");
++}
++
++static void handle_ui_open(int id, const char *json)
++{
++    char section[64] = {0};
++    json_get_str(json, "section", section, sizeof(section));
++    if (runner_debug_ui_open(section[0] ? section : NULL)) send_ok(id);
++    else send_err(id, "runtime menu unavailable or unknown section");
++}
++
++extern int runner_debug_pad_mask(int port);
++
++static void handle_pad(int id)
++{
++    extern int input_gameplay_blocked(void);
++    char buf[160];
++    snprintf(buf, sizeof buf,
++             "{\"id\":%d,\"ok\":true,\"pad0\":%d,\"pad1\":%d,\"blocked\":%d}",
++             id, runner_debug_pad_mask(0), runner_debug_pad_mask(1), input_gameplay_blocked());
++    send_response(buf);
++}
++
++static void handle_ui_rows(int id)
++{
++    int count = runner_debug_ui_row_count();
++    char buf[48 * 320 + 128], entry[384];
++    size_t pos = (size_t)snprintf(buf, sizeof buf,
++                                  "{\"id\":%d,\"ok\":true,\"rows\":[", id);
++    for (int i = 0; i < count; ++i) {
++        char label[96], value[96], label_json[200], value_json[200];
++        int selected = 0;
++        if (!runner_debug_ui_row(i, label, sizeof label, value, sizeof value, &selected))
++            break;
++        json_escape_copy(label_json, sizeof label_json, label);
++        json_escape_copy(value_json, sizeof value_json, value);
++        int len = snprintf(entry, sizeof entry,
++                           "%s{\"label\":\"%s\",\"value\":\"%s\",\"selected\":%s}",
++                           i ? "," : "", label_json, value_json, selected ? "true" : "false");
++        if (len < 0 || (size_t)len >= sizeof entry || pos + (size_t)len + 3 > sizeof buf)
++            break;
++        memcpy(buf + pos, entry, (size_t)len);
++        pos += (size_t)len;
++    }
++    memcpy(buf + pos, "]}", 3);
++    send_response(buf);
+ }
+ 
+ /* Query the always-on crash_report block ring (recent recompiled block
+@@ -2212,6 +2303,16 @@ static CmdResult dispatch_command(const char *json, uint32_t frame_num)
+         handle_load_state(id, json);
+     } else if (strcmp(cmd, "screenshot") == 0) {
+         handle_screenshot(id, json);
++    } else if (strcmp(cmd, "key") == 0) {
++        handle_key(id, json);
++    } else if (strcmp(cmd, "ui_open") == 0) {
++        handle_ui_open(id, json);
++    } else if (strcmp(cmd, "virtual_pad") == 0) {
++        handle_virtual_pad(id, json);
++    } else if (strcmp(cmd, "ui_rows") == 0) {
++        handle_ui_rows(id);
++    } else if (strcmp(cmd, "pad") == 0) {
++        handle_pad(id);
+     } else if (strcmp(cmd, "video_configure") == 0) {
+         extern int runner_custom_video_set(const char *, int, int);
+         char mode[64] = {0};
+diff --git a/runner/game_spec.h b/runner/game_spec.h
+index 778fb99..46173b0 100644
+--- a/runner/game_spec.h
++++ b/runner/game_spec.h
+@@ -77,6 +77,13 @@ typedef struct GameSpec {
+     int (*state_load)(const void *data, size_t size, int apply);
+     /* At the game's real WaitForVint: is its caller a resumable loop? */
+     int (*state_at_boundary)(void);
++    /* At a short hardware-poll loop: does `site` (the polled instruction the
++     * loop re-executes) qualify as a resumable frame boundary? */
++    int (*state_at_boundary_site)(uint32_t site);
++    /* Resume PC after a host snapshot was applied. Called on the scheduler
++     * fiber once the adapter's state_load(apply) has prepared it. 0 falls
++     * back to resume_main_loop_pc. */
++    uint32_t (*state_resume_pc)(void);
+     /* ---- Identity ---- */
+     /* Clean game name for gameplay and launcher captions, e.g. "Sonic the
+      * Hedgehog". Build/backend/debug identity belongs in logs and About. */
+diff --git a/runner/glue.c b/runner/glue.c
+index 973552e..599902d 100644
+--- a/runner/glue.c
++++ b/runner/glue.c
+@@ -584,6 +584,44 @@ static void interp_drive_mainloop(uint32_t entry_pc) {
+     }
+ }
+ 
++/* s_game_fiber_resume_pc bit 31: the resume PC is a loop inside the restored
++ * guest frame. Keep the restored A7, and when the loop returns continue the
++ * guest's own callers from its stack instead of the outer dispatcher. */
++#define GLUE_RESUME_IN_FRAME 0x80000000u
++
++/* Does a JSR/BSR end right before `addr`? Only such a long on the guest
++ * stack is a return address the 68000 would RTS to. */
++static int guest_call_precedes(uint32_t addr)
++{
++    uint32_t rom_size = g_game_spec.expected_rom_size ? g_game_spec.expected_rom_size
++                                                      : 0x400000u;
++    if ((addr & 1u) || addr < 0x206u || addr >= rom_size) return 0;
++    uint16_t op2 = m68k_read16(addr - 2u), op4 = m68k_read16(addr - 4u);
++    if ((op2 & 0xFF00u) == 0x6100u && (op2 & 0xFFu) != 0 && (op2 & 0xFFu) != 0xFFu)
++        return 1;                                    /* BSR.S */
++    if ((op2 & 0xFFF8u) == 0x4E90u) return 1;        /* JSR (An) */
++    if (op4 == 0x6100u || op4 == 0x4EB8u || op4 == 0x4EBAu || op4 == 0x4EBBu)
++        return 1;                                    /* BSR.W, JSR abs.w/(d16,PC)/(d8,PC,Xn) */
++    if ((op4 & 0xFFF8u) == 0x4EA8u || (op4 & 0xFFF8u) == 0x4EB0u)
++        return 1;                                    /* JSR (d16,An)/(d8,An,Xn) */
++    return m68k_read16(addr - 6u) == 0x4EB9u;        /* JSR abs.l */
++}
++
++/* Pop the next guest return address the way the caller's JSR epilogue would
++ * (generated RTS leaves it on the stack for the caller to pop). */
++static int guest_stack_return(uint32_t *ret)
++{
++    uint32_t sp = g_cpu.A[7] & 0xFFFFFFu;
++    if (!g_game_layout.initial_ssp || (sp & 1u) || sp < 0xFF0000u ||
++        sp + 4u > (g_game_layout.initial_ssp & 0xFFFFFFu))
++        return 0;
++    uint32_t addr = m68k_read32(sp) & 0xFFFFFFu;
++    if (!guest_call_precedes(addr)) return 0;
++    g_cpu.A[7] += 4u;
++    *ret = addr;
++    return 1;
++}
++
+ /* Game fiber entry point. */
+ static void game_fiber_func(void *param)
+ {
+@@ -593,9 +631,15 @@ static void game_fiber_func(void *param)
+     s_game_stack_last_report = 0;
+     if (s_game_fiber_resume_pc) {
+         uint32_t resume_pc = s_game_fiber_resume_pc & 0xFFFFFFu;
++        int in_frame = (s_game_fiber_resume_pc & GLUE_RESUME_IN_FRAME) != 0;
+         s_game_fiber_resume_pc = 0;
+-        g_cpu.A[7] = g_game_layout.initial_ssp;
++        if (!in_frame) g_cpu.A[7] = g_game_layout.initial_ssp;
+         recomp_call_addr(resume_pc);
++        while (in_frame && guest_stack_return(&resume_pc)) {
++            fprintf(stderr, "[GAME] %s resumed frame returned; continuing guest caller $%06X\n",
++                    g_game_spec.short_name, resume_pc);
++            recomp_call_addr(resume_pc);
++        }
+         if (g_game_spec.dispatch_main_loop_pc) {
+             uint32_t dispatch_pc = g_game_spec.dispatch_main_loop_pc & 0xFFFFFFu;
+             fprintf(stderr, "[GAME] %s resume loop returned at $%06X; continuing at dispatcher $%06X\n",
+@@ -1214,6 +1258,23 @@ void glue_yield_for_vblank(void)
+     }
+ }
+ 
++/* A game-chosen per-frame instruction (a loop top that the screen
++ * re-executes) asks here whether it should park for a host snapshot. On a
++ * queued save this yields to the scheduler at the instruction boundary and
++ * stays parked until the snapshot has been written; the guest resumes in
++ * place afterwards. Returns 1 when the call parked. */
++int glue_state_boundary(uint32_t site)
++{
++    if (!s_state_requested || s_in_vblank_service || !s_main_fiber ||
++        !g_game_spec.state_at_boundary_site)
++        return 0;
++    if (!g_game_spec.state_at_boundary_site(site))
++        return 0;
++    s_state_parked = 1;
++    yield_to_main(GLUE_YIELD_VBLANK);
++    return 1;
++}
++
+ /* Yield from a short hardware-polling loop without declaring a game-frame
+  * boundary. This lets clownmdemu advance to the next scanline and deliver
+  * IRQ4/HBlank or update device status while the game remains in the same
+@@ -1572,6 +1633,13 @@ void glue_restart_game_fiber(uint32_t resume_pc)
+             (unsigned)(resume_pc & 0xFFFFFFu));
+ }
+ 
++void glue_resume_game_fiber_in_frame(uint32_t resume_pc)
++{
++    glue_restart_game_fiber(resume_pc);
++    if (s_game_running && s_game_fiber_resume_pc)
++        s_game_fiber_resume_pc |= GLUE_RESUME_IN_FRAME;
++}
++
+ /* =========================================================================
+  * Memory access — route through clownmdemu's bus layer (M68kReadCallback /
+  * M68kWriteCallback), which handles ROM, work RAM, VDP, IO, Z80 bus, etc.
+diff --git a/runner/glue.h b/runner/glue.h
+index 78f00b8..1f1f7f3 100644
+--- a/runner/glue.h
++++ b/runner/glue.h
+@@ -39,6 +39,13 @@ void glue_load_state(FILE *sf);
+  * fiber IN PLACE (same engine-owned stack; see fiber_compat.h). Must be
+  * called from the scheduler (main) fiber. */
+ void glue_restart_game_fiber(uint32_t resume_pc);
++/* Same, for a loop inside the restored guest frame (a host snapshot's
++ * boundary): keeps the restored A7, and when the loop returns continues the
++ * return addresses on the guest stack before the outer dispatcher. */
++void glue_resume_game_fiber_in_frame(uint32_t resume_pc);
++/* Per-frame boundary a game hook may offer for a host snapshot. Returns 1
++ * when the call parked and the snapshot request was serviced. */
++int glue_state_boundary(uint32_t site);
+ 
+ /* Scheduler rule (see glue.c): the same-address spin streak and the Z80
+  * sync-poll streak restart at every wall-frame boundary. The tick driver
+diff --git a/runner/host_state.h b/runner/host_state.h
+index e1b7ea7..b4695bd 100644
+--- a/runner/host_state.h
++++ b/runner/host_state.h
+@@ -4,15 +4,20 @@
+ enum { HOST_STATE_SECTIONS=6, HOST_STATE_LIMIT=32*1024*1024 };
+ extern uint8_t g_ram[65536];
+ extern uint8_t g_rom[0x400000];
+-static Uint32 host_state_notice_until;
+-static void host_state_notice(const char *message)
++/* These notices are drawn in the game picture (main.c runner_state_notice) and
++ * in the window title. A notice is host presentation only: it never enters the
++ * guest, a framebuffer hash, a replay or a captured game frame. */
++static void host_state_notice(const char *message) { runner_state_notice(message); }
++/* Slot number for a quickstate path ("native_save_N.bin"), or 0. */
++static int host_state_slot_of(const char *path)
+ {
+-#if RECOMP_LAUNCHER
+-    if (s_runtime_ui.window) {
+-        char title[256]; snprintf(title,sizeof title,"%s - %s",g_game_spec.display_name,message);
+-        SDL_SetWindowTitle(s_runtime_ui.window,title); host_state_notice_until=SDL_GetTicks()+5000;
+-    }
+-#endif
++    const char *name = path;
++    char tail[2];
++    int slot = 0;
++    for (const char *p = path; *p; ++p) if (*p == '/' || *p == '\\') name = p + 1;
++    if (sscanf(name, "native_save_%d.bin%1s", &slot, tail) == 1 &&
++        slot >= 1 && slot <= 9) return slot;
++    return 0;
+ }
+ typedef struct HostStateHeader {
+     char magic[8], build[65];
+@@ -41,6 +46,8 @@ static int host_machine_read(FILE *f)
+ static int host_state_save_now(const char *path)
+ {
+     HostStateHeader h={0};
++    int slot=host_state_slot_of(path);
++    char notice[64];
+     memcpy(h.magic,"GRHOST2",8);
+     if (!g_game_spec.state_build_id || strlen(g_game_spec.state_build_id)>=sizeof h.build) return 0;
+     strcpy(h.build,g_game_spec.state_build_id);
+@@ -49,10 +56,13 @@ static int host_state_save_now(const char *path)
+     if (!size || size>HOST_STATE_LIMIT) return 0;
+     uint8_t *host=malloc(size); if (!host) return 0;
+     int ok=g_game_spec.state_save(host,size);
+-    if (!ok) { free(host); host_state_notice("Save failed: wait for supported gameplay"); fprintf(stderr,"[SAVE] The game adapter cannot save in its current mode.\n"); return 0; }
++    if (!ok) { free(host); host_state_notice("SAVE UNAVAILABLE HERE"); fprintf(stderr,"[SAVE] The game adapter cannot save in its current mode.\n"); return 0; }
+     char tmp[640]; snprintf(tmp,sizeof tmp,"%s.tmp.%llu",path,(unsigned long long)SDL_GetPerformanceCounter());
+     FILE *f=fopen(tmp,"w+b");
+-    if (!f) { free(host); return 0; }
++    /* A save that cannot even open its temporary file used to be dropped in
++     * silence (no log line, no notice). Say so: the request is gone. */
++    if (!f) { free(host); host_state_notice("SAVE FAILED: CANNOT WRITE STATE");
++        fprintf(stderr,"[SAVE] cannot create %s\n",tmp); return 0; }
+     h.section[0]=(uint32_t)size;
+     ok=fwrite(&h,sizeof h,1,f)==1 && fwrite(host,1,size,f)==size && host_machine_write(f,&h);
+     free(host);
+@@ -73,34 +83,44 @@ static int host_state_save_now(const char *path)
+     }
+     if (!ok) remove(tmp); /* Only our exact, unique temporary file. */
+     fprintf(stderr,"[SAVE] %s %s\n",ok?"saved":"failed (previous state retained)",path);
+-    host_state_notice(ok?"State saved":"Save failed: previous state retained");
++    if (ok && slot) snprintf(notice,sizeof notice,"STATE SAVED TO SLOT %d",slot);
++    else if (ok) snprintf(notice,sizeof notice,"STATE SAVED");
++    else if (slot) snprintf(notice,sizeof notice,"SAVE FAILED: SLOT %d",slot);
++    else snprintf(notice,sizeof notice,"SAVE FAILED");
++    host_state_notice(notice);
+     return ok;
+ }
+ static char host_state_pending[512];
+ static unsigned host_state_pending_frames;
++/* How long a save may wait for the game to reach a repeatable boundary. The
++ * inter-race screens (results, championship table, car/gear setup, next-track
++ * intro, shop) have no boundary the host can resume later, so a save asked for
++ * there waits until the player continues into the next race, which is the
++ * moment the menu label promises ("the next completed gameplay tick"). 15 s of
++ * gameplay is enough to press START and reach the race; past that the request
++ * is refused with a visible notice instead of being dropped in silence. */
++#define HOST_STATE_PENDING_FRAMES 900u
+ static int host_state_save(const char *path)
+ {
+-    if (strlen(path)>=sizeof host_state_pending || *host_state_pending) return 0;
+-    strcpy(host_state_pending,path); host_state_pending_frames=0;
++    if (strlen(path)>=sizeof host_state_pending) return 0;
++    /* The last request wins: a stale one must never block the menu or the
++     * hotkey, and a second save on the same slot is the same wish. */
++    snprintf(host_state_pending,sizeof host_state_pending,"%s",path);
++    host_state_pending_frames=0;
+     glue_state_boundary_request(1);
+-    fprintf(stderr,"[SAVE] queued for the next completed gameplay tick: %s\n",path);
+-    host_state_notice("Saving at next gameplay tick...");
++    fprintf(stderr,"[SAVE] queued for the next resumable gameplay boundary: %s\n",path);
++    host_state_notice("SAVING AT NEXT BOUNDARY...");
+     return 1;
+ }
+ static void host_state_tick(void)
+ {
+-#if RECOMP_LAUNCHER
+-    if (host_state_notice_until && (Sint32)(SDL_GetTicks()-host_state_notice_until)>=0) {
+-        if (s_runtime_ui.window) SDL_SetWindowTitle(s_runtime_ui.window,g_game_spec.display_name);
+-        host_state_notice_until=0;
+-    }
+-#endif
+     if (!*host_state_pending) return;
+     if (glue_state_boundary_ready()) {
+         host_state_save_now(host_state_pending);
+-    } else if (++host_state_pending_frames<120) return;
+-    else { host_state_notice("Save unavailable in the current game mode");
+-        fprintf(stderr,"[SAVE] no resumable game boundary; previous state retained.\n"); }
++    } else if (++host_state_pending_frames<HOST_STATE_PENDING_FRAMES) return;
++    else { host_state_notice("SAVE UNAVAILABLE HERE");
++        fprintf(stderr,"[SAVE] no resumable game boundary in %u frames; previous state retained.\n",
++                (unsigned)HOST_STATE_PENDING_FRAMES); }
+     host_state_pending[0]=0; glue_state_boundary_request(0);
+ }
+ static int host_state_load(const char *path)
+@@ -140,14 +160,28 @@ static int host_state_load(const char *path)
+     if (!ok) { rewind(backup); host_machine_read(backup); goto done; }
+     audio_discard_playback(); /* host payload restored deferred chip events */
+     uint32_t pc=g_game_spec.resume_main_loop_pc;
++    int in_frame=0; /* a game boundary resumes inside the restored frame */
++    if (g_game_spec.state_resume_pc) {
++        uint32_t resume=g_game_spec.state_resume_pc();
++        if (resume) { pc=resume; in_frame=1; }
++    }
+     if (g_game_spec.save_resume_pc && g_game_layout.game_mode_addr) {
+         uint32_t mapped=g_game_spec.save_resume_pc(glue_peek8(g_game_layout.game_mode_addr));
+-        if (mapped) pc=mapped;
++        if (mapped) { pc=mapped; in_frame=0; }
+     }
+-    if (pc) glue_restart_game_fiber(pc);
++    if (pc && in_frame) glue_resume_game_fiber_in_frame(pc);
++    else if (pc) glue_restart_game_fiber(pc);
+ done:
+     if (f) fclose(f); if (backup) fclose(backup); if (staged) fclose(staged); free(body);
+     fprintf(stderr,"[LOAD] %s %s\n",ok?"loaded":"rejected: missing, damaged, incompatible build or configuration",path);
+-    host_state_notice(ok?"State loaded":"Load rejected: file missing, damaged, or setup/build mismatch");
++    {
++        int slot=host_state_slot_of(path);
++        char notice[64];
++        if (ok && slot) snprintf(notice,sizeof notice,"STATE LOADED FROM SLOT %d",slot);
++        else if (ok) snprintf(notice,sizeof notice,"STATE LOADED");
++        else if (slot) snprintf(notice,sizeof notice,"LOAD REJECTED: SLOT %d",slot);
++        else snprintf(notice,sizeof notice,"LOAD REJECTED");
++        host_state_notice(notice);
++    }
+     return ok;
+ }
+diff --git a/runner/include/genesis_runtime.h b/runner/include/genesis_runtime.h
+index ad17ac9..8ba9579 100644
+--- a/runner/include/genesis_runtime.h
++++ b/runner/include/genesis_runtime.h
+@@ -129,6 +129,7 @@ int genesis_frame_overdue(void);
+ /* ---- Fiber yield (Step 2) ---- */
+ void glue_yield_for_vblank(void);
+ void glue_yield_for_interrupt_poll(void);
++int glue_state_boundary(uint32_t site);
+ 
+ /* ---- Vectored exceptions (Phase 7A) ----
+  * Real semantics for TRAP #N / TRAPV / RTR / RESET / ILLEGAL / A-line /
+diff --git a/runner/main.c b/runner/main.c
+index bbe9554..0e90777 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -44,6 +44,7 @@
+ #include "png_write.h"
+ #include "runtime_evidence.h"
+ #include "local_states.h"
++#include "overlay_draw.h"
+ #include "diagnostic_replay.h"
+ #include "rom_autodetect.h"
+ 
+@@ -554,6 +555,126 @@ int runner_ws_set_user(int on)
+     return s_ws_user_on;
+ }
+ 
++#if GEN_ENABLE_TRACE
++/* Dev/TCP hooks that let a headless probe drive the runtime menu and the
++ * quickstate hotkeys with real SDL key events (the same ones a player
++ * generates) instead of reaching into the UI model. The matching held-key
++ * state goes through input_map's dev seam because SDL_GetKeyboardState cannot
++ * be set from outside SDL; both are development/test paths only. */
++int runner_debug_key(const char *name, int down, int shift)
++{
++    static const struct { const char *name; SDL_Keycode sym; SDL_Scancode sc; } keys[] = {
++        { "return", SDLK_RETURN, SDL_SCANCODE_RETURN },
++        { "escape", SDLK_ESCAPE, SDL_SCANCODE_ESCAPE },
++        { "space",  SDLK_SPACE,  SDL_SCANCODE_SPACE  },
++        { "tab",    SDLK_TAB,    SDL_SCANCODE_TAB    },
++        { "up",     SDLK_UP,     SDL_SCANCODE_UP     },
++        { "down",   SDLK_DOWN,   SDL_SCANCODE_DOWN   },
++        { "left",   SDLK_LEFT,   SDL_SCANCODE_LEFT   },
++        { "right",  SDLK_RIGHT,  SDL_SCANCODE_RIGHT  },
++        { "f1", SDLK_F1, SDL_SCANCODE_F1 }, { "f2", SDLK_F2, SDL_SCANCODE_F2 },
++        { "f3", SDLK_F3, SDL_SCANCODE_F3 }, { "f4", SDLK_F4, SDL_SCANCODE_F4 },
++        { "f5", SDLK_F5, SDL_SCANCODE_F5 }, { "f6", SDLK_F6, SDL_SCANCODE_F6 },
++        { "f7", SDLK_F7, SDL_SCANCODE_F7 }, { "f8", SDLK_F8, SDL_SCANCODE_F8 },
++        { "f9", SDLK_F9, SDL_SCANCODE_F9 },
++    };
++    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; ++i) {
++        if (strcmp(name, keys[i].name) != 0) continue;
++        SDL_Event ev;
++        memset(&ev, 0, sizeof ev);
++        ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
++        ev.key.type = ev.type;
++        ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
++        ev.key.repeat = 0;
++        ev.key.keysym.sym = keys[i].sym;
++        ev.key.keysym.scancode = keys[i].sc;
++        ev.key.keysym.mod = shift ? KMOD_SHIFT : KMOD_NONE;
++        SDL_PushEvent(&ev);
++        input_test_key_hold((int)keys[i].sc, down);
++        return 1;
++    }
++    return 0;
++}
++/* Dev/TCP virtual pad: a headless probe can attach an SDL virtual controller
++ * and hold its buttons, which is the only way to exercise the gamepad half of
++ * the menu-dismiss release latch without hardware. */
++static SDL_Joystick *s_virtual_pad;
++int runner_debug_virtual_pad(int attach, const char *button, int down)
++{
++    if (attach && !s_virtual_pad) {
++        /* A headless window never takes keyboard focus, and SDL then ignores
++         * every joystick state update; a probe needs the device to be live. */
++        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
++        SDL_JoystickID id = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER,
++                                                      6, 16, 0);
++        if (id < 0) return 0;
++        /* AttachVirtual returns an instance id; find the device index that
++         * carries it, because SDL_JoystickOpen takes a device index. */
++        for (int i = 0; i < SDL_NumJoysticks() && !s_virtual_pad; ++i) {
++            SDL_Joystick *candidate = SDL_JoystickOpen(i);
++            if (!candidate) continue;
++            if (SDL_JoystickInstanceID(candidate) == id) s_virtual_pad = candidate;
++            else SDL_JoystickClose(candidate);
++        }
++        if (!s_virtual_pad) return 0;
++    }
++    if (!button || !*button) return 1;
++    if (!s_virtual_pad) return 0;
++    static const struct { const char *name; int button; } names[] = {
++        { "a", SDL_CONTROLLER_BUTTON_A }, { "b", SDL_CONTROLLER_BUTTON_B },
++        { "x", SDL_CONTROLLER_BUTTON_X }, { "y", SDL_CONTROLLER_BUTTON_Y },
++        { "back", SDL_CONTROLLER_BUTTON_BACK }, { "start", SDL_CONTROLLER_BUTTON_START },
++        { "lb", SDL_CONTROLLER_BUTTON_LEFTSHOULDER },
++        { "rb", SDL_CONTROLLER_BUTTON_RIGHTSHOULDER },
++        { "up", SDL_CONTROLLER_BUTTON_DPAD_UP }, { "down", SDL_CONTROLLER_BUTTON_DPAD_DOWN },
++        { "left", SDL_CONTROLLER_BUTTON_DPAD_LEFT },
++        { "right", SDL_CONTROLLER_BUTTON_DPAD_RIGHT },
++    };
++    for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
++        if (strcmp(button, names[i].name) != 0) continue;
++        SDL_JoystickSetVirtualButton(s_virtual_pad, names[i].button, down ? 1 : 0);
++        SDL_JoystickUpdate();
++        return 1;
++    }
++    return 0;
++}
++int runner_debug_ui_open(const char *section)
++{
++#if RECOMP_LAUNCHER
++    if (!s_runtime_ui.ui) return 0;
++    if (section && *section) return recomp_runtime_ui_open_section(s_runtime_ui.ui, section);
++    recomp_runtime_ui_open(s_runtime_ui.ui);
++    return 1;
++#else
++    (void)section; return 0;
++#endif
++}
++int runner_debug_ui_row_count(void)
++{
++#if RECOMP_LAUNCHER
++    return s_runtime_ui.ui ? (int)recomp_runtime_ui_view_row_count(s_runtime_ui.ui) : 0;
++#else
++    return 0;
++#endif
++}
++int runner_debug_ui_row(int index, char *label, size_t label_cap,
++                        char *value, size_t value_cap, int *selected)
++{
++#if RECOMP_LAUNCHER
++    RecompRuntimeUiRowView row;
++    if (!s_runtime_ui.ui || index < 0) return 0;
++    if (!recomp_runtime_ui_view_row(s_runtime_ui.ui, (size_t)index, &row)) return 0;
++    snprintf(label, label_cap, "%s", row.label);
++    snprintf(value, value_cap, "%s", row.value);
++    if (selected) *selected = (size_t)index == recomp_runtime_ui_view_selected_row(s_runtime_ui.ui);
++    return 1;
++#else
++    (void)index; (void)label; (void)label_cap; (void)value; (void)value_cap;
++    (void)selected; return 0;
++#endif
++}
++#endif /* GEN_ENABLE_TRACE */
++
+ /* Widescreen window/output geometry (valid after widescreen_setup()). */
+ #define WS_ASPECT_W 16
+ #define WS_ASPECT_H 9
+@@ -1140,6 +1261,18 @@ static void collect_sim_input(GenesisSimInput *in)
+             in->human_mask |= 1u << p;
+ }
+ 
++#if GEN_ENABLE_TRACE
++/* TCP `pad` probe: the exact pad mask the next simulated tick will use, so a
++ * test can show whether a menu-dismissing key reached the guest. */
++int runner_debug_pad_mask(int port)
++{
++    GenesisSimInput in;
++    if (port < 0 || port >= GENESIS_SIM_MAX_PLAYERS) return -1;
++    collect_sim_input(&in);
++    return (int)in.pad[port];
++}
++#endif
++
+ /*
+  * Audio accumulation buffers.
+  *
+@@ -1316,13 +1449,103 @@ static const char *resolve_runner_path(const char *path, char *buf, size_t buf_l
+  * the glue state. GROWNS2 used the declown-headers machine
+  * layout (superzazu z80 embedded in g_machine, no side ext blob); GROWNS1
+  * and GROWNS2 saves are rejected with a clear message rather than misloaded. */
++/* ── Presented state notices ───────────────────────────────────────────────
++ * A save or load must be visible in the game picture itself: fullscreen, a
++ * Steam Deck, a window whose title bar is out of view. The notice is a host
++ * overlay only — it never touches s_framebuf, the guest, framebuffer hashes,
++ * replays or the screenshots that tests compare. It reuses the in-game runtime
++ * menu's own 5x7 cell and light text colour over a dim genesis-theme panel, so
++ * it reads as that menu's voice. The window title still changes as well. */
++#define STATE_NOTICE_MS 2500
++#define STATE_NOTICE_MAX_PIXELS (512 * 64)
++static char s_state_notice[96];
++static Uint32 s_state_notice_until;
++static SDL_Texture *s_state_notice_tex;
++static char s_state_notice_tex_text[96];
++static int s_state_notice_tex_w, s_state_notice_tex_h, s_state_notice_tex_scale;
++static uint32_t s_state_notice_pixels[STATE_NOTICE_MAX_PIXELS];
++
++static void runner_state_notice(const char *message)
++{
++    snprintf(s_state_notice, sizeof s_state_notice, "%s", message ? message : "");
++    s_state_notice_until = s_state_notice[0] ? SDL_GetTicks() + STATE_NOTICE_MS : 0;
++#if RECOMP_LAUNCHER
++    if (s_runtime_ui.window && s_state_notice[0]) {
++        char title[256];
++        snprintf(title, sizeof title, "%s - %s", g_game_spec.display_name, s_state_notice);
++        SDL_SetWindowTitle(s_runtime_ui.window, title);
++    }
++#endif
++}
++static void runner_state_notice_tick(void)
++{
++    if (s_state_notice_until && (Sint32)(SDL_GetTicks() - s_state_notice_until) >= 0) {
++        s_state_notice[0] = 0;
++        s_state_notice_until = 0;
++#if RECOMP_LAUNCHER
++        if (s_runtime_ui.window)
++            SDL_SetWindowTitle(s_runtime_ui.window, g_game_spec.display_name);
++#endif
++    }
++}
++/* Top-left of the presented picture, in its logical coordinate space, so the
++ * same panel lands correctly in 4:3 and in the 16:9+ canvas at any window
++ * size. Called after the frame (and the runtime menu, if open) is drawn. */
++static void runner_state_notice_present(SDL_Renderer *renderer, int logical_w, int logical_h)
++{
++    if (!renderer || !s_state_notice[0]) return;
++    if (s_state_notice_until && (Sint32)(SDL_GetTicks() - s_state_notice_until) >= 0) return;
++    int scale = logical_h / 224;
++    if (scale < 1) scale = 1;
++    int w = gen_ovl_notice_width(s_state_notice, scale);
++    int h = gen_ovl_notice_height(scale);
++    if (w <= 0 || h <= 0 || w > logical_w || h > logical_h ||
++        (size_t)w * (size_t)h > (size_t)STATE_NOTICE_MAX_PIXELS) return;
++    if (!s_state_notice_tex || strcmp(s_state_notice_tex_text, s_state_notice) ||
++        s_state_notice_tex_w != w || s_state_notice_tex_h != h ||
++        s_state_notice_tex_scale != scale) {
++        if (s_state_notice_tex) {
++            SDL_DestroyTexture(s_state_notice_tex);
++            s_state_notice_tex = NULL;
++        }
++        s_state_notice_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
++                                               SDL_TEXTUREACCESS_STREAMING, w, h);
++        if (!s_state_notice_tex) return;
++        SDL_SetTextureBlendMode(s_state_notice_tex, SDL_BLENDMODE_BLEND);
++        SDL_SetTextureScaleMode(s_state_notice_tex, SDL_ScaleModeNearest);
++        memset(s_state_notice_pixels, 0, (size_t)w * (size_t)h * sizeof(uint32_t));
++        gen_ovl_notice(s_state_notice_pixels, w, h, 0, 0, scale, s_state_notice);
++        if (SDL_UpdateTexture(s_state_notice_tex, NULL, s_state_notice_pixels,
++                              w * (int)sizeof(uint32_t)) != 0) {
++            SDL_DestroyTexture(s_state_notice_tex);
++            s_state_notice_tex = NULL;
++            return;
++        }
++        snprintf(s_state_notice_tex_text, sizeof s_state_notice_tex_text, "%s", s_state_notice);
++        s_state_notice_tex_w = w;
++        s_state_notice_tex_h = h;
++        s_state_notice_tex_scale = scale;
++    }
++    int margin = 6 * scale;
++    SDL_Rect dst = { margin, margin, w, h };
++    SDL_RenderCopy(renderer, s_state_notice_tex, NULL, &dst);
++}
++/* Logical canvas currently presented (widescreen canvas or the native frame). */
++static void runner_state_notice_present_here(SDL_Renderer *renderer)
++{
++    int w = ws_armed() ? ws_canvas_w() : s_screen_width;
++    int h = ws_armed() ? ws_canvas_h() : display_logical_height();
++    runner_state_notice_present(renderer, w, h);
++}
++
+ static const char OWN_SAVE_MAGIC[8] = "GROWNS3\0";
+ #include "host_state.h"
+ 
+ int runner_save_state_file(const char *path)
+ {
+     const char *reason=g_game_spec.state_unavailable_reason?g_game_spec.state_unavailable_reason():NULL;
+-    if (reason) { fprintf(stderr,"[SAVE] unavailable: %s\n",reason); return 0; }
++    if (reason) { fprintf(stderr,"[SAVE] unavailable: %s\n",reason);
++        runner_state_notice("SAVE UNAVAILABLE HERE"); return 0; }
+     char full_path[512];
+     const char *resolved = resolve_runner_path(path, full_path, sizeof(full_path));
+     if (g_game_spec.state_size) {
+@@ -1333,6 +1556,7 @@ int runner_save_state_file(const char *path)
+     FILE *sf = fopen(resolved, "wb");
+     if (!sf) {
+         fprintf(stderr, "[SAVE] failed to open %s\n", resolved);
++        runner_state_notice("SAVE UNAVAILABLE HERE");
+         return 0;
+     }
+ 
+@@ -1350,13 +1574,15 @@ int runner_save_state_file(const char *path)
+         fprintf(stderr, "[SAVE] saved %s\n", resolved);
+     else
+         fprintf(stderr, "[SAVE] failed while writing %s\n", resolved);
++    runner_state_notice(ok ? "STATE SAVED" : "SAVE FAILED");
+     return ok;
+ }
+ 
+ int runner_load_state_file(const char *path)
+ {
+     const char *reason=g_game_spec.state_unavailable_reason?g_game_spec.state_unavailable_reason():NULL;
+-    if (reason) { fprintf(stderr,"[LOAD] unavailable: %s\n",reason); return 0; }
++    if (reason) { fprintf(stderr,"[LOAD] unavailable: %s\n",reason);
++        runner_state_notice("LOAD UNAVAILABLE HERE"); return 0; }
+     char full_path[512];
+     const char *resolved = resolve_runner_path(path, full_path, sizeof(full_path));
+     if (g_game_spec.state_size) {
+@@ -1373,6 +1599,7 @@ int runner_load_state_file(const char *path)
+     FILE *sf = fopen(resolved, "rb");
+     if (!sf) {
+         fprintf(stderr, "[LOAD] empty/missing %s\n", resolved);
++        runner_state_notice("LOAD REJECTED: NO SUCH STATE");
+         return 0;
+     }
+ 
+@@ -1739,6 +1966,39 @@ int runner_write_screenshot_file(const char *path)
+     return ok;
+ }
+ 
++/* Capture of the presented window itself (renderer target), which is the only
++ * place host overlays such as the state notice exist. Explicitly separate from
++ * runner_write_screenshot_file so every probe/test capture stays the verified
++ * guest framebuffer unless it asks for the presented picture. */
++int runner_write_presented_screenshot_file(const char *path)
++{
++    char full_path[512];
++    const char *resolved = resolve_runner_path(path, full_path, sizeof(full_path));
++    SDL_Renderer *renderer = s_video_renderer;
++    int w = 0, h = 0;
++    if (!renderer || SDL_GetRendererOutputSize(renderer, &w, &h) != 0 ||
++        w <= 0 || h <= 0 || w > 8192 || h > 8192) {
++        fprintf(stderr, "[SCREENSHOT] presented capture unavailable\n");
++        return 0;
++    }
++    uint32_t *pixels = (uint32_t *)calloc((size_t)w * (size_t)h, sizeof(uint32_t));
++    if (!pixels) return 0;
++    /* SDL reads only the logical viewport (the letterboxed picture), so clear
++     * the whole window first and read into the viewport's own offset. */
++    int pitch = w * (int)sizeof(uint32_t);
++    SDL_Rect viewport;
++    SDL_RenderGetViewport(renderer, &viewport);
++    uint8_t *dst = (uint8_t *)pixels + (size_t)viewport.y * (size_t)pitch +
++                   (size_t)viewport.x * sizeof(uint32_t);
++    int ok = SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888,
++                                  dst, pitch) == 0 &&
++             png_write_argb(resolved, pixels, w, h, w) == 0;
++    free(pixels);
++    if (ok) fprintf(stderr, "[SCREENSHOT] presented %dx%d -> %s\n", w, h, resolved);
++    else fprintf(stderr, "[SCREENSHOT] presented capture failed for %s\n", resolved);
++    return ok;
++}
++
+ /* =========================================================================
+  * Frame logging (main-loop version, works in ALL build modes)
+  * ========================================================================= */
+@@ -4233,6 +4493,7 @@ session_begin:;
+         frame_num++;
+ 
+         if (g_game_spec.state_size) host_state_tick();
++        runner_state_notice_tick();   /* notices expire in every build mode */
+ 
+         /* Tick the input script (if loaded). RAM read helpers route
+          * through clownmdemu's main RAM via emu_read8/16 â€” same
+@@ -4519,6 +4780,7 @@ session_begin:;
+                     genesis_host_wait_until(at,perf_frequency);
+                     frame_wait_us+=(uint32_t)((SDL_GetPerformanceCounter()-wait_begin)*1000000ull/perf_frequency);
+                 }
++                runner_state_notice_present_here(renderer);
+                 { Uint64 present_begin=SDL_GetPerformanceCounter();
+                   SDL_RenderPresent(renderer);
+                   frame_present_us+=(uint32_t)((SDL_GetPerformanceCounter()-present_begin)*1000000ull/perf_frequency); }
+@@ -4550,6 +4812,7 @@ session_begin:;
+                 frame_wait_cpu_us=(uint32_t)(genesis_thread_cpu_us()-cpu_begin);
+                 frame_wait_us=(uint32_t)((SDL_GetPerformanceCounter()-wait_begin)*1000000ull/perf_frequency);
+             }
++            runner_state_notice_present_here(renderer);
+             { Uint64 present_begin=SDL_GetPerformanceCounter();
+               SDL_RenderPresent(renderer);
+               frame_present_us=(uint32_t)((SDL_GetPerformanceCounter()-present_begin)*1000000ull/perf_frequency); }
+@@ -4803,6 +5066,7 @@ session_begin:;
+     genesis_hd_gpu_destroy(hd_gpu);
+     SDL_DestroyTexture(peer_view_texture);
+     SDL_DestroyTexture(texture);
++    if (s_state_notice_tex) { SDL_DestroyTexture(s_state_notice_tex); s_state_notice_tex = NULL; }
+     if (s_framebuf != s_native_storage) free(s_framebuf);
+     if (s_present_buf != s_present_storage) free(s_present_buf);
+     gamepad_shutdown();
+diff --git a/runner/overlay_draw.c b/runner/overlay_draw.c
+index f69171b..fdf9022 100644
+--- a/runner/overlay_draw.c
++++ b/runner/overlay_draw.c
+@@ -93,3 +93,140 @@ void gen_ovl_draw_text(uint32_t *dst, int stride, int h_max,
+         x += 8 * scale;
+     }
+ }
++
++/* ── 5x7 glyphs, byte-identical to the in-game runtime menu ────────────────
++ * The ESC menu composites through recomp-ui's software presentation, whose
++ * text is this 5x7 cell (MIT, recomp-ui src/common/recomp_runtime_ui.c:
++ * glyph_bits). A host notice drawn with the same cells and the theme's light
++ * text colour reads as part of that menu instead of a second UI font. */
++#define OVL_GLYPH(a,b,c,d,e,f,g) \
++    ((uint64_t)(a) | ((uint64_t)(b) << 5) | ((uint64_t)(c) << 10) | \
++     ((uint64_t)(d) << 15) | ((uint64_t)(e) << 20) | \
++     ((uint64_t)(f) << 25) | ((uint64_t)(g) << 30))
++static uint64_t ovl_glyph5x7(unsigned char c)
++{
++    if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
++    switch (c) {
++    case 'A': return OVL_GLYPH(14,17,17,31,17,17,17);
++    case 'B': return OVL_GLYPH(30,17,17,30,17,17,30);
++    case 'C': return OVL_GLYPH(14,17,16,16,16,17,14);
++    case 'D': return OVL_GLYPH(30,17,17,17,17,17,30);
++    case 'E': return OVL_GLYPH(31,16,16,30,16,16,31);
++    case 'F': return OVL_GLYPH(31,16,16,30,16,16,16);
++    case 'G': return OVL_GLYPH(14,17,16,23,17,17,15);
++    case 'H': return OVL_GLYPH(17,17,17,31,17,17,17);
++    case 'I': return OVL_GLYPH(14,4,4,4,4,4,14);
++    case 'J': return OVL_GLYPH(7,2,2,2,18,18,12);
++    case 'K': return OVL_GLYPH(17,18,20,24,20,18,17);
++    case 'L': return OVL_GLYPH(16,16,16,16,16,16,31);
++    case 'M': return OVL_GLYPH(17,27,21,21,17,17,17);
++    case 'N': return OVL_GLYPH(17,25,21,19,17,17,17);
++    case 'O': return OVL_GLYPH(14,17,17,17,17,17,14);
++    case 'P': return OVL_GLYPH(30,17,17,30,16,16,16);
++    case 'Q': return OVL_GLYPH(14,17,17,17,21,18,13);
++    case 'R': return OVL_GLYPH(30,17,17,30,20,18,17);
++    case 'S': return OVL_GLYPH(15,16,16,14,1,1,30);
++    case 'T': return OVL_GLYPH(31,4,4,4,4,4,4);
++    case 'U': return OVL_GLYPH(17,17,17,17,17,17,14);
++    case 'V': return OVL_GLYPH(17,17,17,17,17,10,4);
++    case 'W': return OVL_GLYPH(17,17,17,21,21,21,10);
++    case 'X': return OVL_GLYPH(17,17,10,4,10,17,17);
++    case 'Y': return OVL_GLYPH(17,17,10,4,4,4,4);
++    case 'Z': return OVL_GLYPH(31,1,2,4,8,16,31);
++    case '0': return OVL_GLYPH(14,17,19,21,25,17,14);
++    case '1': return OVL_GLYPH(4,12,4,4,4,4,14);
++    case '2': return OVL_GLYPH(14,17,1,2,4,8,31);
++    case '3': return OVL_GLYPH(30,1,1,14,1,1,30);
++    case '4': return OVL_GLYPH(2,6,10,18,31,2,2);
++    case '5': return OVL_GLYPH(31,16,16,30,1,1,30);
++    case '6': return OVL_GLYPH(14,16,16,30,17,17,14);
++    case '7': return OVL_GLYPH(31,1,2,4,8,8,8);
++    case '8': return OVL_GLYPH(14,17,17,14,17,17,14);
++    case '9': return OVL_GLYPH(14,17,17,15,1,1,14);
++    case '-': return OVL_GLYPH(0,0,0,31,0,0,0);
++    case '+': return OVL_GLYPH(0,4,4,31,4,4,0);
++    case '/': return OVL_GLYPH(1,2,2,4,8,8,16);
++    case ':': return OVL_GLYPH(0,4,4,0,4,4,0);
++    case '.': return OVL_GLYPH(0,0,0,0,0,6,6);
++    case ',': return OVL_GLYPH(0,0,0,0,6,6,4);
++    case '(': return OVL_GLYPH(2,4,8,8,8,4,2);
++    case ')': return OVL_GLYPH(8,4,2,2,2,4,8);
++    case '[': return OVL_GLYPH(14,8,8,8,8,8,14);
++    case ']': return OVL_GLYPH(14,2,2,2,2,2,14);
++    case '%': return OVL_GLYPH(17,2,4,4,8,16,17);
++    case '<': return OVL_GLYPH(2,4,8,16,8,4,2);
++    case '>': return OVL_GLYPH(8,4,2,1,2,4,8);
++    case '=': return OVL_GLYPH(0,0,31,0,31,0,0);
++    case '_': return OVL_GLYPH(0,0,0,0,0,0,31);
++    case '!': return OVL_GLYPH(4,4,4,4,4,0,4);
++    case '?': return OVL_GLYPH(14,17,1,2,4,0,4);
++    case '#': return OVL_GLYPH(10,31,10,10,31,10,0);
++    case '\'': return OVL_GLYPH(4,4,2,0,0,0,0);
++    case ' ': return 0;
++    default: return OVL_GLYPH(14,17,2,4,4,0,4);
++    }
++}
++#undef OVL_GLYPH
++
++/* One 5x7 cell is 6 px wide including its column gap, 7 px tall. */
++int gen_ovl_text5x7_width(const char *s, int scale)
++{
++    int n = 0;
++    if (!s) return 0;
++    for (const unsigned char *p = (const unsigned char *)s; *p; ++p)
++        if (*p < 0x80) ++n;
++    if (scale < 1) scale = 1;
++    return n * 6 * scale;
++}
++
++void gen_ovl_draw_text5x7(uint32_t *dst, int stride, int h_max,
++                          int x, int y, const char *s, uint32_t col, int scale)
++{
++    if (!s || !dst) return;
++    if (scale < 1) scale = 1;
++    int cursor = x;
++    for (const unsigned char *p = (const unsigned char *)s; *p; ++p) {
++        if (*p >= 0x80) continue;
++        uint64_t bits = ovl_glyph5x7(*p);
++        for (int gy = 0; gy < 7; ++gy) {
++            unsigned row = (unsigned)((bits >> (gy * 5)) & 31);
++            for (int gx = 0; gx < 5; ++gx) {
++                if ((row & (1u << (4 - gx))) == 0) continue;
++                for (int sy = 0; sy < scale; ++sy)
++                    for (int sx = 0; sx < scale; ++sx) {
++                        int dx = cursor + gx * scale + sx;
++                        int dy = y + gy * scale + sy;
++                        if (dx >= 0 && dx < stride && dy >= 0 && dy < h_max)
++                            dst[dy * stride + dx] = col;
++                    }
++            }
++        }
++        cursor += 6 * scale;
++    }
++}
++
++/* Notice panel geometry: accent edge, margins, then the text cell. */
++int gen_ovl_notice_width(const char *s, int scale)
++{ return gen_ovl_text5x7_width(s, scale) + 10 * (scale < 1 ? 1 : scale); }
++int gen_ovl_notice_height(int scale)
++{ return 7 * (scale < 1 ? 1 : scale) + 8 * (scale < 1 ? 1 : scale); }
++
++/* Draws the whole notice (dim backing, shadow, light text) into a fresh
++ * ARGB buffer: x,y are the panel's top-left corner, (stride,h_max) bound the
++ * destination. Colours mirror the in-game menu's genesis theme: panel
++ * #111826, light text #E9EDF5, Sega-azure edge. The shadow keeps it readable
++ * over a bright race picture. */
++void gen_ovl_notice(uint32_t *dst, int stride, int h_max, int x, int y,
++                    int scale, const char *s)
++{
++    if (!dst || !s) return;
++    if (scale < 1) scale = 1;
++    int w = gen_ovl_notice_width(s, scale);
++    int h = gen_ovl_notice_height(scale);
++    gen_ovl_fill_rect(dst, stride, h_max, x, y, w, h, 0xE0111826u);
++    gen_ovl_fill_rect(dst, stride, h_max, x, y, 2 * scale, h, 0xFF17A2E6u);
++    gen_ovl_draw_text5x7(dst, stride, h_max, x + 6 * scale + scale, y + 4 * scale + scale,
++                         s, 0x90000000u, scale);          /* shadow */
++    gen_ovl_draw_text5x7(dst, stride, h_max, x + 6 * scale, y + 4 * scale,
++                         s, 0xFFE9EDF5u, scale);          /* light text */
++}
+diff --git a/runner/overlay_draw.h b/runner/overlay_draw.h
+index d7f1b7e..884ecb2 100644
+--- a/runner/overlay_draw.h
++++ b/runner/overlay_draw.h
+@@ -15,4 +15,18 @@ void gen_ovl_draw_char(uint32_t *dst, int stride, int height,
+ void gen_ovl_draw_text(uint32_t *dst, int stride, int height,
+                        int x, int y, const char *text, uint32_t color, int scale);
+ 
++/* Host notice text: the in-game runtime menu's own 5x7 cell, so a save/load
++ * message matches the ESC menu's typography. `scale` multiplies whole pixels. */
++int gen_ovl_text5x7_width(const char *text, int scale);
++void gen_ovl_draw_text5x7(uint32_t *dst, int stride, int height,
++                          int x, int y, const char *text, uint32_t color,
++                          int scale);
++
++/* A complete notice panel (dim genesis-theme backing, azure edge, shadowed
++ * light text) drawn at (x,y) in a fresh ARGB buffer. */
++int gen_ovl_notice_width(const char *text, int scale);
++int gen_ovl_notice_height(int scale);
++void gen_ovl_notice(uint32_t *dst, int stride, int height,
++                    int x, int y, int scale, const char *text);
++
+ #endif

@@ -1,8 +1,9 @@
-From 518501d80b71663f8a269f9b79590d13e65b89ae Mon Sep 17 00:00:00 2001
+From 6edc029ccb2b34ff012b014a36f401f1f0bf6b23 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
-Date: Wed, 11 Nov 2026 23:53:06 -0300
-Subject: [PATCH] Expose runtime overlay visibility through a public header
+Date: Thu, 12 Nov 2026 10:52:20 -0300
+Subject: [PATCH] Declare runtime overlay visibility
 
+Expose the host visibility query through a public C header instead of game-side copied prototypes.
 ---
  runner/main.c       |  1 +
  runner/runtime_ui.h | 11 +++++++++++
@@ -35,5 +36,3 @@ index 0000000..dc24ee3
 +}
 +#endif
 +#endif
--- 
-2.54.0 (Apple Git-157)

@@ -1,7 +1,18 @@
+From bb6155c479e339c5c404d0e2fa1bc91cb76d1407 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 10:52:20 -0300
+Subject: [PATCH] Follow device aspect and Gamescope window policy
+
+Start adaptive windows at the desktop aspect and controller-only Gamescope sessions at the panel dimensions.
+---
+ runner/main.c | 127 ++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 122 insertions(+), 5 deletions(-)
+
 diff --git a/runner/main.c b/runner/main.c
+index 12ad549..b636a6e 100644
 --- a/runner/main.c
 +++ b/runner/main.c
-@@ -342,6 +342,10 @@
+@@ -342,6 +342,10 @@ static const RecompRuntimeUiItem s_quickstate_items[]={
      {"states.save","Save states","Save state","Capture the next completed gameplay tick in this slot (overwrites its previous quickstate).",RECOMP_RUNTIME_UI_ACTION},
      {"states.load","Save states","Load state","Restore this build's quickstate. Character/mod/video setup must match. Unsaved gameplay is replaced.",RECOMP_RUNTIME_UI_ACTION}
  };
@@ -12,7 +23,7 @@ diff --git a/runner/main.c b/runner/main.c
  static int runtime_ui_get(void *p, const RecompRuntimeUiItem *i, int *out) {
      RuntimeUiContext *c = (RuntimeUiContext *)p;
      if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_FULLSCREEN)) *out = g_app_config.fullscreen;
-@@ -389,7 +393,15 @@
+@@ -389,7 +393,15 @@ static int runtime_ui_set(void *p, const RecompRuntimeUiItem *i, int v) {
          SDL_SetWindowFullscreen(c->window, v == 2 ? SDL_WINDOW_FULLSCREEN : v == 1 ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
      } else if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) {
          g_app_config.window_scale = v;
@@ -29,7 +40,7 @@ diff --git a/runner/main.c b/runner/main.c
      } else if (!strcmp(i->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE)) {
  #if GENESIS_HAS_RECOMP_NET
          /* The view mode changes the simulated width (widescreen margin and its
-@@ -681,6 +693,67 @@
+@@ -736,6 +748,67 @@ static int ws_canvas_w(void) { return 320 + 2 * s_ws_user_cells * 8; }
   * gameplay full-bleed, menus pillarboxed inside it (see gvdp pillarbox). */
  static int ws_canvas_h(void) { return ws_canvas_w() * WS_ASPECT_H / WS_ASPECT_W; }
  
@@ -97,7 +108,7 @@ diff --git a/runner/main.c b/runner/main.c
  /* Expanded palette: 192 entries (64 CRAM Ã— 3 brightness levels).
   * colour_updated_cb converts each entry from Genesis format to ARGB8888. */
  static uint32_t s_cram[192];
-@@ -3488,17 +3561,40 @@
+@@ -3557,17 +3630,40 @@ int main(int argc, char *argv[])
  
      /* Start widescreen games in a wide window. The built-in custom renderer
       * does not arm the legacy VDP widescreen path, so check it separately.
@@ -140,7 +151,7 @@ diff --git a/runner/main.c b/runner/main.c
      /* Scripted launcher tests must stay hidden after the handoff to gameplay. */
      int test_hidden = getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN");
      Uint32 win_flags = ((benchmark_frames || test_hidden) ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN)
-@@ -3534,8 +3630,12 @@
+@@ -3603,8 +3699,12 @@ int main(int argc, char *argv[])
          }
      }
  #endif
@@ -155,7 +166,7 @@ diff --git a/runner/main.c b/runner/main.c
  
      /* Texture scaling filter (settings.ini / launcher): nearest vs bilinear. */
      SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, g_app_config.linear_filter ? "1" : "0");
-@@ -4410,6 +4510,23 @@
+@@ -4479,6 +4579,23 @@ session_begin:;
                    s_screen_height = last - first;
                }
            }
