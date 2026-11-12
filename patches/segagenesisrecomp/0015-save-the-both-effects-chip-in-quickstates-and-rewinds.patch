@@ -495,7 +495,7 @@ index b4695bd..350a410 100644
 -     * CPU, audio or host simulation. Also retain a rollback for I/O failures. */
 +     * CPU, audio or host simulation. Also retain a rollback for I/O failures.
 +     * The audio sections may be SHORTER than this build writes: a newer build
-+     * appends a tagged, length-prefixed trailer to them (TG2's second virtual
++     * appends a tagged, length-prefixed trailer to them (the BOTH-mode second virtual
 +     * sound chip), and the section readers decide whether the trailer is there.
 +     * A too-short or corrupt section still fails in host_machine_read below,
 +     * because each reader validates its own length. */
