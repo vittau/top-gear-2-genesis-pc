@@ -745,7 +745,17 @@ image that `machine_save_state()` and `machine_rb_save()` write and
 `machine_load_state()`/`machine_rb_load()` restore (pointers re-wired on load).
 The size guards in `rb_state.c` were updated (GenesisBus 32864, GenesisMachine
 98872 bytes). Stock modes are unaffected; a state saved in BOTH carries both
-cores and both chips.
+cores. The two virtual chips are outside the machine image (they belong to the
+audio mixer), so a quickstate carries them separately: patch 0015 appends
+**chip 1 as an optional tagged, length-prefixed trailer** after chip 0's
+unchanged bytes in `ym2612_save_state`/`psg_save_state`, and the loaders skip it
+when it is absent, so a state written by an older build loads exactly as it did
+before (chip 1 keeps whatever the build had). The host state container accepts
+those shorter legacy audio sections and lets the readers validate them, and the
+in-memory rollback snapshots (`*_rb_save`) carry both chips too. Before 0015 a
+race state loaded from a menu resumed with an idle effects chip and lost the
+engine sound ([review](reviews/engine-sound-load.md)); a state saved before the
+fix still does, and re-saving fixes it.
 
 ### The menu page, re-entered
 
@@ -862,7 +872,12 @@ pactl unload-module <id>
 * **Save states include both cores and both chips** (the machine image carries
   `GenesisMachine.z80_sfx`, its RAM/bank/control fields in `GenesisBus`, and both
   virtual chip models; `rb_state.c`'s size guards were updated). A state saved in
-  BOTH reloads a running second core; stock modes are unaffected.
+  BOTH reloads a running second core; stock modes are unaffected. The *file*
+  format of a quickstate carried only the canonical chip until patch 0015, so a
+  race state loaded from the menus resumed with an idle effects chip and no
+  engine sound; see [engine-sound-load.md](reviews/engine-sound-load.md). The
+  chip-1 payload is an optional trailer, so states written before 0015 still
+  load and keep the behaviour they had.
 * The game does not return to the main menu after a race, so BOTH cannot be
   re-checked there; the in-game RACE SOUND page repaints from host state on
   every frame and still shows BOTH.

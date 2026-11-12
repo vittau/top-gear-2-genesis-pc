@@ -94,7 +94,8 @@ unset `LNG_SCRIPT` and `LNG_TEST_HIDDEN`; setting either to `0` still hides it.
 
 Evidence: [phase-a.md](reviews/phase-a.md), [phase-b.md](reviews/phase-b.md),
 [overlay-footer.md](reviews/overlay-footer.md), [phase-c.md](reviews/phase-c.md),
-[phase-d.md](reviews/phase-d.md), [closing.md](reviews/closing.md), plus the focused
+[phase-d.md](reviews/phase-d.md), [closing.md](reviews/closing.md),
+[engine-sound-load.md](reviews/engine-sound-load.md), plus the focused
 HIGHRES/AUDIO/VALIDATION ledgers and task headers. Some ledger sections retain
 older checkpoint wording; use the release/tag history and current task status
 for completion state. Captures, dumps, WAVs, ROMs and generated C stay out of Git.
