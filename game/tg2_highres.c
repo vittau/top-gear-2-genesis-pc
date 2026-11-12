@@ -15,6 +15,7 @@
  * SAT or scheduling state is touched.
  */
 #include "tg2_highres.h"
+#include "tg2_road_fit.h"
 #include "tg2_actors.h"
 #include "tg2_memory.h"
 
@@ -340,23 +341,18 @@ static int road_centre(unsigned scroll) {
     return 128 + (((int)(scroll & 511) - 128 + 256) & 511) - 256;
 }
 
-/* Per-picture road model. Rows that belong to one continuous piece of road
- * form a band; inside a band the two silhouette edges are fitted across rows,
- * because the game's per-line numbers are integers (centre) and a 2/4 px
- * saw-tooth (width): followed literally they give an edge that wobbles at
- * N x. The fit is a local quadratic over +-FIT_REACH rows, so a straight or
- * evenly curving edge is reproduced exactly and only the quantisation goes;
- * the result is held within FIT_LIMIT native pixels of the authored edge. */
-#define FIT_REACH 5
-#define FIT_LIMIT 1.5
+/* Fit the actual atlas boundaries, including shoulders and lane marks, over
+ * each continuous band. Minimise squared displacement plus a penalty on the
+ * squared second difference, with a hard box around every authored boundary.
+ * This removes the moving-window ripples without assuming a straight road or
+ * re-projecting a newer guest frame over a captured/interpolated picture. */
 typedef struct {
-    int painted;                /* row is redrawn by the strip rasteriser   */
-    int band;                   /* rows of one continuous road share this   */
-    int centre;                 /* canvas x of the atlas seam               */
-    double raw_l, raw_r;        /* authored silhouette, canvas x            */
-    double fit_l, fit_r;        /* fitted silhouette, canvas x              */
+    int painted, band, centre;
+    double raw_l, raw_r, fit_l, fit_r;
+    double edge[ROAD_MAX_RUNS + 1]; /* fitted colour boundaries, canvas x */
 } RoadRow;
 static RoadRow s_road[TG2_HIGHRES_ROWS];
+_Static_assert(TG2_HIGHRES_ROWS <= TG2_ROAD_FIT_ROWS, "road fit row capacity");
 
 static int road_row_k(int line) {
     return s_rows[line].width_k;
@@ -366,39 +362,66 @@ static int road_row_py(int line) {
     return (line + s_rows[line].vsram[1]) & 511;
 }
 
-/* Quadratic least-squares value at `at` of f over the band rows within
- * FIT_REACH, tricube-ish weights. Falls back to lower orders when the band is
- * too short to determine a parabola. */
-static double fit_edge(int at, int lo, int hi, int right) {
-    double s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, t0 = 0, t1 = 0, t2 = 0;
-    int from = at - FIT_REACH < lo ? lo : at - FIT_REACH;
-    int to = at + FIT_REACH > hi ? hi : at + FIT_REACH;
-    for (int y = from; y <= to; ++y) {
-        double x = y - at, d = fabs(x) / (FIT_REACH + 1.0);
-        double w = 1.0 - d * d;
-        double f = right ? s_road[y].raw_r : s_road[y].raw_l;
-        s0 += w; s1 += w * x; s2 += w * x * x; s3 += w * x * x * x;
-        s4 += w * x * x * x * x;
-        t0 += w * f; t1 += w * f * x; t2 += w * f * x * x;
+static int same_structure(const RoadRuns *a, const RoadRuns *b);
+
+static void fit_band(int lo, int hi) {
+    double raw[TG2_HIGHRES_ROWS], fit[TG2_HIGHRES_ROWS];
+    unsigned char seen[TG2_HIGHRES_ROWS], done[TG2_HIGHRES_ROWS] = {0};
+    int n = hi-lo+1;
+    /* Silhouettes span the whole band regardless of stripe topology. */
+    memset(seen, 1, (size_t)n);
+    for (int side = 0; side < 2; ++side) {
+        for (int i = 0; i < n; ++i)
+            raw[i] = side ? s_road[lo+i].raw_r : s_road[lo+i].raw_l;
+        tg2_road_fit(raw, seen, n, fit);
+        for (int i = 0; i < n; ++i) {
+            RoadRuns *r = &s_runs[lo+i];
+            s_road[lo+i].edge[side ? r->last+1 : r->first] = fit[i];
+        }
     }
-    double own = right ? s_road[at].raw_r : s_road[at].raw_l;
-    int n = to - from + 1;
-    double value = own;
-    if (n >= 5) {
-        /* Solve the 3x3 normal equations for the constant term. */
-        double det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s3 * s2) +
-                     s2 * (s1 * s3 - s2 * s2);
-        if (fabs(det) > 1e-9)
-            value = (t0 * (s2 * s4 - s3 * s3) - s1 * (t1 * s4 - s3 * t2) +
-                     s2 * (t1 * s3 - s2 * t2)) / det;
-    } else if (n >= 3) {
-        double det = s0 * s2 - s1 * s1;
-        if (fabs(det) > 1e-9)
-            value = (t0 * s2 - s1 * t1) / det;
+    /* Match texel kinds, not RGB: palette/stripe phase remains discrete.
+     * A topology can recur after a stripe gap; all of its observations in
+     * this band inform the same fit instead of restarting at every gap. */
+    for (int at = lo; at <= hi; ++at) {
+        if (done[at-lo]) continue;
+        const RoadRuns *r = &s_runs[at];
+        int first = -1, last = -1;
+        for (int y = lo; y <= hi; ++y) {
+            seen[y-lo] = same_structure(r, &s_runs[y]);
+            if (seen[y-lo]) {
+                done[y-lo] = 1;
+                if (first < 0) first = y;
+                last = y;
+            }
+        }
+        for (int k = 1; k <= r->last-r->first; ++k) {
+            for (int y = first; y <= last; ++y)
+                raw[y-first] = seen[y-lo] ? s_road[y].centre +
+                    s_runs[y].start[s_runs[y].first+k] : 0;
+            tg2_road_fit(raw, seen+first-lo, last-first+1, fit);
+            for (int y = first; y <= last; ++y)
+                if (seen[y-lo]) s_road[y].edge[s_runs[y].first+k] = fit[y-first];
+        }
     }
-    if (value < own - FIT_LIMIT) value = own - FIT_LIMIT;
-    if (value > own + FIT_LIMIT) value = own + FIT_LIMIT;
-    return value;
+    for (int y = lo; y <= hi; ++y) {
+        RoadRow *m = &s_road[y];
+        const RoadRuns *r = &s_runs[y];
+        /* Near the vanishing point independent fits can invert a thin mark.
+         * Shorten the whole row's displacement together to retain at least
+         * a quarter of every authored run, without shifting colours/phase. */
+        double amount = 1;
+        for (int k = r->first; k <= r->last; ++k) {
+            double gap = r->start[k+1]-r->start[k];
+            double change = m->edge[k+1]-m->edge[k]-gap;
+            if (change < -0.75*gap) amount = fmin(amount, -0.75*gap/change);
+        }
+        for (int k = r->first; k <= r->last+1; ++k) {
+            double own = m->centre+r->start[k];
+            m->edge[k] = own + amount*(m->edge[k]-own);
+        }
+        m->fit_l = m->edge[r->first];
+        m->fit_r = m->edge[r->last+1];
+    }
 }
 
 static void model_road(int origin, int native_h) {
@@ -428,14 +451,7 @@ static void model_road(int origin, int native_h) {
         while (lo > 0 && s_road[lo - 1].painted && s_road[lo - 1].band == s_road[y].band) --lo;
         while (hi + 1 < native_h && s_road[hi + 1].painted &&
                s_road[hi + 1].band == s_road[y].band) ++hi;
-        for (int at = lo; at <= hi; ++at) {
-            s_road[at].fit_l = fit_edge(at, lo, hi, 0);
-            s_road[at].fit_r = fit_edge(at, lo, hi, 1);
-            if (s_road[at].fit_r < s_road[at].fit_l + 1.0) {
-                s_road[at].fit_l = s_road[at].raw_l;
-                s_road[at].fit_r = s_road[at].raw_r;
-            }
-        }
+        fit_band(lo, hi);
         y = hi;
     }
 }
@@ -659,6 +675,26 @@ static void nx_audit_write(uint64_t frame, int scale, int w1, int native_w) {
     fwrite(header, sizeof header, 1, f);
     fwrite(s_audit, sizeof *s_audit, (size_t)s_audit_count, f);
     fclose(f);
+    /* Optional boundary-model evidence alongside the measured pixel audit.
+     * Source-row positions are sufficient to reconstruct every sub-row;
+     * the writer is trace-only and performs no work in normal play. */
+    if (!getenv("TG2_ROAD_BOUNDARY_AUDIT")) return;
+    snprintf(path, sizeof path, "%s/frame-%06llu.edges", dir, (unsigned long long)frame);
+    f = fopen(path, "w");
+    if (!f) return;
+    fputs("line,band,boundary,left,right,raw,fit\n", f);
+    for (int y = 0; y < TG2_HIGHRES_ROWS; ++y) {
+        const RoadRow *m = &s_road[y];
+        if (!m->painted) continue;
+        const RoadRuns *r = &s_runs[y];
+        for (int k = r->first; k <= r->last+1; ++k) {
+            double own = m->centre+r->start[k];
+            fprintf(f, "%d,%d,%d,%d,%d,%.9f,%.9f\n", y, m->band, k-r->first,
+                    k ? r->index[k-1]&15 : -1, k < r->count ? r->index[k]&15 : -1,
+                    own, m->edge[k]);
+        }
+    }
+    fclose(f);
 }
 
 #endif
@@ -731,33 +767,34 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
     }
     double own_l = p->edge[runs->first], own_r = p->edge[runs->last + 1];
     int structure = interpolate && same_structure(runs, &s_runs[nb]);
-    const RoadRuns *other = structure ? &s_runs[nb] : NULL;
-    double nb_l = 0, nb_w = 1;
-    if (other) {
-        nb_l = s_road[nb].raw_l;
-        nb_w = s_road[nb].raw_r - s_road[nb].raw_l;
-    }
-
-    /* Where each run boundary is drawn. Road boundaries keep their relative
-     * place inside the silhouette (moving toward the neighbour's when both
-     * rows show the same structure); verge boundaries travel with the edge. */
+    /* Every road boundary has its own band fit. Interpolate corresponding
+     * fitted boundaries only; discrete colours always belong to this row. */
     double q[ROAD_MAX_RUNS + 1];
     q[0] = -1e30;
     q[runs->count] = 1e30;
     for (int i = 1; i < runs->count; ++i) {
-        if (i <= runs->first) {
-            q[i] = p->edge[i] + (el - own_l);
-        } else if (i > runs->last) {
-            q[i] = p->edge[i] + (er - own_r);
+        if (i < runs->first) {
+            q[i] = p->edge[i] + (el-own_l);
+        } else if (i > runs->last+1) {
+            q[i] = p->edge[i] + (er-own_r);
+        } else if (i == runs->first) {
+            q[i] = el;
+        } else if (i == runs->last+1) {
+            q[i] = er;
         } else {
-            double place = (p->edge[i] - own_l) / (own_r - own_l);
-            if (other) {
-                double there = (s_road[nb].centre + other->start[other->first + i - runs->first] -
-                                nb_l) / nb_w;
-                place += w * (there - place);
+            q[i] = m->edge[i];
+            if (structure)
+                q[i] += w*(s_road[nb].edge[s_runs[nb].first+i-runs->first]-q[i]);
+            else {
+                /* A new/vanishing marking has no matching neighbour. Carry
+                 * its fitted position with the interpolated silhouette. */
+                double place = (q[i]-m->fit_l)/(m->fit_r-m->fit_l);
+                q[i] = el+place*(er-el);
             }
-            q[i] = el + place * (er - el);
         }
+        /* Exterior artwork remains authored; ordering must hold even when
+         * an adjacent, very narrow verge run follows the displaced edge. */
+        if (q[i] < q[i-1]) q[i] = q[i-1];
     }
 
     int run = 0;
@@ -821,8 +858,11 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
             if (!s_terrain[u]) { full = 0; break; }
         a->flags = (interpolate ? NX_FLAG_INTERPOLATED : 0) | (full ? NX_FLAG_FULL : 0) |
                    (structure ? NX_FLAG_STRUCTURE : 0);
-        /* Scenery may only move as far as the silhouette did. */
+        /* Bound colours by the largest actual boundary displacement, including
+         * independently fitted inner markings, plus pixel coverage. */
         double moved = fabs(el - own_l) > fabs(er - own_r) ? fabs(el - own_l) : fabs(er - own_r);
+        for (int i = 1; i < runs->count; ++i)
+            moved = fmax(moved, fabs(q[i]-p->edge[i]));
         nx_measure(a, runs, p->colour, row, native_row, scale, w1, origin, native_w,
                    (int)ceil(moved) + 1, m->centre, q);
     }

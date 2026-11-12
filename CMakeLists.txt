@@ -53,7 +53,7 @@ genesisrecomp_runner_sources(RUNNER TRACE "${GEN_ENABLE_TRACE}" REVERSE_DEBUG "$
 add_executable(TG2Recomp ${RUNNER} ${GENERATED} game/tg2_spec.c game/tg2_video.c
     game/tg2_video_canvas.c game/tg2_video_scene.c game/tg2_video_world.c
     game/tg2_video_raster.c game/tg2_video_present.c game/tg2_video_debug.c
-    game/tg2_highres.c game/tg2_actors.c game/tg2_options.c game/tg2_audio_both.c game/tg2_controls.c)
+    game/tg2_highres.c game/tg2_road_fit.c game/tg2_actors.c game/tg2_options.c game/tg2_audio_both.c game/tg2_controls.c)
 add_dependencies(TG2Recomp ${GENERATED_TARGET})
 # Embed the approved small icon from the checked-in ICO. Only the Python
 # standard library is needed for builds; Pillow is artwork tooling only.

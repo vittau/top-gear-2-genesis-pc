@@ -81,7 +81,7 @@ NX_INTERPOLATED, NX_FULL, NX_STRUCTURE, NX_AMBIGUOUS = 1, 2, 4, 8
 NX_LANE_AMBIGUOUS, NX_LANE_CLASSIFIED = 16, 32
 # The fitted silhouette may sit this far from the authored one (FIT_LIMIT in
 # game/tg2_highres.c), in native pixels.
-NX_FIT_LIMIT = 1.5
+NX_FIT_LIMIT = 2.0
 
 
 def load_nx(path):
