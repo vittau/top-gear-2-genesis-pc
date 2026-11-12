@@ -9,6 +9,9 @@
  */
 #include "tg2_options.h"
 #include "tg2_video.h"
+#include "tg2_audio.h"
+#include "audio/mixer.h"
+#include "runtime_ui.h"
 #include "cmd_server.h"
 
 #include <SDL.h>
@@ -49,9 +52,6 @@ typedef struct Tg2Option {
     int         step;
 } Tg2Option;
 
-/* Engine audio entry point (runner/audio/mixer.h). */
-extern void audio_mixer_set_source_volumes(int music_pct, int sfx_pct);
-
 static int s_race60 = 1;        /* task default: 60 fps races On */
 static int s_hud_edges = 0;     /* task default: HUD Centered */
 static int s_hide_overscan = 1; /* task default: Hide overscan On */
@@ -72,9 +72,6 @@ static const char *const s_hud_labels[]  = { "Centered", "Edges" };
 
 static const char *const s_sound_choices[] = { "sfx", "music", "both" };
 static const char *const s_sound_labels[]  = { "Sound effects", "Music", "Both" };
-
-extern int  tg2_audio_race_sound(void);
-extern void tg2_audio_set_race_sound(int mode);
 
 static void apply_race_sound(int value)
 {
@@ -342,43 +339,37 @@ static const char *const runtime_sections[] = {"VIDEO", "AUDIO", "SYSTEM", "MODS
 const RecompRuntimeUiLayout tg2_runtime_layout = {
     runtime_section_name, runtime_sections, sizeof runtime_sections / sizeof runtime_sections[0]
 };
-static const RecompRuntimeUiItem s_runtime_items[] = {
-    { "mods.musicvol.level", "Audio", "Music volume",
-      "Music level, as a percentage of the stock mix. Only the cartridge's "
-      "music driver follows it; the engine, nitro and effects have their own "
-      "slider. 100% is the stock level.",
-      RECOMP_RUNTIME_UI_INT, 0, 100, 5, NULL, 0, NULL },
-    { "mods.sfxvol.level", "Audio", "SFX volume",
-      "Sound-effects level, as a percentage of the stock mix: the 68K FM/PSG "
-      "engine and the race Z80 sample player. 100% is the stock level.",
-      RECOMP_RUNTIME_UI_INT, 0, 100, 5, NULL, 0, NULL },
-    { "mods.race60.enabled", "Mods", "60 fps races",
-      "Interpolate race pictures at 60 fps with 50 ms of added display delay. "
-      "Physics and sound keep stock timing. Off restores the stock rate. "
-      "Changes take effect from the next race.",
-      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
-    { "mods.hud.placement", "Mods", "HUD",
-      "Centered keeps the widescreen HUD with the car and effects. Edges "
-      "anchors the instruments and track map to the left and right margins. "
-      "Only meaningful while widescreen is on.",
-      RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, s_hud_labels, 2, NULL },
-    { "mods.overscan.hidden", "Mods", "Hide overscan",
-      "Crops the empty bands a CRT hid in overscan: the eight-row window band at "
-      "the top of the race screen and the sixteen blank bottom lines, so the "
-      "picture fills the window. Menus, split-screen and any picture that draws "
-      "into those lines keep their full height. Presentation only; the "
-      "simulation is unchanged. Off shows the stock bands.",
-      RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
-    { "mods.racesound.mode", "Sound", "RACE SOUND",
-      "Stock Top Gear 2 races play either music or sound effects. Both runs "
-      "both: the cartridge's music driver stays resident while the race SFX "
-      "engine also runs. The in-game SOUND menu offers the same choice.",
-      RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, s_sound_labels, 3, NULL },
-};
+/* Runtime order and section placement are policy; all player text, choices
+ * and ranges come from the same descriptors the launcher consumes. */
+static const unsigned runtime_order[] = {4, 5, 0, 1, 2, 3};
+static RecompRuntimeUiItem s_runtime_items[TG2_OPTION_COUNT];
+static char s_runtime_keys[TG2_OPTION_COUNT][64];
 
 const struct RecompRuntimeUiItem *tg2_options_runtime_items(size_t *count)
 {
-    if (count) *count = sizeof s_runtime_items / sizeof s_runtime_items[0];
+    static int initialized;
+    if (!initialized) {
+        for (int i = 0; i < TG2_OPTION_COUNT; ++i) {
+            const Tg2Option *o = &s_options[runtime_order[i]];
+            RecompRuntimeUiItem *item = &s_runtime_items[i];
+            snprintf(s_runtime_keys[i], sizeof s_runtime_keys[i], "%s.%s", o->section, o->key);
+            item->key = s_runtime_keys[i];
+            item->section = o->kind == TG2_OPT_INT ? "Audio" :
+                            !strcmp(o->group, "Sound") ? "Sound" : "Mods";
+            item->label = o->name;
+            item->description = o->description;
+            item->type = o->kind == TG2_OPT_INT ? RECOMP_RUNTIME_UI_INT :
+                         o->kind == TG2_OPT_CHOICE ? RECOMP_RUNTIME_UI_CHOICE : RECOMP_RUNTIME_UI_BOOL;
+            item->minimum = o->kind == TG2_OPT_INT ? o->min_value : 0;
+            item->maximum = o->kind == TG2_OPT_INT ? o->max_value :
+                              o->kind == TG2_OPT_CHOICE ? o->choice_count - 1 : 1;
+            item->step = o->kind == TG2_OPT_INT ? o->step : 1;
+            item->choices = o->labels;
+            item->choice_count = o->choice_count;
+        }
+        initialized = 1;
+    }
+    if (count) *count = TG2_OPTION_COUNT;
     return s_runtime_items;
 }
 
@@ -415,8 +406,7 @@ int tg2_options_runtime_set(const char *key, int value)
 
 /* ── Headless overlay driver (debug command) ──────────────────────────────── */
 
-int runner_runtime_ui_open(void);   /* runner/main.c */
-
+#ifdef GEN_ENABLE_TRACE
 static void push_key(SDL_Keycode key)
 {
     SDL_Event ev;
@@ -468,6 +458,7 @@ void tg2_options_ui_command(int id, const char *json)
     cmd_send_response(out);
 }
 
+#endif
 /* ── Launcher mod provider ────────────────────────────────────────────────── */
 
 static const RecompLauncherCModProvider *s_base;

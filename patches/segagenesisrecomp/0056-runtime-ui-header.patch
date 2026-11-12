@@ -1,0 +1,39 @@
+From 518501d80b71663f8a269f9b79590d13e65b89ae Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 23:53:06 -0300
+Subject: [PATCH] Expose runtime overlay visibility through a public header
+
+---
+ runner/main.c       |  1 +
+ runner/runtime_ui.h | 11 +++++++++++
+ 2 files changed, 12 insertions(+)
+ create mode 100644 runner/runtime_ui.h
+
+diff --git a/runner/main.c b/runner/main.c
+index 3a0f502..c96b0ca 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -1,3 +1,4 @@
++#include "runtime_ui.h"
+ #include "video/genesis_frame_pixels.h"
+ #include "video/genesis_hd_gpu.h"
+ #include "video/genesis_raster_jobs.h"
+diff --git a/runner/runtime_ui.h b/runner/runtime_ui.h
+new file mode 100644
+index 0000000..dc24ee3
+--- /dev/null
++++ b/runner/runtime_ui.h
+@@ -0,0 +1,11 @@
++/* Host-owned runtime overlay visibility, queried by game debug adapters. */
++#ifndef GENESIS_RUNTIME_UI_H
++#define GENESIS_RUNTIME_UI_H
++#ifdef __cplusplus
++extern "C" {
++#endif
++int runner_runtime_ui_open(void);
++#ifdef __cplusplus
++}
++#endif
++#endif
+-- 
+2.54.0 (Apple Git-157)

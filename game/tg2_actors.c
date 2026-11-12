@@ -4,6 +4,7 @@
  * to the guest. */
 #include "tg2_actors.h"
 #include "genesis_runtime.h"
+#include "tg2_memory.h"
 #include "tg2_highres.h"
 #include "video/genesis_vdp.h"
 #include "video/genesis_dac.h"
@@ -12,18 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static unsigned ram16(unsigned a) {
-    return (g_ram[a & 65535] << 8) | g_ram[(a + 1) & 65535];
-}
-static unsigned mem16(unsigned a) {
-    a &= 0xFFFFFF;
-    if (a + 1 < 0x100000)
-        return (g_rom[a] << 8) | g_rom[a + 1];
-    if (a >= 0xFF0000)
-        return ram16(a);
-    return 0;
-}
-static unsigned mem32(unsigned a) { return (mem16(a) << 16) | mem16(a + 2); }
 static int valid_pointer(unsigned a) {
     a &= 0xFFFFFF;
     return a && !(a & 1) && (a < 0x100000 || a >= 0xFF0000);
@@ -40,12 +29,15 @@ typedef struct {
     int lateral;
 } Projection;
 static Projection pending;
+#ifdef GEN_ENABLE_TRACE
 static struct {
     uint64_t actors, native, fallbacks, positions, palettes, priorities;
     uint64_t kinds[256], reasons[8];
     double floor_error;
 } totals;
 
+#endif
+#ifdef GEN_ENABLE_TRACE
 /* ---- LOD evidence log (TG2_ACTOR_LOG=path), qualification only ---------- */
 static FILE *log_file;
 static int log_checked;
@@ -67,23 +59,23 @@ int tg2_actors_logging(void) { return evidence() != NULL; }
 static void log_tables(FILE *f) {
     static const unsigned slots[2] = {0x2222, 0x2226};
     for (int t = 0; t < 2; ++t) {
-        unsigned ptr = (ram16(slots[t]) << 16) | ram16(slots[t] + 2), sum = 0;
+        unsigned ptr = (tg2_ram16(slots[t]) << 16) | tg2_ram16(slots[t] + 2), sum = 0;
         if (!valid_pointer(ptr))
             continue;
         for (unsigned i = 0; i < 96; ++i)
-            sum = sum * 31 + mem16(ptr + i * 2);
+            sum = sum * 31 + tg2_mem16(ptr + i * 2);
         if (ptr == table_ptr[t] && sum == table_sum[t])
             continue;
         table_ptr[t] = ptr;
         table_sum[t] = sum;
         fprintf(f, "T,%llu,%d,%06X", (unsigned long long)log_frame, t, ptr & 0xFFFFFF);
         for (unsigned i = 0; i < 96; ++i)
-            fprintf(f, ",%d", (int16_t)mem16(ptr + i * 2));
+            fprintf(f, ",%d", (int16_t)tg2_mem16(ptr + i * 2));
         fputc('\n', f);
     }
 }
 static void log_definition(FILE *f, unsigned record) {
-    unsigned art = mem32(record), map = mem32(record + 4);
+    unsigned art = tg2_mem32(record), map = tg2_mem32(record + 4);
     for (unsigned i = 0; i < def_count; ++i)
         if (defs[i].record == record && defs[i].art == art && defs[i].map == map)
             return;
@@ -93,17 +85,17 @@ static void log_definition(FILE *f, unsigned record) {
     defs[def_count].art = art;
     defs[def_count++].map = map;
     fprintf(f, "D,%llu,%06X,%06X,%06X,%04X\n", (unsigned long long)log_frame,
-            record & 0xFFFFFF, art & 0xFFFFFF, map & 0xFFFFFF, mem16(record + 8));
+            record & 0xFFFFFF, art & 0xFFFFFF, map & 0xFFFFFF, tg2_mem16(record + 8));
     if (!valid_pointer(art) || !valid_pointer(map))
         return;
     for (unsigned m = 0; m < 40; ++m) {
-        unsigned h = mem32(map + m * 4);
+        unsigned h = tg2_mem32(map + m * 4);
         if (!valid_pointer(h))
             continue;
         fprintf(f, "M,%06X,%u,%06X", record & 0xFFFFFF, m, h & 0xFFFFFF);
         for (int n = 0; n < 12; ++n, h += 10) {
-            unsigned set = mem16(h), list = art + 8 + set;
-            unsigned count = mem16(list), p = (mem32(list + 2) + art) & 0xFFFFFF;
+            unsigned set = tg2_mem16(h), list = art + 8 + set;
+            unsigned count = tg2_mem16(list), p = (tg2_mem32(list + 2) + art) & 0xFFFFFF;
             int minx = 9999, miny = 9999, maxx = -9999, maxy = -9999;
             unsigned lo = 0xFFFF, hi = 0;
             if (count > 128) {
@@ -111,9 +103,9 @@ static void log_definition(FILE *f, unsigned record) {
                 break;
             }
             for (unsigned i = 0; i < count; ++i, p += 8) {
-                unsigned sz = mem16(p + 2) >> 8, tile = mem16(p + 4) & 2047;
+                unsigned sz = tg2_mem16(p + 2) >> 8, tile = tg2_mem16(p + 4) & 2047;
                 int pw = (((sz >> 2) & 3) + 1) * 8, ph = ((sz & 3) + 1) * 8;
-                int px = (int16_t)mem16(p + 6), py = (int16_t)mem16(p);
+                int px = (int16_t)tg2_mem16(p + 6), py = (int16_t)tg2_mem16(p);
                 if (px < minx) minx = px;
                 if (py < miny) miny = py;
                 if (px + pw > maxx) maxx = px + pw;
@@ -121,25 +113,39 @@ static void log_definition(FILE *f, unsigned record) {
                 if (tile < lo) lo = tile;
                 if (tile + (unsigned)(pw * ph / 64) - 1 > hi) hi = tile + (unsigned)(pw * ph / 64) - 1;
             }
-            fprintf(f, ",%u:%d:%d:%04X:%u:%d:%d:%d:%d:%u:%u", set, (int16_t)mem16(h + 2),
-                    (int16_t)mem16(h + 4), mem16(h + 6), count, minx, miny, maxx, maxy, lo, hi);
-            if (mem16(h + 8) == 0x8888)
+            fprintf(f, ",%u:%d:%d:%04X:%u:%d:%d:%d:%d:%u:%u", set, (int16_t)tg2_mem16(h + 2),
+                    (int16_t)tg2_mem16(h + 4), tg2_mem16(h + 6), count, minx, miny, maxx, maxy, lo, hi);
+            if (tg2_mem16(h + 8) == 0x8888)
                 break;
         }
         fputc('\n', f);
     }
 }
 
-void tg2_actors_frame(uint64_t frame) { log_frame = frame; }
+#endif
+void tg2_actors_frame(uint64_t frame) {
+#ifdef GEN_ENABLE_TRACE
+    log_frame = frame;
+#else
+    (void)frame;
+#endif
+}
+#ifndef GEN_ENABLE_TRACE
+int tg2_actors_logging(void) { return 0; }
+#endif
 void tg2_actors_reset(void) {
     pending.path = 0;
+#ifdef GEN_ENABLE_TRACE
     memset(&totals,0,sizeof totals);
+#endif
     tg2_actors_prepare(NULL,NULL);
+#ifdef GEN_ENABLE_TRACE
     def_count = 0;
     table_ptr[0] = table_ptr[1] = 0;
+#endif
 }
 static void evidence_hook(uint32_t pc) {
-    if (ram16(0x189E))
+    if (tg2_ram16(0x189E))
         return; /* 2P split-screen stays native */
     if (pc == 0xB314) {
         pending.path = 0;
@@ -154,6 +160,7 @@ static void evidence_hook(uint32_t pc) {
         pending.depth2 = g_cpu.D[0] & 65535;
         pending.type_in = g_cpu.D[7] & 65535;
         pending.record = g_cpu.A[1] & 0xFFFFFF;
+#ifdef GEN_ENABLE_TRACE
     } else if (pc == 0xB584) {
         FILE *f = evidence();
         unsigned record = g_cpu.A[1] & 0xFFFFFF;
@@ -166,23 +173,24 @@ static void evidence_hook(uint32_t pc) {
             if (valid_pointer(record))
                 log_definition(f, record);
             fprintf(f, "O,%llu,%02X,%04X,%06X,%d,%u,%u,%u,%u,%d,%u,%d,%d,%u,%u,%u,%d,%u,%d,%d,%d,%u,%u,%d\n",
-                    (unsigned long long)log_frame, ram16(0x187C) & 255, ram16(0x1878), record,
+                    (unsigned long long)log_frame, tg2_ram16(0x187C) & 255, tg2_ram16(0x1878), record,
                     path, pending.type_in, g_cpu.D[7] & 65535, pending.depth2,
                     pending.d3 & 65535, (int16_t)g_cpu.D[1], pending.d1 >> 16,
                     (int16_t)g_cpu.D[2], (int16_t)pending.d2, pending.d2 >> 16,
-                    pending.d4 & 65535, ram16(0x17E0), (int16_t)ram16(0x17DC),
-                    ram16(0x242A), (int16_t)ram16(0x1836), (int16_t)ram16(0x17BC),
-                    (int16_t)ram16(0x1894), g_ram[0x22E8], ram16(0x22D8),
-                    (int16_t)ram16(0x2452));
+                    pending.d4 & 65535, tg2_ram16(0x17E0), (int16_t)tg2_ram16(0x17DC),
+                    tg2_ram16(0x242A), (int16_t)tg2_ram16(0x1836), (int16_t)tg2_ram16(0x17BC),
+                    (int16_t)tg2_ram16(0x1894), g_ram[0x22E8], tg2_ram16(0x22D8),
+                    (int16_t)tg2_ram16(0x2452));
         }
     } else if (pc == 0xB5FA) {
         FILE *f = evidence();
         unsigned header = g_cpu.A[0] & 0xFFFFFF;
         if (f)
             fprintf(f, "H,%llu,%d,%d,%04X,%u,%u,%06X,%d,%d\n", (unsigned long long)log_frame,
-                    (int16_t)g_cpu.D[6], (int16_t)mem16(header), mem16(header + 2),
-                    mem16(header - 4), g_cpu.D[7] & 65535, g_cpu.A[1] & 0xFFFFFF,
+                    (int16_t)g_cpu.D[6], (int16_t)tg2_mem16(header), tg2_mem16(header + 2),
+                    tg2_mem16(header - 4), g_cpu.D[7] & 65535, g_cpu.A[1] & 0xFFFFFF,
                     (int16_t)g_cpu.D[1], (int16_t)g_cpu.D[2]);
+#endif
     }
 }
 
@@ -193,35 +201,39 @@ int tg2_actors_active(void) {
     return allowed && tg2_highres_scale() > 1;
 }
 void tg2_actors_latch(uint32_t pc) { evidence_hook(pc); }
-void tg2_actors_log_header(void) { evidence_hook(0xB5FA); }
+void tg2_actors_log_header(void) {
+#ifdef GEN_ENABLE_TRACE
+    evidence_hook(0xB5FA);
+#endif
+}
 void tg2_actors_begin(Tg2ActorSet *set) { memset(set, 0, sizeof *set); pending.path = 0; }
 
 /* All addresses/attributes are resolved while the mapper owns this record.
  * Presentation subsequently reads only these pieces and the displayed VRAM. */
 static int capture_model(Tg2ActorSet *set, unsigned record, unsigned model,
                          unsigned short *first, unsigned short *count) {
-    unsigned art = mem32(record), table = mem32(record + 4);
+    unsigned art = tg2_mem32(record), table = tg2_mem32(record + 4);
     if (!valid_pointer(art) || !valid_pointer(table) || model >= 40) return 0;
-    unsigned h = mem32(table + model * 4), start = set->piece_count;
+    unsigned h = tg2_mem32(table + model * 4), start = set->piece_count;
     *first = start; *count = 0;
     if (!valid_pointer(h)) return 0;
     for (unsigned n = 0; n < 16; ++n, h += 10) {
-        unsigned list = art + 8 + mem16(h), pieces = mem16(list);
-        unsigned p = (mem32(list + 2) + art) & 0xFFFFFF;
-        unsigned attr = mem16(h + 6) | mem16(record + 8);
+        unsigned list = art + 8 + tg2_mem16(h), pieces = tg2_mem16(list);
+        unsigned p = (tg2_mem32(list + 2) + art) & 0xFFFFFF;
+        unsigned attr = tg2_mem16(h + 6) | tg2_mem16(record + 8);
         if (!valid_pointer(p) || pieces > 128 || start + *count + pieces > TG2_MAX_MODEL_PIECES) break;
-        int half = (int16_t)mem16(h + 2), height = (int16_t)mem16(h + 4);
+        int half = (int16_t)tg2_mem16(h + 2), height = (int16_t)tg2_mem16(h + 4);
         for (unsigned i = 0; i < pieces; ++i, p += 8) {
             Tg2ModelPiece *q = &set->pieces[start + (*count)++];
-            unsigned sz = mem16(p + 2) >> 8, pa = mem16(p + 4);
-            int pw = (((sz >> 2) & 3) + 1) * 8, xoff = (int16_t)mem16(p + 6);
+            unsigned sz = tg2_mem16(p + 2) >> 8, pa = tg2_mem16(p + 4);
+            int pw = (((sz >> 2) & 3) + 1) * 8, xoff = (int16_t)tg2_mem16(p + 6);
             q->dx = attr & 0x800 ? half - xoff - pw : -half + xoff;
-            q->dy = -height + (int16_t)mem16(p);
+            q->dy = -height + (int16_t)tg2_mem16(p);
             q->size = sz & 15; q->pad = 0;
-            q->attr = (((attr ^ (pa & 0x1800)) + (pa & 2047)) | ram16(0x234E));
+            q->attr = (((attr ^ (pa & 0x1800)) + (pa & 2047)) | tg2_ram16(0x234E));
             if (g_ram[0x22E8]) q->attr |= 0x8000;
         }
-        if (mem16(h + 8) == 0x8888) { set->piece_count = start + *count; return *count != 0; }
+        if (tg2_mem16(h + 8) == 0x8888) { set->piece_count = start + *count; return *count != 0; }
     }
     *count = 0; return 0;
 }
@@ -250,29 +262,29 @@ static unsigned car_model(unsigned guest, unsigned *level) {
  * Reference scales on the three captured tracks: scenery 2270.0837, cars
  * 2499.1775. This reference never follows the selected hand-drawn band. */
 static double projection_reference(int car) {
-    unsigned table = mem32(car ? 0xFF2226 : 0xFF2222), scales = mem32(0xFF221E);
+    unsigned table = tg2_mem32(car ? 0xFF2226 : 0xFF2222), scales = tg2_mem32(0xFF221E);
     int first = -1, last = -1;
     if (!valid_pointer(table) || !valid_pointer(scales)) return 0;
     for (int d = 0; d < 127; ++d) {
-        if (mem16(table + 2*d) == 0) {
+        if (tg2_mem16(table + 2*d) == 0) {
             if (first < 0) first = d;
             last = d;
         } else if (first >= 0) break;
     }
-    return first < 0 ? 0 : sqrt((double)mem16(scales + first*2) * mem16(scales + (last+1)*2));
+    return first < 0 ? 0 : sqrt((double)tg2_mem16(scales + first*2) * tg2_mem16(scales + (last+1)*2));
 }
 int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     evidence_hook(0xB584);
-    unsigned record = g_cpu.A[1] & 0xFFFFFF, kind = ram16(0x187C) & 255;
+    unsigned record = g_cpu.A[1] & 0xFFFFFF, kind = tg2_ram16(0x187C) & 255;
     int path = pending.path;
     pending.path = 0;
     if (!set) return -1;
     if (!path || pending.record != record || ((pending.d1 ^ g_cpu.D[1]) & 65535) ||
-        ram16(0x189E) || ram16(0x1878) == 0xFFFE || ram16(0x1878) == 0xFD66 ||
+        tg2_ram16(0x189E) || tg2_ram16(0x1878) == 0xFFFE || tg2_ram16(0x1878) == 0xFD66 ||
         kind == 0x82 || kind == 0x83 || kind == 0x84 || kind == 0xBD ||
         kind == 0x8A || kind == 0xF8 || kind == 0xF9 || kind == 0xFC || kind == 0xFD ||
         !valid_pointer(record) ||
-        (record >= 0xFF8E94 && ram16(0x1878) == ram16(0x17D6))) { ++set->native_objects; return -1; }
+        (record >= 0xFF8E94 && tg2_ram16(0x1878) == tg2_ram16(0x17D6))) { ++set->native_objects; return -1; }
     if (set->count == TG2_MAX_ACTORS) { ++set->dropped; return -1; }
     Tg2Actor a = {0};
     a.record = record; a.kind = kind; a.path = path;
@@ -280,18 +292,18 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     unsigned level = a.guest_model;
     a.model = a.car ? car_model(a.guest_model, &level) : tabulated(kind) ? 0 : a.guest_model;
     a.fallback = !a.car && !tabulated(kind) ? 1 : 0;
-    a.level = level; a.scale = ram16(0x17E0);
+    a.level = level; a.scale = tg2_ram16(0x17E0);
     a.scale4 = pending.d4 & 65535;
     /* $A41C indexes kind $81's moving-object slot with the original low
      * byte at $FF1800. Its projected lateral changes, its slot does not. */
-    a.object = kind == 0x81 ? ram16(0x1800) & 255 : ram16(0x1878);
+    a.object = kind == 0x81 ? tg2_ram16(0x1800) & 255 : tg2_ram16(0x1878);
     a.lateral = pending.lateral;
     /* $B3A2 halves D2 before signed multiplication, then $B422 doubles
      * that product. Preserve the full original unsigned fraction; the far
      * path has the same input but discards it. D0 at both endpoints = 2*row.
      * Read the same table the ROM uses at $B40C/$B4C4, without integer
      * truncation or dependence on the selected art band. */
-    unsigned scales = mem32(0xFF221E), row = pending.depth2 / 2;
+    unsigned scales = tg2_mem32(0xFF221E), row = pending.depth2 / 2;
     a.depth = row + pending.fraction / 65536.0;
     /* $A094..$A0AA forms scenery's shared fractional depth from camera
      * position, multiplied by 16; subsequent rows are 4 units apart ($A312).
@@ -299,21 +311,21 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
      * Adding that coordinate gives a stable world identity,
      * even when equal kinds/laterals overlap at different depths. */
     a.identity = a.car ? a.object :
-        (mem32(0xFF17F4) << 4) + (row << 16) + pending.fraction;
+        (tg2_mem32(0xFF17F4) << 4) + (row << 16) + pending.fraction;
     a.projection = valid_pointer(scales) && row < 127 ?
-        mem16(scales + 2*row) + (mem16(scales + 2*row + 2) - (double)mem16(scales + 2*row)) *
+        tg2_mem16(scales + 2*row) + (tg2_mem16(scales + 2*row + 2) - (double)tg2_mem16(scales + 2*row)) *
         pending.fraction / 65536.0 : a.scale;
     a.gx = (int16_t)g_cpu.D[1] + 128;
-    a.gy = (int16_t)g_cpu.D[2] + (int16_t)ram16(0x2452) - 128;
+    a.gy = (int16_t)g_cpu.D[2] + (int16_t)tg2_ram16(0x2452) - 128;
     a.x = a.gx + (pending.d1 >> 16) / 65536.0;
     double y = (int16_t)pending.d2 + (path == 1 ? (pending.d2 >> 16) / 65536.0 : 0);
-    int limit = (int16_t)ram16(0x17BC) - 2;
+    int limit = (int16_t)tg2_ram16(0x17BC) - 2;
     if (y >= limit) y = limit;
-    unsigned shift = ram16(0x242A);
-    y -= ldexp((int16_t)ram16(0x17DC) * a.scale / 65536.0, -(int)(shift & 63));
-    y += (int16_t)ram16(0x2452) - 128;
+    unsigned shift = tg2_ram16(0x242A);
+    y -= ldexp((int16_t)tg2_ram16(0x17DC) * a.scale / 65536.0, -(int)(shift & 63));
+    y += (int16_t)tg2_ram16(0x2452) - 128;
     a.y = fmax(a.gy, fmin(a.gy + 255.0/256, y));
-    a.clip = (int16_t)ram16(0x1836) + (int16_t)ram16(0x2452) - 128;
+    a.clip = (int16_t)tg2_ram16(0x1836) + (int16_t)tg2_ram16(0x2452) - 128;
     a.first_piece = piece_index;
     double reference = projection_reference(a.car);
     a.continuous = reference > 0 ? a.projection / reference : 0;
@@ -460,6 +472,7 @@ void tg2_actors_note_sat(int index, unsigned pieces, unsigned inside, unsigned m
     }
 }
 void tg2_actors_paint(const Tg2ActorCanvas *c) {
+#ifdef GEN_ENABLE_TRACE
     static int trace_checked;
     static FILE *trace;
     if (!trace_checked) {
@@ -469,17 +482,27 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
             if(trace) fprintf(trace,"frame,index,record,kind,car,level,model,path,x,y,lateral,depth,guest_scale,scale4,projection,size,promoted,fallback,pixels,identity,object\n");
         }
     }
+#endif
     for (unsigned i=0;i<prepared_count;++i) {
         Prepared *p=&prepared[i]; p->pixels=p->native_blocked=p->pole_blocked=p->pole_overpaint=0;
         const Tg2Actor *a=&p->actor;
+#ifdef GEN_ENABLE_TRACE
         if(a->fallback) {++totals.fallbacks;if(a->fallback<8)++totals.reasons[a->fallback];}
-        if (!p->promoted) {++totals.native;goto traced;}
+#endif
+        if (!p->promoted) {
+#ifdef GEN_ENABLE_TRACE
+            ++totals.native;
+#endif
+            goto traced;
+        }
+#ifdef GEN_ENABLE_TRACE
         ++totals.actors;++totals.kinds[a->kind];
         totals.positions+=p->position_mismatches;
         totals.palettes+=p->palettes!=p->guest_palettes;
         totals.priorities+=p->priorities!=p->guest_priorities;
         double error=fmax(fabs(floor(a->x)-a->gx),fabs(floor(a->y)-a->gy));
         if(error>totals.floor_error)totals.floor_error=error;
+#endif
         const Art *m=&art_cache[p->art];
         double k=p->size*c->scale, ax=(a->x+c->origin)*c->scale, ay=a->y*c->scale;
         p->drawn_x=ax;p->drawn_y=ay;p->draw_origin=c->origin;p->draw_scale=c->scale;
@@ -522,11 +545,15 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
             }
         }
 traced:
+        ;
+#ifdef GEN_ENABLE_TRACE
         if(trace) fprintf(trace,"%llu,%u,%u,%u,%u,%u,%u,%u,%.8f,%.8f,%d,%.8f,%u,%u,%.8f,%.8f,%d,%u,%u,%u,%u\n",
             (unsigned long long)log_frame,i,a->record,a->kind,a->car,a->level,a->model,a->path,
             a->x,a->y,a->lateral,a->depth,a->scale,a->scale4,a->projection,p->size,p->promoted,a->fallback,p->pixels,a->identity,a->object);
+#endif
     }
 }
+#ifdef GEN_ENABLE_TRACE
 int tg2_actors_json(char *out,int cap) {
     int n=snprintf(out,cap,"[");
     for(unsigned i=0;i<prepared_count && n>0 && n<cap;++i) {
@@ -549,3 +576,5 @@ int tg2_actors_stats_json(char *out,int cap) {
     if(n>0 && n<cap)n+=snprintf(out+n,cap-n,"}}");
     return n;
 }
+
+#endif

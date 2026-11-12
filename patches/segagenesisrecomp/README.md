@@ -110,3 +110,5 @@ isolation. Qualify a fresh stack by applying it and rerunning for a no-op.
 - `0054-pad-trigger-bindings.patch`: a `GameSpec.pad_trigger_bits` hook lets a game whose accelerate/brake are face buttons OR the GPAD_* bits for LT/RT (already past the player's deadzone) into the same player's mask, additively and with no new setting (Top Gear 2: RT = Genesis B, LT = Genesis A).
 
 - `0055-virtual-controller-axis-probe.patch`: the dev/TCP virtual pad probe takes a pad slot (1 or 2) and a new `virtual_axis` command drives a synthetic controller axis (LT/RT as a 0..32767 pull, sticks signed) so an analog mapping can be tested headlessly through SDL's real gamecontroller path.
+
+- `0056-runtime-ui-header.patch` — declare runtime overlay visibility in an engine header so game adapters share its real API.

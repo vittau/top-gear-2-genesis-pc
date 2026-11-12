@@ -4,6 +4,8 @@
 #include "tg2_actors.h"
 #include "cmd_server.h"
 #include "genesis_runtime.h"
+#include "tg2_race.h"
+#include "tg2_memory.h"
 #include "video/genesis_dac.h"
 #include "video/genesis_vdp.h"
 #include <math.h>
@@ -22,8 +24,10 @@ static unsigned char *actor_occluder;
 static unsigned short *actor_front;
 static int actor_free, reference_pass;
 static unsigned short owners[256];
+#ifdef GEN_ENABLE_TRACE
 static unsigned long long actor_rows, actor_row_mismatches;
 static int actor_audit = -1;
+#endif
 static int foreground_at(const GVDPRasterRow *r, int x) {
     unsigned a = r->plane_a[x], b = r->plane_b[x];
     int sp = r->opaque[x] != 0;
@@ -53,9 +57,6 @@ static int crop_bottom_ok;    /* rows h-CROP_BOTTOM..h-1 all empty            */
 static int presented_cropped; /* the last completed picture was cropped      */
 static unsigned crop_frames, crop_withheld;
 static double ratio = 16.0 / 9.0;
-static unsigned word(const unsigned char *p, unsigned a) {
-    return (p[a & 65535] << 8) | p[(a + 1) & 65535];
-}
 static int configure(const char *s) {
     if (!s)
         return 0;
@@ -143,21 +144,14 @@ static Scene building, history[HISTORY];
 static const Scene *shown;
 static int current_actor = -1;
 static unsigned serial, overflow, matched_pieces, margin_pieces;
-static unsigned read16(unsigned a) {
-    a &= 0xFFFFFF;
-    if (a < 0xFFFFF)
-        return (g_rom[a] << 8) | g_rom[a + 1];
-    if (a >= 0xFF0000)
-        return word(g_ram, a);
-    return 0;
-}
-static unsigned read32(unsigned a) { return (read16(a) << 16) | read16(a + 2); }
 void tg2_video_reset(void) {
     presentation_clear();
     tg2_highres_reset();
     tg2_actors_reset();
     highres_wanted = 0;
+#ifdef GEN_ENABLE_TRACE
     actor_rows=actor_row_mismatches=0;
+#endif
     memset(&building, 0, sizeof building);
     memset(history, 0, sizeof history);
     shown = NULL; current_actor=-1;
@@ -180,35 +174,35 @@ int tg2_video_hook(uint32_t pc) {
         tg2_actors_begin(&building.actors);
     }
     else if (pc == 0x6982) {
-        unsigned index = word(g_ram, 0x22D8);
+        unsigned index = tg2_word(g_ram, 0x22D8);
         if (index > 127)
             return 0;
         building.sat_size = (127 - index) * 8;
         if (building.sat_size > 512)
             building.sat_size = 512;
-        unsigned src = read32(0xFF2316) + index * 8;
+        unsigned src = tg2_mem32(0xFF2316) + index * 8;
         for (unsigned i = 0; i < building.sat_size; i++)
             building.sat[i] = g_ram[(src + i) & 65535];
         building.serial = ++serial;
         history[serial % HISTORY] = building;
-    } else if (pc == 0xB5FA && !word(g_ram, 0x189E)) {
+    } else if (pc == 0xB5FA && !tg2_word(g_ram, 0x189E)) {
         unsigned p = g_cpu.A[1] & 0xFFFFFF, header = g_cpu.A[0] & 0xFFFFFF;
         unsigned count = g_cpu.D[7] & 65535;
         if (count > 128)
             return 0;
-        int x = (int16_t)g_cpu.D[1], y = (int16_t)g_cpu.D[2] - (int16_t)read16(header);
-        unsigned attr = read16(header + 2) | (g_cpu.D[5] & 65535);
-        if (word(g_ram, 0x1878) != 0xFD66)
-            x += (read16(header + 2) & 0x800) ? (int16_t)g_cpu.D[6] : -(int16_t)g_cpu.D[6];
+        int x = (int16_t)g_cpu.D[1], y = (int16_t)g_cpu.D[2] - (int16_t)tg2_mem16(header);
+        unsigned attr = tg2_mem16(header + 2) | (g_cpu.D[5] & 65535);
+        if (tg2_word(g_ram, 0x1878) != 0xFD66)
+            x += (tg2_mem16(header + 2) & 0x800) ? (int16_t)g_cpu.D[6] : -(int16_t)g_cpu.D[6];
         for (unsigned i = 0; i < count; i++, p += 8) {
-            unsigned sz = read16(p + 2) >> 8, pa = read16(p + 4);
+            unsigned sz = tg2_mem16(p + 2) >> 8, pa = tg2_mem16(p + 4);
             int pw = (((sz >> 2) & 3) + 1) * 8, ph = ((sz & 3) + 1) * 8;
-            int px = x + (attr & 0x800 ? -(int16_t)read16(p + 6) - pw : (int16_t)read16(p + 6));
-            int py = y + (int16_t)read16(p);
+            int px = x + (attr & 0x800 ? -(int16_t)tg2_mem16(p + 6) - pw : (int16_t)tg2_mem16(p + 6));
+            int py = y + (int16_t)tg2_mem16(p);
             /* Original vertical occlusion/culling. X alone is expanded. */
-            if (py >= (int16_t)word(g_ram, 0x1836) ||
-                py + (int)(read16(p + 2) & 255) >= (int16_t)word(g_ram, 0x1836) ||
-                py + ph <= (int16_t)word(g_ram, 0x23E6))
+            if (py >= (int16_t)tg2_word(g_ram, 0x1836) ||
+                py + (int)(tg2_mem16(p + 2) & 255) >= (int16_t)tg2_word(g_ram, 0x1836) ||
+                py + ph <= (int16_t)tg2_word(g_ram, 0x23E6))
                 continue;
             if (building.count == MAX_PIECES) {
                 ++overflow;
@@ -216,11 +210,11 @@ int tg2_video_hook(uint32_t pc) {
             }
             Piece *piece = &building.pieces[building.count++];
             piece->actor = current_actor;
-            piece->kind = word(g_ram,0x187C)&255;
+            piece->kind = tg2_word(g_ram,0x187C)&255;
             piece->x = px;
-            piece->y = py + (int16_t)word(g_ram, 0x2452) - 128;
+            piece->y = py + (int16_t)tg2_word(g_ram, 0x2452) - 128;
             piece->size = sz & 15;
-            piece->attr = (((attr ^ (pa & 0x1800)) + (pa & 2047)) | word(g_ram, 0x234E)) & 65535;
+            piece->attr = (((attr ^ (pa & 0x1800)) + (pa & 2047)) | tg2_word(g_ram, 0x234E)) & 65535;
             if (g_ram[0x22E8])
                 piece->attr |= 0x8000;
         }
@@ -250,9 +244,9 @@ static void select_scene(const GVDP *v) {
                 ++margin_pieces;
             for (unsigned k = 0; k < shown->sat_size; k += 8) {
                 const unsigned char *q = shown->sat + k;
-                if (shown->sat_piece[k/8]<0 && ((word(q, 0) & 511) - 128) == (unsigned)p->y &&
-                    ((word(q, 6) & 511) - 128) == (unsigned)p->x && (q[2] & 15) == p->size &&
-                    word(q, 4) == p->attr) {
+                if (shown->sat_piece[k/8]<0 && ((tg2_word(q, 0) & 511) - 128) == (unsigned)p->y &&
+                    ((tg2_word(q, 6) & 511) - 128) == (unsigned)p->x && (q[2] & 15) == p->size &&
+                    tg2_word(q, 4) == p->attr) {
                     ((Scene *)shown)->sat_piece[k / 8] = i;
                     ++matched_pieces;
                     break;
@@ -307,12 +301,12 @@ static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *nativ
     unsigned sat=(v->reg[5]&127)<<9;
     int link=0,on_line=0,budget=filter_layers->width;
     for(int n=0;n<64;++n) {
-        unsigned e=sat+link*8,sz=v->vram[(e+2)&65535],attr=word(v->vram,e+4);
-        int y=(word(v->vram,e)&1023)-128,h=((sz&3)+1)*8,w=(((sz>>2)&3)+1)*8;
+        unsigned e=sat+link*8,sz=v->vram[(e+2)&65535],attr=tg2_word(v->vram,e+4);
+        int y=(tg2_word(v->vram,e)&1023)-128,h=((sz&3)+1)*8,w=(((sz>>2)&3)+1)*8;
         int next=v->vram[(e+3)&65535]&127;
         if(line>=y && line<y+h) {
             if(++on_line>16)break;
-            int xword=word(v->vram,e+6)&1023;
+            int xword=tg2_word(v->vram,e+6)&1023;
             if(!xword && on_line>1)break;
             int removed=promoted_sat(link);
             for(int dx=0;dx<w;++dx) {
@@ -336,6 +330,7 @@ static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *nativ
     int offset=((int)free_row->width-nw)/2;
     /* A full no-removal reconstruction is checked against the engine's own
      * captured sprite channels, independently of colour/palette equality. */
+#ifdef GEN_ENABLE_TRACE
     if(actor_audit<0)actor_audit=getenv("TG2_ACTOR_AUDIT")!=NULL;
     if(actor_audit) {
         ++actor_rows;
@@ -344,6 +339,7 @@ static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *nativ
             if(!!all[x]!=!!filter_layers->opaque[k] || (all[x] && (all[x]!=filter_layers->sprite[k] || all_hi[x]!=filter_layers->high[k]))) ++actor_row_mismatches;
         }
     }
+#endif
     for(int x=0;x<nw;++x) if(owner[x]==1) {
         int k=x+offset;
         free_row->sprite[k]=kept[x];free_row->opaque[k]=!!kept[x];free_row->high[k]=hi[x];
@@ -359,7 +355,7 @@ static void actor_native_row(const GVDP *v,int line,int nw,const uint32_t *nativ
 static int tiles(int n) { return n == 1 ? 64 : n == 3 ? 128 : 32; }
 static unsigned pixel(const GVDP *v, unsigned base, int x, int y, unsigned *attr) {
     int wt = tiles(v->reg[16] & 3), ht = tiles((v->reg[16] >> 4) & 3);
-    unsigned a = word(v->vram, base + (((y >> 3) & (ht - 1)) * wt + ((x >> 3) & (wt - 1))) * 2);
+    unsigned a = tg2_word(v->vram, base + (((y >> 3) & (ht - 1)) * wt + ((x >> 3) & (wt - 1))) * 2);
     unsigned px = x & 7, py = y & 7;
     if (a & 0x800)
         px ^= 7;
@@ -375,17 +371,13 @@ static struct {
     unsigned a, b;
 } rows[240];
 static unsigned wide_lines, native_lines, frame_margin_pixels;
+#ifdef GEN_ENABLE_TRACE
 /* Read-only evidence for the race's transitional top raster/window band. */
 static struct {
     unsigned char reg[24];
     unsigned short vsram[2], cram[64];
 } top_rows[8];
-static int race(const GVDP *v) {
-    unsigned op = word(g_ram, 0xF9FE);
-    return !(v->reg[12] & 15) && v->reg[16] == 0x11 && ((v->reg[2] & 56) << 10) == 0xC000 &&
-           ((v->reg[4] & 7) << 13) == 0xE000 && !word(g_ram, 0x189E) &&
-           (op == 0x2C9D || op == 0x601E || op == 0x6042);
-}
+#endif
 /* The 512x512 B atlas holds four road templates in rows 0..431,
  * followed by ground separators and the skyline. The road's center is the atlas seam (X=0),
  * with exterior ground at X=256. Extend that exterior, never another road.
@@ -472,14 +464,14 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     memset(occupied, 0, sizeof occupied);
     for (int n = 0; n < 64; ++n) {
         unsigned e = sat + link * 8;
-        int y = (word(v->vram, e) & 1023) - 128;
-        unsigned size = v->vram[(e + 2) & 65535], attr = word(v->vram, e + 4);
+        int y = (tg2_word(v->vram, e) & 1023) - 128;
+        unsigned size = v->vram[(e + 2) & 65535], attr = tg2_word(v->vram, e + 4);
         int sw = (((size >> 2) & 3) + 1) * 8, sh = ((size & 3) + 1) * 8;
         int next = v->vram[(e + 3) & 65535] & 127;
         if (line >= y && line < y + sh) {
             if (++on_line > 16)
                 break;
-            int xword = word(v->vram, e + 6) & 1023;
+            int xword = tg2_word(v->vram, e + 6) & 1023;
             if (!xword && on_line > 1)
                 break;
             int x = xword - 128, sy = line - y;
@@ -589,7 +581,7 @@ static int window_band_edge(const GVDP *v, int line, const uint32_t *native,
     for (int i = 0; i < 8; ++i) {
         int x = edge + step * i;
         if (!window_at(v, line, x)) return 0;
-        unsigned attr = word(v->vram, base + ((line / 8) * 32 + x / 8) * 2);
+        unsigned attr = tg2_word(v->vram, base + ((line / 8) * 32 + x / 8) * 2);
         if (!(attr & 0x8000)) return 0;
         unsigned px = x & 7, py = line & 7;
         if (attr & 0x800) px ^= 7;
@@ -676,10 +668,12 @@ static unsigned weather_pixel(const GVDP *v, int line, int nx,
     unsigned attr, ap = pixel(v, ba, nx - ha, y, &attr);
     return (attr & 0x8000) ? ap : 0;
 }
+#ifdef GEN_ENABLE_TRACE
 /* Private per-line margin evidence, before sprites and HUD relocation.
  * Audits every presented picture, synthesized included. */
 static FILE *margin_audit;
 static int margin_audit_checked;
+
 static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                           int nw, const uint32_t *out, int w) {
     if (reference_pass) return; /* evidence pass is not another presented row */
@@ -696,7 +690,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
     unsigned hbase = (v->reg[13] & 63) << 10;
     int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
-    int ha = word(v->vram, hbase + hi * 4) & 1023, hb = word(v->vram, hbase + hi * 4 + 2) & 1023;
+    int ha = tg2_word(v->vram, hbase + hi * 4) & 1023, hb = tg2_word(v->vram, hbase + hi * 4 + 2) & 1023;
     int va = v->vsram[0] & 1023, vb = v->vsram[1] & 1023;
     int origin = (w - nw) / 2;
     for (int side = 0; side < 2; ++side) {
@@ -718,7 +712,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         fprintf(margin_audit, "%llu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%u,%d,%d,%d,%d,%d,%u\n",
                 (unsigned long long)present_frame, line, side, native[edge],
                 out[origin + (side ? nw : -1)], ap, aa, bp, ab,
-                v->reg[7] & 63, (line + vb) & 511, (int16_t)word(g_ram, 0x18E0), mb,
+                v->reg[7] & 63, (line + vb) & 511, (int16_t)tg2_word(g_ram, 0x18E0), mb,
                 genesis_dac_cram_to_argb(v->cram[bp ? bp : v->reg[7] & 63], 0),
                 solid, window_band_edge(v, line, native, nw, side), backdrop,
                 plane_a_edge_run(v, line, ha, va, ba, nw, side),
@@ -728,6 +722,7 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
     }
     if (line == 223) fflush(margin_audit);
 }
+#endif
 static int synthesizing, audit_race_frame;
 /* The last picture was a qualified single-player race (set on its first row).
  * The presented-height builder and the test provider use it, not a re-check
@@ -741,6 +736,7 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
                             uint32_t *out, int w);
 static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
                                uint32_t *out, int w);
+#ifdef GEN_ENABLE_TRACE
 /* ---- Evidence capture for the carousel CONTROL row (dev only) -----------
  * TG2_CONTROL_CAPTURE=<path> writes one line per presented picture with the
  * non-backdrop pixel count of the three rectangles where the removed CONTROL
@@ -759,7 +755,7 @@ static int control_counts[3], control_pieces, control_rowlist, control_twop;
 static unsigned long long control_capture_frames;
 
 /* The CONTROL row's four pieces are the 32x16 sprites whose SAT tiles are
- * exactly 0x157, 0x15F, 0x167 and 0x16F (the 0x2000 in the attribute word is
+ * exactly 0x157, 0x15F, 0x167 and 0x16F (the 0x2000 in the attribute tg2_word is
  * the priority bit). The row highlight's tiles start at 0x173, so match the
  * exact set. Count them in the live display list, so a run can prove the
  * pieces never reach the SAT. */
@@ -769,7 +765,7 @@ static int control_sprites_in_sat(const GVDP *v) {
     int link = 0, count = 0;
     for (int n = 0; n < 80; ++n) {
         unsigned e = sat + (unsigned)link * 8;
-        unsigned tile = word(v->vram, e + 4) & 0x7FFu;
+        unsigned tile = tg2_word(v->vram, e + 4) & 0x7FFu;
         for (int t = 0; t < 4; ++t)
             if (tile == k_control_tiles[t]) { ++count; break; }
         int next = v->vram[(e + 3) & 0xFFFF] & 0x7F;
@@ -791,9 +787,9 @@ static void control_capture_row(const GVDP *v, int line, int nw, int w,
     if (line == 0) {
         memset(control_counts, 0, sizeof control_counts);
         control_pieces = nw == 256 ? control_sprites_in_sat(v) : 0;
-        control_rowlist = word(g_ram, 0x2554) == 0x00B4u &&
-                          word(g_ram, 0x2556) == 0;
-        control_twop = word(g_ram, 0x189E) != 0;
+        control_rowlist = tg2_word(g_ram, 0x2554) == 0x00B4u &&
+                          tg2_word(g_ram, 0x2556) == 0;
+        control_twop = tg2_word(g_ram, 0x189E) != 0;
     }
     if (nw == 256) {
         int origin = (w - nw) / 2;
@@ -816,11 +812,14 @@ static void control_capture_row(const GVDP *v, int line, int nw, int w,
         ++control_capture_frames;
     }
 }
+#endif
 static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int nw, uint32_t *out,
                      int w) {
     render_scanline(v, line, native, nw, out, w);
     note_crop_row(line, out, w);
+#ifdef GEN_ENABLE_TRACE
     control_capture_row(v, line, nw, w, out);
+#endif
 }
 /* S3: a render scale above 1 presents an N x canvas whose content is the 1x
  * picture scaled by nearest in both axes. The road rows are then repainted at
@@ -832,7 +831,7 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     int scale = tg2_highres_scale();
     /* A wide native menu/2P canvas can also be divisible by N and wider
      * than nw*N. Dimensions alone do not make it an N x race picture. */
-    if (scale > 1 && (nw != 256 || !race(v))) scale = 1;
+    if (scale > 1 && (nw != 256 || !tg2_race_picture(v))) scale = 1;
     if (scale <= 1 || w % scale || w / scale < nw) {
         render_scanline_1x(v, line, native, nw, out, w);
         return;
@@ -889,7 +888,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     int origin = (w - nw) / 2;
     pa_extend_mask = 0;
     if (!line) {
-        audit_race_frame = nw == 256 && race(v);
+        audit_race_frame = nw == 256 && tg2_race_picture(v);
         last_frame_race = audit_race_frame;
         /* Overscan can return before the first visible race row. Select the
          * displayed SAT now at 1x too, so 60-fps Off retains margin sprites. */
@@ -902,11 +901,13 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         crop_top_rows = 0;
         crop_bottom_ok = 1;
     }
+#ifdef GEN_ENABLE_TRACE
     if (line < 8) {
         memcpy(top_rows[line].reg, v->reg, sizeof top_rows[line].reg);
         memcpy(top_rows[line].vsram, v->vsram, sizeof top_rows[line].vsram);
         memcpy(top_rows[line].cram, v->cram, sizeof top_rows[line].cram);
     }
+#endif
     if (!line) {
         frame_margin_pixels = 0;
         hud_plane_pixels = hud_marker_pixels = hud_sprite_pixels = 0;
@@ -920,15 +921,21 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     if (tg2_video_get_hide_overscan() && line < 8 &&
         window_at(v, line, 0) && window_at(v, line, nw - 1)) {
         if (!reference_pass) ++crop_top_rows;
+
+#ifdef GEN_ENABLE_TRACE
         if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
+#endif
         return;
     }
-    if (!race(v) || !(v->reg[1] & 64)) {
+    if (!tg2_race_picture(v) || !(v->reg[1] & 64)) {
         if (!reference_pass) ++native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
         if (audit_race_frame) {
             window_margins(v, line, native, nw, out, w);
+
+#ifdef GEN_ENABLE_TRACE
             audit_margins(v, line, native, nw, out, w);
+#endif
         }
         return;
     }
@@ -936,7 +943,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
     unsigned hbase = (v->reg[13] & 63) << 10;
     int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
-    int ha = word(v->vram, hbase + hi * 4) & 1023, hb = word(v->vram, hbase + hi * 4 + 2) & 1023;
+    int ha = tg2_word(v->vram, hbase + hi * 4) & 1023, hb = tg2_word(v->vram, hbase + hi * 4 + 2) & 1023;
     int va = v->vsram[0] & 1023, vb = v->vsram[1] & 1023;
     rows[line].ha = ha;
     rows[line].hb = hb;
@@ -966,7 +973,10 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     unsigned window_mask = window_margins(v, line, native, nw, out, w);
     plane_a_margins(v, line, native, nw, pal, out, w, ha, va, ba);
     if (actor_occluder) for(int x=0;x<w;++x) if((x<origin && ((window_mask|pa_extend_mask)&1)) || (x>=origin+nw && ((window_mask|pa_extend_mask)&2))) actor_occluder[x]=1;
+
+#ifdef GEN_ENABLE_TRACE
     if (audit_race_frame) audit_margins(v, line, native, nw, out, w);
+#endif
     /* Reverse allocation order matches the native backward SAT builder. */
     static unsigned char covered[4096];
     memset(covered, 0, sizeof covered);
@@ -1073,6 +1083,7 @@ static Scene mixed_scene;
 /* Optional read-only qualification stream. Each row owns three complete
  * plane-B index strips: the two real endpoints and the actual presented row.
  * Export before sprites/HUD so occlusion cannot hide broken road topology. */
+#ifdef GEN_ENABLE_TRACE
 static FILE *road_audit;
 static void audit_u32(unsigned value) {
     unsigned char bytes[4] = {value, value >> 8, value >> 16, value >> 24};
@@ -1092,12 +1103,14 @@ static void audit_begin(void) {
         1024, 140, 73};
     for (unsigned i = 0; i < sizeof header / sizeof *header; ++i) audit_u32(header[i]);
 }
+#endif
 static unsigned hscroll(const GVDP *v, int line, int plane) {
     unsigned base = (v->reg[13] & 63) << 10;
     int mode = v->reg[11] & 3;
     int y = mode == 0 ? 0 : mode == 2 ? line & ~7 : line;
-    return word(v->vram, base + y * 4 + plane * 2) & 1023;
+    return tg2_word(v->vram, base + y * 4 + plane * 2) & 1023;
 }
+#ifdef GEN_ENABLE_TRACE
 static void audit_row(int line, const GVDP *a, const GVDP *b, const GVDP *image,
                       int image_hs) {
     if (!road_audit || line < 140 || line > 212) return;
@@ -1123,6 +1136,7 @@ static void audit_row(int line, const GVDP *a, const GVDP *b, const GVDP *image,
         }
     }
 }
+#endif
 static void presentation_clear(void) {
     if (pictures)
         for (int i = 0; i < PRESENT_HISTORY; ++i) pictures[i].valid = 0;
@@ -1131,7 +1145,9 @@ static void presentation_clear(void) {
     picture_key = 0;
 }
 void tg2_video_frame(uint64_t frame, int on) {
+#ifdef GEN_ENABLE_TRACE
     if (road_audit) { fclose(road_audit); road_audit = NULL; }
+#endif
     if (on != race60 || frame < present_frame) presentation_clear();
     race60 = on;
     present_frame = frame;
@@ -1166,14 +1182,14 @@ static void mix_sprites(GVDP *out, const GVDP *b) {
     int ia = 0;
     for (int n = 0; n < 64; ++n) {
         unsigned a = sa + ia * 8;
-        int ax = (word(out->vram, a + 6) & 511), ay = word(out->vram, a) & 1023;
+        int ax = (tg2_word(out->vram, a + 6) & 511), ay = tg2_word(out->vram, a) & 1023;
         int ib = 0, best = -1, distance = 4096;
         for (int k = 0; k < 64; ++k) {
             unsigned q = sb + ib * 8;
-            if (!used[ib] && word(out->vram, a + 4) == word(b->vram, q + 4) &&
+            if (!used[ib] && tg2_word(out->vram, a + 4) == tg2_word(b->vram, q + 4) &&
                 out->vram[(a + 2) & 65535] == b->vram[(q + 2) & 65535]) {
-                int d = abs(ax - (int)(word(b->vram, q + 6) & 511)) +
-                        abs(ay - (int)(word(b->vram, q) & 1023));
+                int d = abs(ax - (int)(tg2_word(b->vram, q + 6) & 511)) +
+                        abs(ay - (int)(tg2_word(b->vram, q) & 1023));
                 if (d < distance) { best = ib; distance = d; }
             }
             ib = b->vram[(q + 3) & 65535] & 127;
@@ -1184,12 +1200,12 @@ static void mix_sprites(GVDP *out, const GVDP *b) {
             unsigned q = sb + best * 8;
             if (sprite_undo_count < 64) {
                 sprite_undo_addr[sprite_undo_count] = a;
-                sprite_undo_y[sprite_undo_count] = word(out->vram, a);
-                sprite_undo_x[sprite_undo_count] = word(out->vram, a + 6);
+                sprite_undo_y[sprite_undo_count] = tg2_word(out->vram, a);
+                sprite_undo_x[sprite_undo_count] = tg2_word(out->vram, a + 6);
                 ++sprite_undo_count;
             }
-            put_word(out->vram, a, mix_wrap(ay, word(b->vram, q) & 1023, 1023));
-            put_word(out->vram, a + 6, mix_wrap(ax, word(b->vram, q + 6) & 511, 511));
+            put_word(out->vram, a, mix_wrap(ay, tg2_word(b->vram, q) & 1023, 1023));
+            put_word(out->vram, a + 6, mix_wrap(ax, tg2_word(b->vram, q + 6) & 511, 511));
         }
         ia = out->vram[(a + 3) & 65535] & 127;
         if (!ia || ia >= 64) break;
@@ -1263,7 +1279,7 @@ static void presentation_begin(const GVDP *v) {
     capture_picture = 0;
     if (!pictures) pictures = calloc(PRESENT_HISTORY, sizeof *pictures);
     if (!pictures) return;
-    unsigned key = read32(0xFF231E);
+    unsigned key = tg2_mem32(0xFF231E);
     if (key != picture_key || !pictures[picture_index].valid) {
         picture_key = key;
         picture_index = (picture_index + 1) % PRESENT_HISTORY;
@@ -1294,7 +1310,9 @@ static void presentation_begin(const GVDP *v) {
     mix_pieces(mix_reverse ? &to_picture->scene : &from_picture->scene,
                mix_reverse ? &from_picture->scene : &to_picture->scene);
     mix_reverse = 0;
+#ifdef GEN_ENABLE_TRACE
     audit_begin();
+#endif
 }
 static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                      uint32_t *out, int w) {
@@ -1303,7 +1321,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
         from_picture = to_picture = NULL;
         /* An overdue frame is not presented: skip the whole synthesis so the
          * guest tick can be repaid sooner. Guest rendering is unaffected. */
-        if (race60 && !genesis_frame_overdue() && nw == 256 && race(v)) presentation_begin(v);
+        if (race60 && !genesis_frame_overdue() && nw == 256 && tg2_race_picture(v)) presentation_begin(v);
     }
     /* Capture every row of an eligible picture, including transient raster
      * bands that use the original row producer below. */
@@ -1311,7 +1329,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
         pictures[picture_index].row[line] = *v;
         pictures[picture_index].road[line] = road_geometry(v, line);
     }
-    if (!race60 || line >= PRESENT_ROWS || nw != 256 || !race(v) || !from_picture ||
+    if (!race60 || line >= PRESENT_ROWS || nw != 256 || !tg2_race_picture(v) || !from_picture ||
         genesis_frame_overdue()) {
         draw_scanline(v, line, native, nw, out, w);
         return;
@@ -1324,7 +1342,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
      * the two edits below. Copying the complete VDP state per presented
      * scanline cost ~66 KiB x 224 = 14.8 MiB of memory traffic every frame at
      * 60 fps (and evicted the very VRAM the renderer then reads); the undo
-     * log is at most 64 sprite entries plus one scroll word. */
+     * log is at most 64 sprite entries plus one scroll tg2_word. */
     GVDP *row_vdp = (GVDP *)source;
     /* VSRAM selects a row in one of four authored road atlases, carrying
      * width, stripe phase, palette bank and ground type together. Keep that
@@ -1368,7 +1386,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     int hm = row_vdp->reg[11] & 3;
     int hy = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
     unsigned scroll_slot = base + hy * 4 + 2;
-    unsigned scroll_saved = word(row_vdp->vram, scroll_slot);
+    unsigned scroll_saved = tg2_word(row_vdp->vram, scroll_slot);
     put_word(row_vdp->vram, scroll_slot, hs);
     sprite_undo_count = 0;
     mix_reverse = nearer_b;
@@ -1402,7 +1420,9 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
         put_word(row_vdp->vram, sprite_undo_addr[i] + 6, sprite_undo_x[i]);
     }
     /* Endpoint snapshots must read as real pictures in the audit export. */
+#ifdef GEN_ENABLE_TRACE
     audit_row(line, a, b, row_vdp, (int)hs);
+#endif
 }
 /* Engine seam (patch 0033): called once per completed picture, after every
  * native row was produced and before the presented-window crop. Only a
@@ -1447,6 +1467,7 @@ static int present_window(int native_w, int native_h, int *first, int *last) {
     }
     return crop;
 }
+#ifdef GEN_ENABLE_TRACE
 void tg2_video_command(int id, const char *json) {
     char out[22000];
     int n = snprintf(out, sizeof out,
@@ -1569,10 +1590,11 @@ void tg2_video_highres_command(int id, const char *json) {
     cmd_send_response(out);
     free(out);
 }
+#endif
 /* Reuse the framework's immutable presented-row seam; sprite/status work is
  * not repeated on the live VDP. Off uses exactly the legacy row producer. */
 static int filter_raster_enabled(const GVDP *v) {
-    return tg2_highres_scale()>1 && race(v);
+    return tg2_highres_scale()>1 && tg2_race_picture(v);
 }
 static void scanline_presented(const GVDP *v, int line, int nw, uint32_t *out,
                                int w, GameVideoNativeRow native_row, void *ctx,

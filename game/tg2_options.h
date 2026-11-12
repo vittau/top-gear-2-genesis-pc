@@ -28,6 +28,12 @@ int tg2_options_save(const char *settings_path);
 /* Research/probe overrides (never persisted): TG2_RACE_60FPS. */
 void tg2_options_apply_env(void);
 
+/* Keep the registry synchronized with the native RACE SOUND page. */
+void tg2_options_race_sound_changed(int mode);
+
+struct RecompLauncherCModProvider;
+const struct RecompLauncherCModProvider *tg2_mods(const struct RecompLauncherCModProvider *base);
+
 /* Live value of the 60 fps race option (0/1). */
 int tg2_race60_requested(void);
 

@@ -26,33 +26,18 @@
  * in the ROM or in generated C is modified.
  */
 #include "genesis_runtime.h"
+#include "tg2_race.h"
+#include "tg2_memory.h"
 #include "game_spec.h"
 #include "genesis_machine.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* game/tg2_options.c: the RACE SOUND choice is a player option. */
-extern void tg2_options_race_sound_changed(int mode);
-
-/* engine/runner/audio/event_queue.h: writer-routed second virtual chip. On in
- * BOTH only, so stock MUSIC/SFX keep the single chip and stay byte-identical. */
-void audio_set_chip_routing(int dual);
-/* Second Z80 core for the race SFX PCM image, and the 68K-access routing
- * predicate that keeps its upload off the resident music driver. */
-void audio_second_z80_set_enabled(int on);
-/* Mirrors the engine's audio/event_queue.h contract (the game file does not
- * include engine-internal headers). */
-enum {
-    AUDIO_Z80_ACCESS_RAM = 0,
-    AUDIO_Z80_ACCESS_BUSREQ = 1,
-    AUDIO_Z80_ACCESS_RESET = 2
-};
-typedef int (*AudioZ80RouteFn)(int access, uint16_t off, uint8_t value);
-void audio_set_z80_route_fn(AudioZ80RouteFn fn);
-/* Which program the first Z80 core runs, for the Music/SFX volume split
- * (engine/runner/audio/event_queue.h). */
-void audio_set_first_z80_is_sfx(int is_sfx);
+#include "tg2_audio.h"
+#include "tg2_options.h"
+#include "audio/event_queue.h"
+#include "chip_trace.h"
 
 /* Work-RAM addresses (see docs/RAM_MAP.md / docs/AUDIO.md). */
 #define RAM_SOUND_MODE   0x240Eu   /* word: 0 = SFX, 1 = MUSIC            */
@@ -76,12 +61,6 @@ static int s_patched;               /* present/restore nesting depth */
 #define PATCH_DEPTH 8
 static uint16_t s_patch_stack[PATCH_DEPTH];
 
-static uint16_t ram_read16(uint32_t addr)
-{
-    uint16_t o = (uint16_t)(addr & 0xFFFFu);
-    return (uint16_t)((g_ram[o] << 8) | g_ram[(uint16_t)(o + 1)]);
-}
-
 static void ram_write16(uint32_t addr, uint16_t v)
 {
     uint16_t o = (uint16_t)(addr & 0xFFFFu);
@@ -101,13 +80,6 @@ static int both_active(void)
     return s_applied == TG2_SOUND_BOTH;
 }
 
-/* A race installs its own V-int vector at $FF01EE; while it is live, routing
- * and the BOTH policy layer are frozen at the mode the race started with. */
-static int race_running(void)
-{
-    return ram_read16(0xFF0000u + 0x01EEu) == 0x4714u;
-}
-
 /* Push the applied mode into the engine (routing, second core, Z80 routing). */
 static int z80_route(int access, uint16_t off, uint8_t value);
 static int second_z80_runs_sfx_image(void);
@@ -121,7 +93,7 @@ static void apply_mode(void)
 /* Adopt the player's choice when nothing is running on the old one. */
 static void adopt_mode(void)
 {
-    if (race_running()) return;
+    if (tg2_race_audio_policy_frozen()) return;
     s_applied = s_mode;
     apply_mode();
 }
@@ -135,14 +107,16 @@ static void adopt_mode(void)
  * upload overwrites all 8 KB and pulses the Z80 reset). The predicate is the
  * game's, so the engine's stock paths are untouched when BOTH is off. */
 static int s_sfx_upload;            /* 68K is inside the SFX image upload   */
+#ifdef GEN_ENABLE_TRACE
 static FILE *s_pcm_log;
+#endif
 
 /* Env-gated command trace: every SFX-engine sample command, in every sound
  * mode, straight from the writer's registers. Used to prove the BOTH command
  * stream is SOUND EFFECTS'. */
 static void sfx_cmd_log(uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3)
 {
-    extern unsigned long g_snd_frame;
+#ifdef GEN_ENABLE_TRACE
     if (!s_pcm_log) {
         const char *p = getenv("GENESIS_AUDIO_SFXPCM_TRACE");
         if (!p || !*p) return;
@@ -153,6 +127,9 @@ static void sfx_cmd_log(uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3)
     fprintf(s_pcm_log, "%lu %u %u %u %u\n", g_snd_frame,
             d0 & 0xFFu, d1 & 0xFFu, d2 & 0xFFu, d3 & 0xFFu);
     fflush(s_pcm_log);
+#else
+    (void)d0; (void)d1; (void)d2; (void)d3;
+#endif
 }
 
 static int z80_route(int access, uint16_t off, uint8_t value)
@@ -216,7 +193,7 @@ static int second_z80_runs_sfx_image(void)
 static void present_value(uint16_t want)
 {
     if (!both_active()) return;
-    uint16_t cur = ram_read16(0xFF0000u + RAM_SOUND_MODE);
+    uint16_t cur = tg2_ram16(0xFF0000u + RAM_SOUND_MODE);
     if (s_patched < PATCH_DEPTH) s_patch_stack[s_patched++] = cur;
     if (cur != want) ram_write16(0xFF0000u + RAM_SOUND_MODE, want);
 }
@@ -225,7 +202,7 @@ static void restore_value(void)
 {
     if (s_patched <= 0) return;
     uint16_t prev = s_patch_stack[--s_patched];
-    if (ram_read16(0xFF0000u + RAM_SOUND_MODE) != prev)
+    if (tg2_ram16(0xFF0000u + RAM_SOUND_MODE) != prev)
         ram_write16(0xFF0000u + RAM_SOUND_MODE, prev);
 }
 
@@ -239,7 +216,7 @@ static void present_music(void) { present_value(1); }   /* music-side read */
 static void present_session_value(void)
 {
     uint16_t want = (uint16_t)(s_mode == TG2_SOUND_SFX ? 0 : 1);
-    uint16_t cur = ram_read16(0xFF0000u + RAM_SOUND_MODE);
+    uint16_t cur = tg2_ram16(0xFF0000u + RAM_SOUND_MODE);
     if (s_patched < PATCH_DEPTH) s_patch_stack[s_patched++] = cur;
     if (cur != want) ram_write16(0xFF0000u + RAM_SOUND_MODE, want);
 }
@@ -261,12 +238,12 @@ static int menu_value_handler(void)
     /* The page must show the session's choice even when the cartridge word is
      * stale: a fresh boot with BOTH persisted, or a guest reset, leaves the
      * word at the boot value 0 while the host mode is BOTH. */
-    uint16_t page = ram_read16(a4 + 0x0Cu);
+    uint16_t page = tg2_ram16(a4 + 0x0Cu);
     if (page > 1) page = 1;            /* never trust an out-of-range value */
     if (both_active() && page != 1u) {
         page = 1;
         ram_write16(a4 + 0x0Cu, page);
-        ram_write16(a4 + 0x02u, (uint16_t)(ram_read16(a4 + 0x02u) + 1));
+        ram_write16(a4 + 0x02u, (uint16_t)(tg2_ram16(a4 + 0x02u) + 1));
         ram_write16(a4 + 0x18u, 2);
     }
 
@@ -308,7 +285,7 @@ static int menu_value_handler(void)
         s_mode = mode;
         tg2_options_race_sound_changed(mode);
         ram_write16(a4 + 0x0Cu, page_value());
-        ram_write16(a4 + 0x02u, (uint16_t)(ram_read16(a4 + 0x02u) + 1));
+        ram_write16(a4 + 0x02u, (uint16_t)(tg2_ram16(a4 + 0x02u) + 1));
         ram_write16(a4 + 0x18u, 2);
     }
     g_cpu.D[0] = 0;
@@ -462,10 +439,10 @@ static int value_cols(struct col *cols)
     for (int i = 0; i < 80; i++) {
         unsigned e = sat + (unsigned)i * 8u;
         if (e + 7u >= 0x10000u) break;
-        uint16_t w0 = (uint16_t)((vram[e] << 8) | vram[e + 1]);
+        uint16_t w0 = (uint16_t)tg2_word(vram, e);
         uint8_t  sz = vram[e + 2];
-        uint16_t w2 = (uint16_t)((vram[e + 4] << 8) | vram[e + 5]);
-        uint16_t w3 = (uint16_t)((vram[e + 6] << 8) | vram[e + 7]);
+        uint16_t w2 = (uint16_t)tg2_word(vram, e + 4);
+        uint16_t w3 = (uint16_t)tg2_word(vram, e + 6);
         unsigned y = w0 & 0x3FFu;
         unsigned x = w3 & 0x1FFu;
         unsigned tile = w2 & 0x7FFu;
@@ -632,7 +609,7 @@ void tg2_audio_reset(void)
     /* A guest reset reboots the cartridge (no race running, so the player's
      * selection applies); a state loaded mid-race keeps the routing that race
      * was running, because the restored chip state belongs to it. */
-    if (!race_running()) s_applied = s_mode;
+    if (!tg2_race_audio_policy_frozen()) s_applied = s_mode;
     apply_mode();
     /* A guest reset reboots the cartridge, whose init re-uploads the music
      * driver; a state load restores the Z80 RAM and the per-frame check
@@ -642,7 +619,7 @@ void tg2_audio_reset(void)
 
 static int race_sound_page_open(void)
 {
-    return ram_read16(0xFF0000u + RAM_MENU_PAGE) == RACE_SOUND_PAGE;
+    return tg2_ram16(0xFF0000u + RAM_MENU_PAGE) == RACE_SOUND_PAGE;
 }
 
 void tg2_frame_post(uint64_t frame_count)

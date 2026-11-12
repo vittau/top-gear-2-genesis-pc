@@ -16,6 +16,7 @@
  */
 #include "tg2_highres.h"
 #include "tg2_actors.h"
+#include "tg2_memory.h"
 
 #include "app_config.h"
 #include "video/genesis_vdp.h"
@@ -26,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef GEN_ENABLE_TRACE
 #if defined(_WIN32)
 #include <windows.h>
 static double highres_now_us(void) {
@@ -44,6 +46,10 @@ static double highres_now_us(void) {
 }
 #endif
 
+#else
+static double highres_now_us(void) { return 0; }
+#endif
+
 /* Source art and explicit plane/sprite coverage. Only Linear On captures it;
  * Off keeps the accepted S3 colour-mask and nearest expansion unchanged. */
 static uint32_t s_native_rgb[TG2_HIGHRES_ROWS][4096];
@@ -60,14 +66,20 @@ unsigned tg2_highres_filter_incomplete(void) { return s_filter_incomplete; }
 static unsigned char s_actor_occluder[TG2_HIGHRES_ROWS][4096];
 static unsigned short s_actor_front[TG2_HIGHRES_ROWS][4096];
 static unsigned char s_actor_row_ok[TG2_HIGHRES_ROWS];
+#ifdef GEN_ENABLE_TRACE
 static uint32_t s_reference[TG2_HIGHRES_ROWS][4096];
+#endif
 void tg2_highres_capture_actors(int line,const unsigned char *foreground,
     const unsigned char *occluder,const unsigned short *front,
     const uint32_t *reference,int width,int actor_free) {
     if(line<0 || line>=TG2_HIGHRES_ROWS || width>4096)return;
     memcpy(s_actor_occluder[line],occluder,width);
     memcpy(s_actor_front[line],front,width*sizeof *front);
+#ifdef GEN_ENABLE_TRACE
     if(tg2_highres_native_dump_active()) memcpy(s_reference[line],reference,width*sizeof *reference);
+#else
+    (void)reference;
+#endif
     s_actor_row_ok[line]=actor_free && tg2_highres_row_serial()[line]==tg2_highres_serial();
 }
 
@@ -96,6 +108,7 @@ int tg2_highres_scale(void) {
 
 /* ── Cost measurement (only with TG2_HIGHRES_TIMING=1) ───────────────────── */
 
+#ifdef GEN_ENABLE_TRACE
 static int s_timing = -1;
 static double s_clock_overhead;
 
@@ -117,6 +130,11 @@ static int highres_timing(void) {
     return s_timing;
 }
 
+#else
+static const double s_clock_overhead = 0;
+static int highres_timing(void) { return 0; }
+#endif
+
 /* ── Compact per-row capture (S1/S3) ─────────────────────────────────────── */
 
 static Tg2RowState s_rows[TG2_HIGHRES_ROWS];
@@ -133,9 +151,6 @@ static unsigned s_build_frames;
  * ones docs/HIGHRES.md §1.4 measured and tg2_video.c draws. */
 static int tile_count(int n) { return n == 1 ? 64 : n == 3 ? 128 : 32; }
 
-static unsigned plane_word(const GVDP *v, unsigned address) {
-    return (v->vram[address & 65535] << 8) | v->vram[(address + 1) & 65535];
-}
 
 /* Road silhouette palette nibbles, measured in docs/HIGHRES.md §1.4:
  * 6 = border, 13 = lane mark, 14 = asphalt. */
@@ -165,7 +180,7 @@ static void atlas_row(const GVDP *v, const Tg2RowState *r, int py,
     int wt = tile_count(r->reg[16] & 3), ht = tile_count((r->reg[16] >> 4) & 3);
     unsigned line = base + (unsigned)(((py >> 3) & (ht - 1)) * wt) * 2;
     for (int tx = -32; tx < 32; ++tx) {
-        unsigned a = plane_word(v, line + (unsigned)(tx & (wt - 1)) * 2);
+        unsigned a = tg2_word(v->vram, line + (unsigned)(tx & (wt - 1)) * 2);
         unsigned ty = (unsigned)py & 7;
         if (a & 0x1000) ty ^= 7;
         const unsigned char *data = &v->vram[((a & 2047) * 32 + ty * 4) & 65535];
@@ -443,6 +458,7 @@ static int same_structure(const RoadRuns *a, const RoadRuns *b) {
  * preserved by construction; a sprite texel whose colour coincides with the
  * scenery underneath is the one false positive. */
 static unsigned char s_terrain[4096];
+#ifdef GEN_ENABLE_TRACE
 /* The colour the row's own atlas runs put at each 1x column (audit only). */
 static uint32_t s_model[4096];
 
@@ -645,6 +661,7 @@ static void nx_audit_write(uint64_t frame, int scale, int w1, int native_w) {
     fclose(f);
 }
 
+#endif
 /* Everything about a road row that does not depend on the sub-row. */
 typedef struct {
     const RoadRuns *runs;
@@ -676,13 +693,21 @@ static void build_terrain(int src, const RowPlan *p, int origin, int native_w,
         if (x < -256 || x > 255) {
             /* Inside the native picture the VDP wraps the plane there; the
              * margins continue the clamped exterior (tg2_video's road_x()). */
-            if (native) { s_terrain[u] = 0; s_model[u] = row[u * scale]; continue; }
+            if (native) {
+                s_terrain[u] = 0;
+#ifdef GEN_ENABLE_TRACE
+                s_model[u] = row[u * scale];
+#endif
+                continue;
+            }
             x = x < -256 ? -256 : 255;
         }
         while (run + 1 < runs->count && runs->start[run + 1] <= x) ++run;
         s_terrain[u] = row[u * scale] == p->colour[run] &&
             !(s_native_serial[src] == s_serial && s_native_foreground[src][u]);
+#ifdef GEN_ENABLE_TRACE
         s_model[u] = p->colour[run];
+#endif
     }
 }
 
@@ -770,6 +795,7 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
         }
     }
 
+#ifdef GEN_ENABLE_TRACE
     if (s_audit) {
         NxAuditRow *a = &s_audit[s_audit_count++];
         memset(a, 0, sizeof *a);
@@ -800,12 +826,14 @@ static void paint_road_row(int src, int j, int scale, int w1, int native_w,
         nx_measure(a, runs, p->colour, row, native_row, scale, w1, origin, native_w,
                    (int)ceil(moved) + 1, m->centre, q);
     }
+#endif
 }
 
 /* Qualification only: while a path is set, every built picture also writes
  * its native (1x) canvas there as a binary PPM, so a check can compare the
  * very same frame at 1x and at N x. Set over TCP (tg2_highres {"dump":"path"});
  * an empty path stops it. */
+#ifdef GEN_ENABLE_TRACE
 static char s_dump_path[1024];
 
 int tg2_highres_native_dump_active(void) { return s_dump_path[0] != 0; }
@@ -827,12 +855,17 @@ static void native_dump(const uint32_t *pixels, int stride, int scale, int w1, i
     fclose(f);
 }
 
+#endif
 /* Bilinear RGB on native art, with premultiplied binary layer coverage.
  * The analytic road is the destination, never a source of this filter. A
  * footprint containing only plane B leaves the road byte-identical. */
 static void filter_native(uint32_t *pixels, int stride, int w1, int scale,
                           int first, int last, FILE *coverage) {
+#ifdef GEN_ENABLE_TRACE
     unsigned char mask_row[4096];
+#else
+    (void)coverage;
+#endif
     int den = 2 * scale, area = den * den;
     for (int y = first * scale; y < last * scale; ++y) {
         int sy = y / scale, fy = 2 * (y % scale) + 1 - scale;
@@ -850,7 +883,9 @@ static void filter_native(uint32_t *pixels, int stride, int w1, int scale,
             int w01 = (den - fx) * fy * a1[x0];
             int w11 = fx * fy * a1[x1];
             int alpha = w00 + w10 + w01 + w11;
+#ifdef GEN_ENABLE_TRACE
             if (coverage) mask_row[x] = (unsigned char)((alpha * 255 + area / 2) / area);
+#endif
             if (!alpha) continue;
             uint32_t c00 = r0[x0], c10 = r0[x1], c01 = r1[x0], c11 = r1[x1];
             uint32_t out = 0xFF000000, under = row[x];
@@ -862,7 +897,9 @@ static void filter_native(uint32_t *pixels, int stride, int w1, int scale,
             }
             row[x] = out;
         }
+#ifdef GEN_ENABLE_TRACE
         if (coverage) fwrite(mask_row, 1, (size_t)w1 * scale, coverage);
+#endif
     }
 }
 
@@ -880,11 +917,13 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
     double started = timing ? highres_now_us() : 0;
     int origin = (w1 - native_w) / 2;
 
+#ifdef GEN_ENABLE_TRACE
     if (nx_audit_dir() && !s_audit)
         s_audit = malloc(sizeof *s_audit * TG2_HIGHRES_ROWS * TG2_HIGHRES_MAX_SCALE);
     s_audit_count = 0;
     if (s_dump_path[0])
         native_dump(pixels, stride, scale, w1, native_h);
+#endif
     model_road(origin, native_h);
     int filtered = tg2_highres_linear_filter();
     if (filtered) {
@@ -932,14 +971,18 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
          * completed-frame capture number (the simulation tick is zero-based).
          * Stream rows; no full-frame diagnostic allocation or normal I/O. */
         FILE *coverage = NULL;
+#ifdef GEN_ENABLE_TRACE
         const char *mask_frame = getenv("TG2_HIGHRES_FILTER_MASK_FRAME");
         const char *mask_path = getenv("TG2_HIGHRES_FILTER_MASK_PATH");
         if (mask_frame && mask_path && strtoull(mask_frame, NULL, 10) == frame + 1) {
             coverage = fopen(mask_path, "wb");
             if (coverage) fprintf(coverage, "P5\n%d %d\n255\n", width, (last - first) * scale);
         }
+#endif
         filter_native(pixels, stride, w1, scale, first, last, coverage);
+#ifdef GEN_ENABLE_TRACE
         if (coverage) fclose(coverage);
+#endif
         ++s_filtered_frames;
     }
     const unsigned char *occluder[TG2_HIGHRES_ROWS];
@@ -947,7 +990,9 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
     for(int y=0;y<native_h;++y){occluder[y]=s_actor_occluder[y];front[y]=s_actor_front[y];}
     Tg2ActorCanvas actors={pixels,stride,width,scale,w1,origin,native_h,occluder,front,s_actor_row_ok,s_rows};
     tg2_actors_paint(&actors);
+#ifdef GEN_ENABLE_TRACE
     nx_audit_write(frame, scale, w1, native_w);
+#endif
     ++s_build_frames;
     if (timing) {
         double elapsed = highres_now_us() - started - s_clock_overhead;

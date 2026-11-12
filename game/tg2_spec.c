@@ -8,14 +8,13 @@
 #include "tg2_icon.h"
 #include "tg2_controls.h"
 #include "genesis_runtime.h"
+#include "tg2_race.h"
 #include "tg2_video.h"
 #include "tg2_options.h"
-extern int tg2_audio_hook(uint32_t pc);
-extern void tg2_audio_reset(void);
-extern void tg2_frame_post(uint64_t frame_count);
-extern void tg2_audio_frame_pre(void);
-struct RecompLauncherCModProvider;
-const struct RecompLauncherCModProvider *tg2_mods(const struct RecompLauncherCModProvider *base);
+#include "tg2_audio.h"
+#include <stdio.h>
+#include <string.h>
+#ifdef GEN_ENABLE_TRACE
 static void tg2_password_trace_command(int id, const char *json);
 static const GameDebugCommand commands[] = {
     {"tg2_password_trace", tg2_password_trace_command},
@@ -24,8 +23,6 @@ static const GameDebugCommand commands[] = {
     {"tg2_ui", tg2_options_ui_command},
 };
 
-#include <stdio.h>
-#include <string.h>
 #include "cmd_server.h"
 
 /* Last original-ROM validator return; passive, never changes guest state. */
@@ -41,21 +38,14 @@ static void tg2_password_trace_command(int id, const char *json)
     cmd_send_response(out);
 }
 
+#endif
 /* The guest always runs at stock cycle cost. Only the host video adapter
  * uses this race-latched preference; no IRQ hooks or temporary RAM writes. */
 static int s_race60, s_race_live;
-static int race_live(void)
-{
-    uint32_t target = glue_peek32(0xFF01ECu);
-    return (target == 0x4714u || target == 0x49CCu)
-        && glue_peek16(0xFF22FAu) == 0
-        && (int16_t)glue_peek16(0xFF1866u) >= 0
-        && glue_peek16(0xFF189Eu) == 0;
-}
 static void tg2_frame_pre(uint64_t frame_count)
 {
     tg2_audio_frame_pre();          /* BOTH: writer-routed second sound chip */
-    int live = race_live();
+    int live = tg2_race_tick_active();
     if (live && !s_race_live) s_race60 = tg2_race60_requested();
     s_race_live = live;
     tg2_video_frame(frame_count, live && s_race60);
@@ -82,6 +72,7 @@ static int tg2_instruction_hook(uint32_t pc)
     /* Frame boundary offered for a host snapshot (F-keys / overlay). */
     glue_state_boundary(pc);
     if (tg2_controls_hook(pc)) return 1;
+#ifdef GEN_ENABLE_TRACE
     if (pc == 0x0235C0u || pc == 0x0235C4u) {
         unsigned address = g_cpu.A[0] & 0xFFFFFFu;
         if (address >= 0xFF0000u && address <= 0x1000000u - sizeof pw_trace.work) {
@@ -91,12 +82,15 @@ static int tg2_instruction_hook(uint32_t pc)
             memcpy(pw_trace.work, g_ram + (address & 65535u), sizeof pw_trace.work);
         }
     }
+#endif
     if (tg2_audio_hook(pc)) return 1;
     return tg2_video_hook(pc);
 }
 static void tg2_post_reset(void)
 {
+#ifdef GEN_ENABLE_TRACE
     memset(&pw_trace, 0, sizeof pw_trace);
+#endif
     tg2_audio_reset();
     tg2_video_reset();
 }
@@ -203,8 +197,10 @@ const GameSpec g_game_spec = {
      * $001E1E after the title/menu; patch 0021). The top-level loop is only
      * the fallback once that chain ends. */
     .dispatch_main_loop_pc = 0x001E18u,
+#ifdef GEN_ENABLE_TRACE
     .commands = commands,
     .command_count = sizeof commands / sizeof commands[0],
+#endif
     .display_name = "Top Gear 2",
     .short_name = "TG2",
     .app_id = "tg2recomp",
