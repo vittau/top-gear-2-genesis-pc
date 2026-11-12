@@ -1,4 +1,4 @@
-From d22418414cbf5a33b73872704851b9f06a845587 Mon Sep 17 00:00:00 2001
+From 62324b03e5f22d8692f4c5b7b9628fe57c49b502 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Resolve executable and application data paths
@@ -175,7 +175,7 @@ index 3ddda98..5588ac2 100644
      playing = 1;
      snprintf(path, sizeof path, "%s", playback);
 diff --git a/runner/main.c b/runner/main.c
-index 1afef1b..eee452e 100644
+index 0020ad8..345e8c2 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -55,6 +55,8 @@

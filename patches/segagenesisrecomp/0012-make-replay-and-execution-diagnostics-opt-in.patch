@@ -1,4 +1,4 @@
-From 4618088847d8c7268119eab6bd7357623322e03e Mon Sep 17 00:00:00 2001
+From 2d0b0ad842dabb82ec40fda03fd42b5fd38187cc Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Make replay and execution diagnostics opt in
@@ -178,7 +178,7 @@ index 5588ac2..01e8bce 100644
    return 1;
  }
 diff --git a/runner/main.c b/runner/main.c
-index b636a6e..3c68575 100644
+index 0ae05a7..281a24e 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -327,6 +327,10 @@ int runner_load_state_file(const char *path);
@@ -277,9 +277,9 @@ index b636a6e..3c68575 100644
                  items[count++]=s_presentation_item;
              items[count++]=s_audio_filter_item;
 +            items[count++]=s_diagnostics_item;
-             if (!g_game_spec.hide_internal_resolution) {
-                 memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
-             }
+             memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
+             if (!g_game_spec.state_unavailable_reason || !g_game_spec.state_unavailable_reason()) {
+                 memcpy(items+count,s_quickstate_items,sizeof s_quickstate_items);count+=3;
 diff --git a/runner/runtime_evidence.c b/runner/runtime_evidence.c
 index d0cd3cf..a5cc89e 100644
 --- a/runner/runtime_evidence.c

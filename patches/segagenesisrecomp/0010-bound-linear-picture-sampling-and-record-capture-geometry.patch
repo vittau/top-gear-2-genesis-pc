@@ -1,4 +1,4 @@
-From acfda2159e83ce7e8bc76c3983ca70ffacc7df60 Mon Sep 17 00:00:00 2001
+From ed88895ad7335496d65eb8710ddba820bb3a8e74 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Bound linear picture sampling and record capture geometry
@@ -9,7 +9,7 @@ Filter only the active picture and export sampler metadata so diagnostic capture
  1 file changed, 83 insertions(+), 2 deletions(-)
 
 diff --git a/runner/main.c b/runner/main.c
-index a9f4be7..12ad549 100644
+index 4b9ca0b..9844fe5 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -948,6 +948,29 @@ static const GenesisScanlineProducer s_custom_producer = {
@@ -117,7 +117,7 @@ index a9f4be7..12ad549 100644
      GenesisHdGpu *hd_gpu=NULL;
      int hd_checked=0;
      {
-@@ -4778,7 +4853,10 @@ session_begin:;
+@@ -4776,7 +4851,10 @@ session_begin:;
              }
              peer_view_was_active = peer_view_is_active;
          }
@@ -128,7 +128,7 @@ index a9f4be7..12ad549 100644
  #if GENESIS_HAS_RECOMP_NET
          /* Process the peer INPUT and emit our CONFIRM before the blocking
           * present, so confirmation delivery overlaps vsync as well. */
-@@ -4853,7 +4931,9 @@ session_begin:;
+@@ -4851,7 +4929,9 @@ session_begin:;
                  }
                  SDL_Rect active={0,0,s_screen_width,s_screen_height};
                  SDL_UpdateTexture(texture,&active,pixels,s_frame_stride*(int)sizeof(uint32_t));
@@ -139,7 +139,7 @@ index a9f4be7..12ad549 100644
                  now=SDL_GetPerformanceCounter();
                  if(now<at) {
                      Uint64 wait_begin=now;
-@@ -5150,6 +5230,7 @@ session_begin:;
+@@ -5148,6 +5228,7 @@ session_begin:;
      if (s_framebuf != s_native_storage) free(s_framebuf);
      if (s_present_buf != s_present_storage) free(s_present_buf);
      gamepad_shutdown();

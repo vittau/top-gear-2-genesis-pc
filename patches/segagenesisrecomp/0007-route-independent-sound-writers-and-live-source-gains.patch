@@ -1,4 +1,4 @@
-From e2d985339e724bcbb9d653c74c0d35b99adfbb31 Mon Sep 17 00:00:00 2001
+From 18ea1179e44e726504983551b207b68efb352a3e Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Route independent sound writers and live source gains
@@ -1712,7 +1712,7 @@ index cbb4510..df7b876 100644
   *
   * BUTTON names: UP DOWN LEFT RIGHT A B C START
 diff --git a/runner/main.c b/runner/main.c
-index d3288b7..bbe9554 100644
+index edcaba4..4c3d6ec 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -420,6 +420,20 @@ static void runtime_ui_save(void *p) {

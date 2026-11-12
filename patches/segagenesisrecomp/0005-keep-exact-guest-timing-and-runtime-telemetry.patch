@@ -1,4 +1,4 @@
-From 64fed3ddb1267d2b0a6587efe96bda20594c3900 Mon Sep 17 00:00:00 2001
+From 4fe0b730dc1933991a5c7e12ebcb80f88153ef4a Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Keep exact guest timing and runtime telemetry
@@ -340,7 +340,7 @@ index 517dcdc..fad800b 100644
      const GameVideo *video=g_game_spec.video;
      size_t presentation_size=video && video->presentation_state_save?
 diff --git a/runner/main.c b/runner/main.c
-index eee452e..d3288b7 100644
+index 345e8c2..edcaba4 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -54,6 +54,13 @@
@@ -387,7 +387,7 @@ index eee452e..d3288b7 100644
      if (g_game_spec.load_settings) g_game_spec.load_settings(settings_ini);
      /* Effective player map: one line, so a capture/log proves which devices
       * are live (a game default or a saved [input.pN] device). */
-@@ -3654,7 +3670,7 @@ session_begin:;
+@@ -3652,7 +3668,7 @@ session_begin:;
      frame_pacer_init(&frame_pacer, perf_frequency, target_fps);
      PresentationClock presentation_clock={0};
      uint32_t *interpolation_image=NULL;size_t interpolation_capacity=0;
@@ -396,7 +396,7 @@ index eee452e..d3288b7 100644
      int presentation_vsync=-1;
      SDL_RendererInfo initial_renderer_info={0};SDL_GetRendererInfo(renderer,&initial_renderer_info);
      int original_vsync=(initial_renderer_info.flags&SDL_RENDERER_PRESENTVSYNC)!=0;
-@@ -3677,8 +3693,13 @@ session_begin:;
+@@ -3675,8 +3691,13 @@ session_begin:;
  #endif
          Uint64 phase_start=SDL_GetPerformanceCounter();
          Uint64 frame_start=phase_start;
@@ -412,7 +412,7 @@ index eee452e..d3288b7 100644
  
          runner_sram_complete(1); /* before guest progress or session/input changes */
  
-@@ -3922,6 +3943,29 @@ session_begin:;
+@@ -3920,6 +3941,29 @@ session_begin:;
  #endif
  
          FRAME_PHASE(0);
@@ -442,7 +442,7 @@ index eee452e..d3288b7 100644
          /* Zero accum buffers before Iterate(): PSG_Update (and FM_OutputSamples)
           * use += to accumulate into the provided buffer, not overwrite.
           * Without this, each frame adds to the previous frame's leftovers,
-@@ -4198,8 +4242,11 @@ session_begin:;
+@@ -4196,8 +4240,11 @@ session_begin:;
              }
              if (input_script_should_exit()) {
                  if(presentation_trace)fclose(presentation_trace);
@@ -456,7 +456,7 @@ index eee452e..d3288b7 100644
      free(interpolation_image);
      host_timing_dump(&host_timing, stderr);
                  fprintf(stderr, "[input_script] exiting per script directive (code=%d)\n",
-@@ -4400,13 +4447,33 @@ session_begin:;
+@@ -4398,13 +4445,33 @@ session_begin:;
              SDL_DisplayMode dm;int display=SDL_GetWindowDisplayIndex(window);
              display_rate=display>=0 && SDL_GetCurrentDisplayMode(display,&dm)==0 && dm.refresh_rate>0?dm.refresh_rate:target_fps;
          }
@@ -494,7 +494,7 @@ index eee452e..d3288b7 100644
          if(high_refresh) {
              size_t need=(size_t)s_frame_stride*MAX_SCREEN_HEIGHT;
              if(need>interpolation_capacity) {
-@@ -4433,8 +4500,14 @@ session_begin:;
+@@ -4431,8 +4498,14 @@ session_begin:;
                  SDL_UpdateTexture(texture,&active,pixels,s_frame_stride*(int)sizeof(uint32_t));
                  SDL_RenderClear(renderer);SDL_RenderCopy(renderer,texture,&src,NULL);
                  now=SDL_GetPerformanceCounter();
@@ -511,7 +511,7 @@ index eee452e..d3288b7 100644
                  ++presentation_count;interpolation_count+=interpolated!=0;
                  if(presentation_trace) {
                      uint64_t hash=14695981039346656037ull;
-@@ -4451,9 +4524,23 @@ session_begin:;
+@@ -4449,9 +4522,23 @@ session_begin:;
          } else {
              presentation_clock_reset(&presentation_clock);
              Uint64 now=SDL_GetPerformanceCounter();
@@ -537,7 +537,7 @@ index eee452e..d3288b7 100644
          }
          FRAME_PHASE(8);
  #if GENESIS_HAS_RECOMP_NET
-@@ -4482,7 +4569,8 @@ session_begin:;
+@@ -4480,7 +4567,8 @@ session_begin:;
              audio_get_host_timing(&audio_timing);
              host_timing_record(&host_timing, frame_num - 1,
                                (uint32_t)((phase_start - frame_start) * 1000000ull / host_perf_freq),
@@ -547,7 +547,7 @@ index eee452e..d3288b7 100644
          }
  #undef FRAME_PHASE
      }
-@@ -4495,6 +4583,7 @@ session_begin:;
+@@ -4493,6 +4581,7 @@ session_begin:;
          frame_num,(unsigned long long)presentation_count,(unsigned long long)interpolation_count,(unsigned long long)perf_frequency);
      free(interpolation_image);
      runner_sram_complete(1); /* settle last-frame ACK before final state/report */

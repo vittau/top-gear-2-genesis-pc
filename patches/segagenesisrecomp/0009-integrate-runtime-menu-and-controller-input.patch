@@ -1,4 +1,4 @@
-From 4387c452d34b9717febd8bd3058e5fed038d24ff Mon Sep 17 00:00:00 2001
+From 70ea881745fd6be7f7bf0f8426d7d0af01d0e108 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Integrate runtime menu and controller input
@@ -62,7 +62,7 @@ index 0308abb..febd861 100644
          handle_ui_rows(id);
      } else if (strcmp(cmd, "pad") == 0) {
 diff --git a/runner/game_spec.h b/runner/game_spec.h
-index 46173b0..ddb05a1 100644
+index 29883e7..a420f99 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
 @@ -45,6 +45,14 @@ typedef struct GameSpec {
@@ -236,7 +236,7 @@ index b164191..5a2cd3f 100644
  uint16_t input_button_bit(GenesisButton b);
  
 diff --git a/runner/main.c b/runner/main.c
-index 0e90777..a9f4be7 100644
+index 4e852ab..4b9ca0b 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -438,6 +438,12 @@ int runner_options_set(const char *key, int value) {
@@ -367,7 +367,7 @@ index 0e90777..a9f4be7 100644
          cfg.view_modes = RECOMP_RUNTIME_UI_VIEW_MODE_NATIVE | RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9 |
              RECOMP_RUNTIME_UI_VIEW_MODE_ADAPTIVE;
          if(game_video_has_viewport(g_game_spec.video)) {
-@@ -4011,6 +4063,29 @@ session_begin:;
+@@ -4009,6 +4061,29 @@ session_begin:;
              continue;   /* re-check at loop top */
          }
  
@@ -397,7 +397,7 @@ index 0e90777..a9f4be7 100644
          int overlay_request = 0;
          SDL_Event ev;
          while (window_poll_event(&ev)) {
-@@ -4019,8 +4094,7 @@ session_begin:;
+@@ -4017,8 +4092,7 @@ session_begin:;
              }
              gamepad_handle_event(&ev);
  #if RECOMP_LAUNCHER
@@ -407,7 +407,7 @@ index 0e90777..a9f4be7 100644
                  !recomp_runtime_ui_is_open(s_runtime_ui.ui)) {
                  recomp_runtime_ui_open(s_runtime_ui.ui); continue;
              }
-@@ -4031,6 +4105,12 @@ session_begin:;
+@@ -4029,6 +4103,12 @@ session_begin:;
  #endif
              if (ev.type == SDL_QUIT) { running = 0; window_close_requested = 1; break; }
              if (ev.type == SDL_KEYDOWN) {

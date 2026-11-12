@@ -1,4 +1,4 @@
-From 0036860984dde95bee4fecb978235fec4666fe9f Mon Sep 17 00:00:00 2001
+From f41f2d131369f22132896d63f052f54750e081ed Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Expose game scale vocabulary and runtime menu layout
@@ -10,7 +10,7 @@ Use the game render-scale choices and host menu layout after the complete runtim
  2 files changed, 71 insertions(+), 4 deletions(-)
 
 diff --git a/runner/game_spec.h b/runner/game_spec.h
-index ddb05a1..7a82ee1 100644
+index a420f99..92bf49f 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
 @@ -38,6 +38,22 @@ typedef struct {
@@ -44,17 +44,17 @@ index ddb05a1..7a82ee1 100644
      int (*runtime_ui_get)(const char *key, int *out);
      int (*runtime_ui_set)(const char *key, int value);
      /* Game-owned additive features may compose with the common video provider. */
-@@ -317,6 +334,8 @@ typedef struct GameSpec {
-     /* Non-zero hides the runtime menu's "Internal resolution" row, for games
-      * whose own video provider ignores the supersampling scale. */
-     int hide_internal_resolution;
+@@ -314,6 +331,8 @@ typedef struct GameSpec {
+      * one function at a time during divergence hunting. NULL+0 is
+      * legal and means "no overrides". */
+ 
 +    /* Game-owned Internal resolution vocabulary (see GameInternalScale). */
 +    const GameInternalScale *internal_scale;
  } GameSpec;
  
  /*
 diff --git a/runner/main.c b/runner/main.c
-index 3c68575..3a0f502 100644
+index 281a24e..2f1d398 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -337,6 +337,32 @@ static const char *const s_hd_labels[]={"Native","2x","4x","8x","16x","32x","64x
@@ -160,12 +160,12 @@ index 3c68575..3a0f502 100644
          cfg.menu.callbacks.visibility_changed = input_gameplay_capture_changed;
          cfg.features = RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN | RECOMP_RUNTIME_UI_STANDARD_WINDOW_SCALE |
              RECOMP_RUNTIME_UI_STANDARD_VIEW_MODE | RECOMP_RUNTIME_UI_STANDARD_LINEAR_FILTER |
-@@ -3859,7 +3907,7 @@ int main(int argc, char *argv[])
+@@ -3858,7 +3906,7 @@ int main(int argc, char *argv[])
+                 items[count++]=s_presentation_item;
              items[count++]=s_audio_filter_item;
              items[count++]=s_diagnostics_item;
-             if (!g_game_spec.hide_internal_resolution) {
--                memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
-+                items[count++]=hd_scale_item();
-             }
+-            memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
++            items[count++]=hd_scale_item();
              if (!g_game_spec.state_unavailable_reason || !g_game_spec.state_unavailable_reason()) {
                  memcpy(items+count,s_quickstate_items,sizeof s_quickstate_items);count+=3;
+             }

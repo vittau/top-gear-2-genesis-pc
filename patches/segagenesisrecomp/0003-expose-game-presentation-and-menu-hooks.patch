@@ -1,4 +1,4 @@
-From 843320e8607731dd0df6580c7dfad12be50e75e9 Mon Sep 17 00:00:00 2001
+From 648306924492eae98cfd5805af77ad5afee80ba0 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Expose game presentation and menu hooks
@@ -6,10 +6,10 @@ Subject: [PATCH] Expose game presentation and menu hooks
 Let the game own settings, native video geometry, app identity and player defaults without embedding game policy in the runner.
 ---
  runner/app_config.c |   6 +-
- runner/game_spec.h  |  29 +++++++
+ runner/game_spec.h  |  26 ++++++
  runner/game_video.h |  34 +++++++-
- runner/main.c       | 200 ++++++++++++++++++++++++++++++++++++++++----
- 4 files changed, 251 insertions(+), 18 deletions(-)
+ runner/main.c       | 196 ++++++++++++++++++++++++++++++++++++++++----
+ 4 files changed, 245 insertions(+), 17 deletions(-)
 
 diff --git a/runner/app_config.c b/runner/app_config.c
 index 0701202..041453b 100644
@@ -36,7 +36,7 @@ index 0701202..041453b 100644
  }
  static const char *video_mod_error(void *ctx) { (void)ctx;return s_mod_error; }
 diff --git a/runner/game_spec.h b/runner/game_spec.h
-index f36db11..778fb99 100644
+index f36db11..a15a33c 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
 @@ -26,6 +26,7 @@
@@ -86,14 +86,11 @@ index f36db11..778fb99 100644
      /* Box-art file staged next to the exe under assets/img/, e.g.
       * "boxart-sonic3.tga". NULL => the shared "boxart.tga" (single-boxart
       * repos). Needed when several game modes build into ONE exe dir (the
-@@ -273,6 +298,10 @@ typedef struct GameSpec {
+@@ -273,6 +298,7 @@ typedef struct GameSpec {
       * use this to swap interpreter execution for native execution
       * one function at a time during divergence hunting. NULL+0 is
       * legal and means "no overrides". */
 +
-+    /* Non-zero hides the runtime menu's "Internal resolution" row, for games
-+     * whose own video provider ignores the supersampling scale. */
-+    int hide_internal_resolution;
  } GameSpec;
  
  /*
@@ -157,7 +154,7 @@ index 5a2722d..578b4d3 100644
      int valid_width=frame.requested_width>=native_w;
      frame.viewport=valid_width;
 diff --git a/runner/main.c b/runner/main.c
-index 0f4388f..1afef1b 100644
+index 0f4388f..0020ad8 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -223,7 +223,10 @@ static int run_picker_cmd(const char *cmd, char *out, size_t max_len)
@@ -414,7 +411,7 @@ index 0f4388f..1afef1b 100644
      fprintf(stderr, "[VIDEO] window %dx%d (%s)\n", win_w, win_h,
              (custom_video_on || ws_armed()) ? "16:9 widescreen" : "4:3");
  
-@@ -3054,17 +3178,30 @@ int main(int argc, char *argv[])
+@@ -3054,7 +3178,7 @@ int main(int argc, char *argv[])
              cfg.features &= ~RECOMP_RUNTIME_UI_STANDARD_VIEW_MODE;
          }
          {
@@ -423,13 +420,7 @@ index 0f4388f..1afef1b 100644
              if (game_video_has_viewport(g_game_spec.video)) {
                  memcpy(items,s_video_mod_items,sizeof s_video_mod_items); count=2;
              }
-             if(g_game_spec.video && g_game_spec.video->interpolate)
-                 items[count++]=s_presentation_item;
-             items[count++]=s_audio_filter_item;
--            memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
-+            if (!g_game_spec.hide_internal_resolution) {
-+                memcpy(items+count,s_hd_items,sizeof s_hd_items);++count;
-+            }
+@@ -3065,6 +3189,17 @@ int main(int argc, char *argv[])
              if (!g_game_spec.state_unavailable_reason || !g_game_spec.state_unavailable_reason()) {
                  memcpy(items+count,s_quickstate_items,sizeof s_quickstate_items);count+=3;
              }
@@ -447,7 +438,7 @@ index 0f4388f..1afef1b 100644
              cfg.extra_items=items;cfg.extra_item_count=count;
          }
          s_runtime_ui.ui = recomp_runtime_ui_create_standard(&cfg);
-@@ -3473,7 +3610,9 @@ session_begin:;
+@@ -3473,7 +3608,9 @@ session_begin:;
              }
              gamepad_handle_event(&ev);
  #if RECOMP_LAUNCHER
@@ -458,7 +449,7 @@ index 0f4388f..1afef1b 100644
                  recomp_runtime_ui_open(s_runtime_ui.ui); continue;
              }
              if (recomp_runtime_ui_is_open(s_runtime_ui.ui) && (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP)) {
-@@ -3556,14 +3695,15 @@ session_begin:;
+@@ -3556,14 +3693,15 @@ session_begin:;
          if (!running) break; /* Close must not execute another game/render tick. */
          {
              uint32_t pad = gamepad_overlay_mask();
@@ -477,7 +468,7 @@ index 0f4388f..1afef1b 100644
          if (overlay_request) {
  #if GENESIS_HAS_RECOMP_NET
              if (!genesis_netplay_active())
-@@ -3724,6 +3864,34 @@ session_begin:;
+@@ -3724,6 +3862,34 @@ session_begin:;
             * the existing interlace display modes (tv squash / raw) take over
             * from here, same as the clownmdemu path. */
            s_screen_height = gvdp_output_height(&g_machine.vdp);

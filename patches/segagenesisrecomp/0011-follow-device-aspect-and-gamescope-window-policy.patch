@@ -1,4 +1,4 @@
-From bb6155c479e339c5c404d0e2fa1bc91cb76d1407 Mon Sep 17 00:00:00 2001
+From a97b7f78e9837604a05eed90fa9e81f2698035dd Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Follow device aspect and Gamescope window policy
@@ -9,7 +9,7 @@ Start adaptive windows at the desktop aspect and controller-only Gamescope sessi
  1 file changed, 122 insertions(+), 5 deletions(-)
 
 diff --git a/runner/main.c b/runner/main.c
-index 12ad549..b636a6e 100644
+index 9844fe5..0ae05a7 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -342,6 +342,10 @@ static const RecompRuntimeUiItem s_quickstate_items[]={
@@ -166,7 +166,7 @@ index 12ad549..b636a6e 100644
  
      /* Texture scaling filter (settings.ini / launcher): nearest vs bilinear. */
      SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, g_app_config.linear_filter ? "1" : "0");
-@@ -4479,6 +4579,23 @@ session_begin:;
+@@ -4477,6 +4577,23 @@ session_begin:;
                    s_screen_height = last - first;
                }
            }
