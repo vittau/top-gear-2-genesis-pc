@@ -123,3 +123,14 @@ Export before running a normal build: normal application detaches back to the
 recorded pins and reapplies the files in place, without moving local maintenance
 branches. Phase A snapshots, tracked/untracked tree stamps, read-only `--check`,
 and the single Python implementation behind shell/PowerShell entry points remain.
+
+## Cleanups after consolidation
+
+Phase C removed old 0017's unused `hide_internal_resolution` field/guard and
+retired the classic DRC, leftover-reset, Z80-mute and unsorted-drain A/B
+switches from areas 0003/0006/0007. The old-number table records provenance,
+including retired code; historical validation documents keep their numbers.
+Area 0003 now declares the optional `GameSpec.data_directory_name`; area 0004
+uses it for macOS Application Support, with a generic `GenesisRecomp` fallback.
+Each game owns its directory name. Core's RTS example comment is generic.
+Chip dumps, SFX PCM tracing, path tests and the controller-axis probe remain.
