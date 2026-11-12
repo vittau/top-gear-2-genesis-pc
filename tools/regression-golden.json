@@ -899,6 +899,174 @@
     },
     "wav_sha256": "171df2eff5b2a12604f7b24694b4010661f050a824aa182c44716462f0d72f97"
   },
+  "off-load-both": {
+    "audio": {
+      "channel": "chipB",
+      "frames": 200.0,
+      "peak_load": 5720,
+      "peak_ratio": 1.0,
+      "peak_ref": 5697,
+      "rms_load": 1567.5,
+      "rms_ratio": 1.0,
+      "rms_ref": 1564.2,
+      "win_frames": 20.0,
+      "windows": 10,
+      "windows_inside": 10
+    },
+    "frames": {
+      "120": {
+        "hash": "2A0B972960C5E325",
+        "height": 224,
+        "width": 320
+      },
+      "180": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "240": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "300": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "360": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "420": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "480": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "540": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "60": {
+        "hash": "2A0B972960C5E325",
+        "height": 224,
+        "width": 320
+      },
+      "600": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "660": {
+        "hash": "6675166061829935",
+        "height": 224,
+        "width": 256
+      },
+      "720": {
+        "hash": "5F2BDA5ABDEEE145",
+        "height": 224,
+        "width": 256
+      },
+      "780": {
+        "hash": "EB9FD33348307066",
+        "height": 224,
+        "width": 256
+      }
+    },
+    "reference_wav_sha256": "1e89b167e1807063fc22078428701ecce75b56682eb4405b832f44155a1195b5",
+    "wav_sha256": "c57778d2b3ca807626eaeaa0b176698000c1fb078867c4ee4a342ee2f9606d4e"
+  },
+  "off-load-sfx": {
+    "audio": {
+      "channel": "mix",
+      "frames": 200.0,
+      "peak_load": 5715,
+      "peak_ratio": 1.0,
+      "peak_ref": 5706,
+      "rms_load": 1567.0,
+      "rms_ratio": 1.0,
+      "rms_ref": 1564.2,
+      "win_frames": 20.0,
+      "windows": 10,
+      "windows_inside": 10
+    },
+    "frames": {
+      "120": {
+        "hash": "2A0B972960C5E325",
+        "height": 224,
+        "width": 320
+      },
+      "180": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "240": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "300": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "360": {
+        "hash": "1131D937D70234FD",
+        "height": 224,
+        "width": 320
+      },
+      "420": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "480": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "540": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "60": {
+        "hash": "2A0B972960C5E325",
+        "height": 224,
+        "width": 320
+      },
+      "600": {
+        "hash": "AB7604E7D31489B9",
+        "height": 224,
+        "width": 320
+      },
+      "660": {
+        "hash": "6675166061829935",
+        "height": 224,
+        "width": 256
+      },
+      "720": {
+        "hash": "5F2BDA5ABDEEE145",
+        "height": 224,
+        "width": 256
+      },
+      "780": {
+        "hash": "EB9FD33348307066",
+        "height": 224,
+        "width": 256
+      }
+    },
+    "reference_wav_sha256": "65adbecf4a825155128a3e282d48d74f2b721a27fa4fc74edcb1c4fbec1811b0",
+    "wav_sha256": "f7381ff13ebd290aceec8993ce547242973461db236d8c4ca158334ad94276d1"
+  },
   "off-music": {
     "frames": {
       "1020": {

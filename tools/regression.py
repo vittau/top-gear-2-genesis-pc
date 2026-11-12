@@ -6,6 +6,11 @@ Build first, then run under the machine-wide heavy lock:
   flock ~/.cache/tg2-heavy.lock python3 tools/regression.py --record
 WAVs are streamed into SHA-256 and deleted, including on failure. Logs and
 manifest counts remain in --out. No TCP server or display is required.
+
+Besides the ten picture/audio cases, the tool resumes a race quickstate in a
+fresh process sitting at the menus (`*-load-both`, `*-load-sfx`) and compares
+the effects layer against the uninterrupted race that saved it, so a
+quickstate that loses a sound layer fails here instead of in the player's ear.
 """
 import argparse
 import difflib
@@ -19,6 +24,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / 'tools/regression-golden.json'
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tg2_state_audio  # noqa: E402  (resumed-race audio comparison)
 MANIFESTS = {
     'dispatch_misses.toml': ('functions', 'extra'),
     'floor_coverage.toml': ('functions', 'extra'),
@@ -33,7 +40,8 @@ def boot_hashes():
     return {f: frames[str(f)]['hash'] for f in (60, 300)}
 
 
-def route_script(path):
+def route_lines():
+    """The shared route as input-script lines (no trailing WAIT/EXIT)."""
     lines, previous = [], 1
     for action in json.loads((ROOT / 'game/baseline-route.json').read_text()):
         if 'keys' not in action:
@@ -46,7 +54,11 @@ def route_script(path):
         lines.extend('HOLD ' + name for bit, name in enumerate(
             ['UP', 'DOWN', 'LEFT', 'RIGHT', 'B', 'C', 'A', 'START']) if mask & (1 << bit))
         previous = frame
-    path.write_text('\n'.join(lines + ['WAIT 200', 'EXIT 0']) + '\n')
+    return lines
+
+
+def route_script(path):
+    path.write_text('\n'.join(route_lines() + ['WAIT 200', 'EXIT 0']) + '\n')
 
 
 def insert_options(text, changes):
@@ -69,6 +81,123 @@ def insert_options(text, changes):
     if pending:
         raise ValueError(f'live options past end of script: {pending}')
     return '\n'.join(lines) + '\n'
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(65536), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_from_menu_case(args, out, presentation, sound, route):
+    """Save during a race, then load that state in a fresh process at the menus.
+
+    The owner's report: with RACE SOUND = BOTH, saving a race quickstate,
+    returning to the game's menus and loading it resumed the race without the
+    engine sound. BOTH runs the race SFX on a second virtual chip, and the
+    quickstate format used to carry only the canonical chip, so the restored
+    race drove an idle effects chip: sustained FM voices and the DAC stream
+    stayed silent while one-shot effects still keyed themselves.
+
+    Two runs, both ending a fixed number of frames after the save point:
+      save   the uninterrupted race (reference audio for those guest frames)
+      load   a fresh process sitting at the menus that loads the state
+    The comparison is the effects layer's 20-frame RMS windows (see
+    tools/tg2_state_audio.py): it needs no sample alignment and fails loudly
+    if the layer is missing or mismatched.
+    """
+    import tomllib
+    name = f'{presentation}-load-{sound}'
+    directory = out / name
+    directory.mkdir(exist_ok=True)
+    state = (directory / 'race.state').resolve()
+    (directory / 'save.input').write_text(
+        '\n'.join(route + ['HOLD B', 'WAIT 240', f'SAVE_STATE {state}',
+                           'WAIT 200', 'RELEASE', 'EXIT 0']) + '\n')
+    (directory / 'load.input').write_text(
+        '\n'.join(['WAIT 600', f'LOAD_STATE {state}', 'HOLD B',
+                   'WAIT 200', 'RELEASE', 'EXIT 0']) + '\n')
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(('TG2_', 'GENESIS_', 'LNG_'))}
+    env.update(SDL_VIDEODRIVER=args.video_driver, SDL_AUDIODRIVER='dummy',
+               SDL_RENDER_DRIVER='software', SDL_RENDER_VSYNC='0',
+               TG2_RACE_60FPS=str(int(presentation == 'on')),
+               TG2_HIDE_OVERSCAN=str(int(presentation == 'on')),
+               TG2_HUD_MODE='centered', TG2_RACE_SOUND=sound,
+               TG2_HIGHRES_SCALE=str(args.scale))
+    runs, counts = {}, {}
+    # The save run must outlast the load run: the state is parked at the next
+    # resumable gameplay boundary, which is a few frames after the request.
+    for role, limit in (('save', 8000), ('load', 2000)):
+        work = directory / role
+        work.mkdir(exist_ok=True)
+        (work / 'settings.ini').write_text('[meta]\nsettings_version = 2\n')
+        run_env = dict(env, GENESIS_USER_DIR=str(work) + '/',
+                       GENESIS_AUDIO_CHIPDUMP=str(work / 'chip'))
+        wav = work / 'run.wav'
+        cmd = [str(args.exe.resolve()), str(args.rom.resolve()), '--no-launcher',
+               '--widescreen', '16:9' if presentation == 'on' else 'off',
+               '--input-script', str(directory / f'{role}.input'),
+               '--max-frames', str(limit), '--hash-frames', '60',
+               '--fresh-evidence', '--debug', '--turbo', '--wav', str(wav)]
+        with (work / 'run.log').open('w') as log:
+            completed = subprocess.run(cmd, env=run_env, stdout=log,
+                                       stderr=subprocess.STDOUT,
+                                       timeout=args.timeout)
+        if completed.returncode:
+            raise RuntimeError(f'{name}: {role} run exit {completed.returncode}; '
+                               f'see {work / "run.log"}')
+        counts[f'{role}'] = {}
+        for filename, (section, key) in MANIFESTS.items():
+            manifest = tomllib.loads((work / filename).read_text())
+            counts[f'{role}'][filename] = len(manifest[section][key])
+        if any(counts[f'{role}'].values()):
+            raise RuntimeError(f'{name}: {role} manifest {counts[f"{role}"]}')
+        runs[role] = dict(work=work, wav=wav)
+    frames = {}
+    for frame, width, height, value in re.findall(
+            r'\[FBHASH\] frame=(\d+) w=(\d+) h=(\d+) hash=0x([0-9A-Fa-f]+)',
+            (runs['load']['work'] / 'run.log').read_text()):
+        frames[frame] = dict(width=int(width), height=int(height), hash=value.upper())
+    # Effects layer: chip B in BOTH; the single chip is the whole capture in SFX.
+    if sound == 'both':
+        channel = 'chipB'
+        ref_audio = runs['save']['work'] / 'chipB.wav'
+        load_audio = runs['load']['work'] / 'chipB.wav'
+    else:
+        channel = 'mix'
+        ref_audio = runs['save']['wav']
+        load_audio = runs['load']['wav']
+    verdict = tg2_state_audio.compare(ref_audio, load_audio)
+    if not verdict['ok']:
+        raise RuntimeError(
+            f'{name}: resumed {channel} does not match the uninterrupted race: '
+            f'rms {verdict["rms_ref"]} vs {verdict["rms_load"]} '
+            f'(ratio {verdict["rms_ratio"]}), windows inside '
+            f'{verdict["windows_inside"]}/{verdict["windows"]}: '
+            f'{verdict["window_ratios"]}')
+    result = dict(frames=frames,
+                  wav_sha256=file_sha256(runs['load']['wav']),
+                  reference_wav_sha256=file_sha256(runs['save']['wav']),
+                  audio={k: verdict[k] for k in
+                         ('frames', 'win_frames', 'windows', 'rms_ref', 'rms_load',
+                          'rms_ratio', 'peak_ref', 'peak_load', 'peak_ratio',
+                          'windows_inside')})
+    result['audio']['channel'] = channel
+    # The state is a ROM-derived artifact: keep it out of any tree.
+    state.unlink(missing_ok=True)
+    for role in runs.values():
+        path = role['work'] / 'run.wav'
+        path.unlink(missing_ok=True)
+        for side in ('chipA.wav', 'chipB.wav'):
+            (role['work'] / side).unlink(missing_ok=True)
+    print(f'{name}: {len(frames)} frames, {channel} RMS '
+          f'{verdict["rms_load"]}/{verdict["rms_ref"]} '
+          f'(ratio {verdict["rms_ratio"]}), windows '
+          f'{verdict["windows_inside"]}/{verdict["windows"]}', flush=True)
+    return result, counts
 
 
 def capture(args):
@@ -168,6 +297,16 @@ def capture(args):
             print(f'{name}: {len(frames)} frames, WAV {digest.hexdigest()}, manifests {counts[name]}', flush=True)
         finally:
             wav.unlink(missing_ok=True)
+    (out / 'manifest-counts.json').write_text(json.dumps(counts, indent=2) + '\n')
+    # Resumed-race audio: save in a race, load in a fresh process at the menus.
+    # BOTH is the reported (and fixed) case; SOUND EFFECTS proves the stock
+    # single-chip path still resumes exactly as before.
+    route = route_lines()
+    for presentation, sound in (('off', 'both'), ('off', 'sfx')):
+        entry, case_counts = load_from_menu_case(args, out, presentation, sound, route)
+        name = f'{presentation}-load-{sound}'
+        result[name] = entry
+        counts[name] = case_counts['load']
     (out / 'manifest-counts.json').write_text(json.dumps(counts, indent=2) + '\n')
     return result
 
