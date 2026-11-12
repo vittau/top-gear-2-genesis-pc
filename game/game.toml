@@ -50,6 +50,11 @@ addr = 0x0701DA
 kind = "game_hook"
 
 # Native BOTH policies; other sound modes retain the stock routines.
+# $206AE is the raw-ROM sprite-row routine (3F00 2F08 D040); the native
+# BOTH row uses decoded descriptor geometry and its own glyph allocation.
+[[widescreen_site]]
+addr = 0x0206AE
+kind = "game_hook"
 [[widescreen_site]]
 addr = 0x006530
 kind = "game_hook"

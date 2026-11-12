@@ -220,6 +220,5 @@ const GameSpec g_game_spec = {
     .call_vblank = tg2_vblank,
     .call_hblank = tg2_hblank,
     .on_frame_pre = tg2_frame_pre,
-    .on_frame_post = tg2_frame_post,
     .instruction_hook = tg2_instruction_hook,
 };

@@ -1,30 +1,8 @@
-/* Top Gear 2 (USA): simultaneous race music + sound effects.
- *
- * The cartridge has two independent sound systems and one policy word,
- * $FF240E (A3-$5FFA):
- *   0 = "RACE SOUND: SOUND EFFECTS" - upload the race SFX Z80 image,
- *       tick the 68k FM/PSG SFX engine, do not start music.
- *   1 = "RACE SOUND: MUSIC"         - keep the boot music driver, start a
- *       race track, do not tick or start the SFX engine.
- *
- * This adapter adds a third menu state, "BOTH".  The choice lives in host
- * state (`s_mode`) so it survives every path a player can take: the value
- * page, the menu teardown, a race start, a second race and a guest reset.
- * The cartridge's own word is only ever written in its stock range
- * (0 = SOUND EFFECTS, 1 = MUSIC); BOTH presents 1 to the music-side reads
- * and 0 to the SFX-side reads, at the instruction, for the duration of that
- * instruction only.  Present/restore is therefore re-entrant-safe: the word
- * always ends the instruction with the value the cartridge itself stored.
- *
- * The race-time SFX Z80 image upload is routed to a second Z80 core while BOTH
- * is live (see the second-core section below), so it can never overwrite the
- * resident music driver in Z80 RAM.
- *
- * The SOUND menu text is rendered from dynamic 8x16 glyph tiles.  While the
- * player is on the RACE SOUND page with BOTH selected, the value row's glyph
- * tiles are repainted as "BOTH" in the menu font (see paint_row()).  Nothing
- * in the ROM or in generated C is modified.
- */
+/* Top Gear 2 (USA): native BOTH race-sound policy and value-row drawing.
+ * Guest $FF240E remains the cartridge's own two-state setting. Native BOTH
+ * routines run the independent music and SFX policies without steering that
+ * word; the live source routing is adopted between races and inferred from
+ * each Z80's actual guest image after reset/load. */
 #include "genesis_runtime.h"
 #include "tg2_race.h"
 #include "tg2_memory.h"
@@ -40,7 +18,6 @@
 #include "chip_trace.h"
 
 /* Work-RAM addresses (see docs/RAM_MAP.md / docs/AUDIO.md). */
-#define RAM_SOUND_MODE   0x240Eu   /* word: 0 = SFX, 1 = MUSIC            */
 #define RAM_MENU_PAGE    0x2554u   /* word: menu controller (page index)  */
 #define RACE_SOUND_PAGE  4         /* $FF2554 while the value page is open*/
 
@@ -205,6 +182,16 @@ static int policy_test(int offset)
     uint16_t value = policy_flags(m68k_read16(g_cpu.A[3] + offset));
     policy_tick(12);
     return value != 0;
+}
+static void policy_add(unsigned reg, uint16_t b, unsigned cycles)
+{
+    uint16_t a=(uint16_t)g_cpu.D[reg],v=(uint16_t)(a+b);
+    policy_flags(v);
+    g_cpu.SR=(g_cpu.SR&~(SR_X|SR_C|SR_V))|
+        ((unsigned)a+b>0xffffu?(SR_X|SR_C):0)|
+        (!( (a^b)&0x8000u) && ((a^v)&0x8000u)?SR_V:0);
+    g_cpu.D[reg]=(g_cpu.D[reg]&0xffff0000u)|v;
+    policy_tick(cycles);
 }
 static void policy_push16(uint16_t value, unsigned cycles)
 {
@@ -466,6 +453,8 @@ static int menu_value_handler(void)
     return 1;
 }
 
+static int native_both_row(void);
+
 /* ---- Instruction hooks --------------------------------------------------- */
 int tg2_audio_hook(uint32_t pc)
 {
@@ -490,6 +479,7 @@ int tg2_audio_hook(uint32_t pc)
         sfx_cmd_log(g_cpu.D[0], g_cpu.D[1], g_cpu.D[2], g_cpu.D[3]);
         return 0;
 
+    case 0x0206AEu: return native_both_row();
     case 0x01ED2Cu:
         policy_page_profile();
         return 1;
@@ -509,10 +499,10 @@ int tg2_audio_hook(uint32_t pc)
     }
 }
 
-/* ---- "BOTH" text overlay -------------------------------------------------
+/* ---- Native BOTH value-row glyphs -------------------------------------------------
  * The menu draws text as 8x16 glyphs split over two 8x8 VRAM tiles.  We
- * repaint the value row's tiles in place, so sprite positions, palette and
- * priority remain the game's own.  Only presentation memory is touched.
+ * build a separate value-row allocation, retaining the stock sprite
+ * positions, palette and priority.
  *
  * Glyph construction matches the menu font exactly: 8x16 cell, 2-pixel
  * strokes on an 8-pixel grid, a one-pixel outline in palette entry 1 around
@@ -552,63 +542,10 @@ static const uint8_t *const s_both_glyphs[BOTH_COLS] = {
 
 struct col {
     int x;              /* screen x of the column */
-    unsigned top;       /* top VRAM tile of the 8x16 glyph */
 };
 
-/* Locate the value row of the RACE SOUND page from the sprite table. */
-static int value_cols(struct col *cols)
-{
-    uint8_t *vram = g_machine.vdp.vram;
-    unsigned sat = (unsigned)((g_machine.vdp.reg[5] & 0x7Fu) << 9);
-    int header = 0;
-    int ncols = 0;
-
-    for (int i = 0; i < 80; i++) {
-        unsigned e = sat + (unsigned)i * 8u;
-        if (e + 7u >= 0x10000u) break;
-        uint16_t w0 = (uint16_t)tg2_word(vram, e);
-        uint8_t  sz = vram[e + 2];
-        uint16_t w2 = (uint16_t)tg2_word(vram, e + 4);
-        uint16_t w3 = (uint16_t)tg2_word(vram, e + 6);
-        unsigned y = w0 & 0x3FFu;
-        unsigned x = w3 & 0x1FFu;
-        unsigned tile = w2 & 0x7FFu;
-
-        if (y == 0x00D4u && x == 0x0130u && tile == 439u)
-            header = 1;
-
-        if (y == 0x0104u && ((w2 >> 13) & 3u) == 3u && ncols < ROW_COLS) {
-            unsigned hsz = ((sz >> 2) & 3u) + 1u;
-            unsigned vsz = (sz & 3u) + 1u;
-            if (vsz < 2) vsz = 2;
-            for (unsigned c = 0; c < hsz && ncols < ROW_COLS; c++) {
-                cols[ncols].x = (int)(x - 128u) + (int)c * 8;
-                cols[ncols].top = tile + c * vsz;
-                ncols++;
-            }
-        }
-    }
-
-    if (!header || ncols < BOTH_COLS) return 0;
-    /* sort by screen x (the sprite list is not ordered) */
-    for (int i = 1; i < ncols; i++)
-        for (int j = i; j > 0 && cols[j - 1].x > cols[j].x; j--) {
-            struct col t = cols[j]; cols[j] = cols[j - 1]; cols[j - 1] = t;
-        }
-    return ncols;
-}
-
-/* Original value-row tiles, saved the first frame BOTH is painted so that
- * cycling BOTH -> MUSIC (page value unchanged, no game redraw) can put the
- * game's own glyphs back.  The row is re-captured whenever the game rebuilds
- * it, which changes its column count or its tile numbers. */
-static uint8_t s_saved_tiles[ROW_COLS][2][32];
-static unsigned s_saved_top[ROW_COLS];
-static int s_saved_n;
-static unsigned s_sig;          /* row signature: columns + first tile */
-
 /* Paint the four letters across the row and blank the columns after them. */
-static void paint_row(uint8_t *vram, const struct col *cols, int ncols)
+static void build_row_tiles(uint8_t *tiles, const struct col *cols, int ncols)
 {
     enum { MAXW = ROW_COLS * 8 };
     static uint8_t shape[16][MAXW];
@@ -647,11 +584,8 @@ static void paint_row(uint8_t *vram, const struct col *cols, int ncols)
     }
 
     for (int i = 0; i < ncols; i++) {
-        unsigned top = cols[i].top & 0x7FFu;
-        unsigned bot = (top + 1u) & 0x7FFu;
         for (int r = 0; r < 16; r++) {
-            unsigned tile = (r < 8 ? top : bot);
-            uint8_t *dst = vram + (size_t)tile * 32u + (size_t)(r & 7) * 4u;
+            uint8_t *dst = tiles + (size_t)(i*2+(r>=8)) * 32u + (size_t)(r & 7) * 4u;
             const uint8_t *src = &px[r][i * 8];
             dst[0] = (uint8_t)((src[0] << 4) | src[1]);
             dst[1] = (uint8_t)((src[2] << 4) | src[3]);
@@ -661,47 +595,80 @@ static void paint_row(uint8_t *vram, const struct col *cols, int ncols)
     }
 }
 
-static void paint_both(void)
+/* $206AE is the stock sprite-row emitter, with D0=row id, A0=decoded
+ * descriptors, D5=tile/palette base, D6/D7=screen origin. Row 18 on page 4
+ * is MUSIC's five 8x16 columns. BOTH owns a distinct ten-tile allocation in
+ * the menu's unused $9E00..$9F3F gap (font ends before $5000; SAT=$A800).
+ * The guest descriptors supply geometry only: no MUSIC row is emitted or
+ * overwritten, and no tiles need saving/restoring when the selection changes. */
+static int native_both_row(void)
 {
-    uint8_t *vram = g_machine.vdp.vram;
+    if (s_mode != TG2_SOUND_BOTH || tg2_ram16(0xff0000u+RAM_MENU_PAGE) != RACE_SOUND_PAGE ||
+        (g_cpu.A[4]&0xffffffu) != 0xff2554 || (uint16_t)g_cpu.D[0] != 18)
+        return 0;
+    const uint32_t descriptors=g_cpu.A[0];
+    const uint16_t original_d0=(uint16_t)g_cpu.D[0];
+    const uint32_t entry=descriptors+8+original_d0*6;
+    const unsigned sprites=m68k_read16(entry);
+    const uint32_t data=descriptors+m68k_read32(entry+2);
     struct col cols[ROW_COLS];
-    int ncols = value_cols(cols);
-    if (ncols < BOTH_COLS) return;
-
-    unsigned sig = (unsigned)ncols * 2048u + (cols[0].top & 0x7FFu);
-    if (s_saved_n && sig != s_sig) s_saved_n = 0;   /* game rebuilt the row */
-
-    if (!s_saved_n) {
-        s_sig = sig;
-        s_saved_n = ncols;
-        for (int i = 0; i < ncols; i++) {
-            unsigned top = cols[i].top & 0x7FFu;
-            s_saved_top[i] = top;
-            for (int b = 0; b < 32; b++) {
-                s_saved_tiles[i][0][b] = vram[top * 32u + (unsigned)b];
-                s_saved_tiles[i][1][b] =
-                    vram[((top + 1u) & 0x7FFu) * 32u + (unsigned)b];
-            }
+    unsigned ncols=0;
+    for (unsigned i=0;i<sprites;i++) {
+        uint16_t size=m68k_read16(data+i*8+2);
+        unsigned width=((size>>10)&3)+1;
+        int x=(int16_t)m68k_read16(data+i*8+6)+(int16_t)g_cpu.D[6]-128;
+        for (unsigned c=0;c<width && ncols<ROW_COLS;c++) {
+            cols[ncols].x=x+(int)c*8;
+            ++ncols;
         }
     }
+    /* This native allocation is valid for the audited USA value-row layout. */
+    if (sprites!=2 || ncols!=5) return 0;
+    uint8_t tiles[ROW_COLS*64];
+    build_row_tiles(tiles,cols,(int)ncols);
+    uint8_t *dest=g_machine.vdp.vram+0x9e00;
+    if (memcmp(dest,tiles,ncols*64)) memcpy(dest,tiles,ncols*64);
 
-    paint_row(vram, cols, ncols);
-}
-
-/* Put back the stock value-row glyphs when BOTH goes away.  The cached tile
- * numbers are used directly: the row may have been rebuilt in between, so
- * re-deriving it now would miss the tiles we actually overwrote. */
-static void restore_row(void)
-{
-    uint8_t *vram = g_machine.vdp.vram;
-    for (int i = 0; i < s_saved_n; i++) {
-        unsigned top = s_saved_top[i] & 0x7FFu;
-        for (int b = 0; b < 32; b++) {
-            vram[top * 32u + (unsigned)b] = s_saved_tiles[i][0][b];
-            vram[((top + 1u) & 0x7FFu) * 32u + (unsigned)b] = s_saved_tiles[i][1][b];
-        }
+    policy_push16(policy_flags(original_d0),8);
+    g_cpu.A[7]-=4; m68k_write32(g_cpu.A[7],descriptors);
+    policy_flags((uint16_t)(descriptors>>16));
+    if (!(descriptors&0xffff0000u) && (descriptors&0xffffu)) g_cpu.SR &= ~SR_Z;
+    policy_tick(12);
+    /* Original descriptor lookup, retired at the cartridge's instruction cadence. */
+    policy_add(0,(uint16_t)g_cpu.D[0],4);
+    policy_dword(1,(uint16_t)g_cpu.D[0],4);
+    policy_add(0,(uint16_t)g_cpu.D[0],4);
+    policy_add(0,(uint16_t)g_cpu.D[1],4); policy_add(0,8,4);
+    g_cpu.A[1]=descriptors; policy_tick(4);
+    g_cpu.A[0]+=(int16_t)g_cpu.D[0]; policy_tick(8);
+    policy_dword(0,m68k_read16(g_cpu.A[0]),8); g_cpu.A[0]+=2;
+    g_cpu.A[1]+=m68k_read32(g_cpu.A[0]); g_cpu.A[0]+=4; policy_tick(14);
+    g_cpu.A[0]=g_cpu.A[1]; policy_tick(4);
+    g_cpu.D[0]=(g_cpu.D[0]&0xffff0000u)|1; /* SUBQ #1, from two sprites. */
+    g_cpu.SR &= ~31u; policy_tick(4);
+    unsigned column=0;
+    for (unsigned i=0;i<sprites;i++) {
+        policy_push16(policy_flags((uint16_t)g_cpu.D[0]),8);
+        policy_dword(1,m68k_read16(g_cpu.A[0]),8); g_cpu.A[0]+=2;
+        policy_add(1,(uint16_t)g_cpu.D[7],4);
+        policy_dword(2,m68k_read16(g_cpu.A[0]),8); g_cpu.A[0]+=2;
+        policy_dword(2,(uint16_t)g_cpu.D[2]&0xff00,8);
+        policy_dword(3,m68k_read16(g_cpu.A[0]),8); g_cpu.A[0]+=2;
+        policy_add(3,(uint16_t)g_cpu.D[5],4);
+        uint16_t stock_tile=(uint16_t)g_cpu.D[3];
+        g_cpu.D[3]=(g_cpu.D[3]&0xffff0000u)|(stock_tile&0xf800u)|(0x4f0+column*2);
+        column+=(((uint16_t)g_cpu.D[2]>>10)&3)+1;
+        policy_dword(4,m68k_read16(g_cpu.A[0]),8); g_cpu.A[0]+=2;
+        policy_add(4,(uint16_t)g_cpu.D[6],4);
+        policy_call(0x1ce0,0x206e2,20);
+        g_cpu.D[3]=(g_cpu.D[3]&0xffff0000u)|stock_tile;
+        policy_dword(0,policy_pop16(),8);
+        g_cpu.D[0]=(g_cpu.D[0]&0xffff0000u)|(uint16_t)(g_cpu.D[0]-1);
+        policy_tick(10);
     }
-    s_saved_n = 0;
+    g_cpu.A[0]=m68k_read32(g_cpu.A[7]);g_cpu.A[7]+=4;policy_tick(12);
+    policy_dword(0,policy_pop16(),8);policy_tick(16);
+    return 1;
 }
 
 /* ---- Host selection surface --------------------------------------------- */
@@ -730,7 +697,6 @@ void tg2_audio_frame_pre(void)
  * player's choice is a host preference and survives it. */
 void tg2_audio_reset(void)
 {
-    s_saved_n = 0;
     s_sfx_upload = 0;
     /* A guest reset reboots the cartridge (no race running, so the player's
      * selection applies); a state loaded mid-race keeps the routing that race
@@ -741,32 +707,4 @@ void tg2_audio_reset(void)
      * driver; a state load restores the Z80 RAM and the per-frame check
      * corrects the role on the next frame either way. */
     audio_set_first_z80_is_sfx(first_z80_runs_sfx_image());
-}
-
-static int race_sound_page_open(void)
-{
-    return tg2_ram16(0xFF0000u + RAM_MENU_PAGE) == RACE_SOUND_PAGE;
-}
-
-void tg2_frame_post(uint64_t frame_count)
-{
-    (void)frame_count;
-
-    /* The page's entry hook (0x01ED3A) loads the page value from the session
-     * choice, so the cartridge always builds its own MUSIC or SOUND EFFECTS
-     * row in stock state. While BOTH is the choice that row says "MUSIC", so
-     * repaint it as "BOTH" on every frame the page is open (the page can be
-     * re-entered from several routes and its tiles are rebuilt per visit). */
-    int open = race_sound_page_open();
-
-    if (!open) {
-        if (s_saved_n) restore_row();
-        return;
-    }
-
-    if (s_mode == TG2_SOUND_BOTH) {
-        paint_both();
-        return;
-    }
-    if (s_saved_n) restore_row();
 }

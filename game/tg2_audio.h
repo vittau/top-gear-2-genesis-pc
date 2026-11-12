@@ -5,6 +5,5 @@
 int tg2_audio_hook(uint32_t pc);
 void tg2_audio_reset(void);
 void tg2_audio_frame_pre(void);
-void tg2_frame_post(uint64_t frame_count);
 int tg2_audio_race_sound(void);
 void tg2_audio_set_race_sound(int mode);
