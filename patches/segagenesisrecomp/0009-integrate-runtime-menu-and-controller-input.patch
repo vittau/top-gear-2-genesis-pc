@@ -1,4 +1,4 @@
-From 70ea881745fd6be7f7bf0f8426d7d0af01d0e108 Mon Sep 17 00:00:00 2001
+From 58d68bc23d1c9a7f45167022b38140a8c376937a Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Integrate runtime menu and controller input

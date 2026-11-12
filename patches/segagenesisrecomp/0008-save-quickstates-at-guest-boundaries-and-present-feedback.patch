@@ -1,4 +1,4 @@
-From ef9b085df13b7ba6349e236b3e97fc01608b8243 Mon Sep 17 00:00:00 2001
+From 3de6b8fabd32bb3ca525b913b60ba374b673e6e7 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Save quickstates at guest boundaries and present feedback

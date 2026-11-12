@@ -1,4 +1,4 @@
-From 54f372b5d388e7572b64ecce2fd8c6410b62ffbb Mon Sep 17 00:00:00 2001
+From 94c3f0b2d74671b42ac0908cd47e32e1f6b27c09 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Preserve IRQ register effects

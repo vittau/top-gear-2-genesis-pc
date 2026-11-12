@@ -1285,7 +1285,7 @@ a pitch shift.
 
 **Real-device tempo stability (H2).** Same 183 s music route, same build, only
 the controller differs (`GENESIS_AUDIO_DRC_CLASSIC=1` restores the pre-fix
-servo for the A/B). The playback ratio is what the ear hears as speed:
+servo for the historical A/B; this switch was removed in Phase C). The playback ratio is what the ear hears as speed:
 
 | Controller | ratio p05..p95 | ratio span | fastest ratio change | ring fill p05/p50/p95 | dropouts |
 |---|---|---:|---:|---|---:|
@@ -1332,14 +1332,14 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy build/TG2Recomp ~/roms/genesis/tg2.b
 # Comparison (also --selftest):
 python3 tools/audio_tempo_compare.py build/ref/race-music.wav build/ref/port.wav
 
-# Real device, before/after the controller change:
+# Real device, before/after the controller change (preserve the pre-task-18 binary first):
 pactl load-module module-null-sink sink_name=tg2_test
 python3 tools/audio_device_capture.py --exe build/TG2Recomp \
     --out build/device/after --frames 11000 --mode on \
     --route build/ref/music-route.input
-python3 tools/audio_device_capture.py --exe build/TG2Recomp \
+python3 tools/audio_device_capture.py --exe build/pre-task18/TG2Recomp \
     --out build/device/before --frames 11000 --mode on \
-    --route build/ref/music-route.input --env GENESIS_AUDIO_DRC_CLASSIC=1
+    --route build/ref/music-route.input
 python3 tools/audio_drc_stats.py build/device/after/frame-stats.csv \
     build/device/before/frame-stats.csv
 pactl unload-module <id>

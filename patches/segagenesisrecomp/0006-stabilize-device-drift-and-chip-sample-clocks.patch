@@ -1,23 +1,23 @@
-From 041b0b78b49e5d5d5b7873808c307560e703ba41 Mon Sep 17 00:00:00 2001
+From ed204a3db442f8248db08d90b1d6294b27e2e555 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Stabilize device drift and chip sample clocks
 
 Preserve chip clock remainders and timer phase while correcting device drift without modulating music tempo.
 ---
- runner/audio.c             |  81 ++++++++++++--
+ runner/audio.c             |  75 +++++++++++++--
  runner/audio.h             |   7 ++
- runner/audio/mixer.c       |  18 +--
- runner/recomp_audio_drc.h  | 218 +++++++++++++++++++++++++++++++------
- runner/sim_step.c          |  12 +-
- runner/video/genesis_bus.c |  12 +-
- 6 files changed, 295 insertions(+), 53 deletions(-)
+ runner/audio/mixer.c       |  18 ++--
+ runner/recomp_audio_drc.h  | 191 ++++++++++++++++++++++++++++++-------
+ runner/sim_step.c          |  12 ++-
+ runner/video/genesis_bus.c |  12 ++-
+ 6 files changed, 262 insertions(+), 53 deletions(-)
 
 diff --git a/runner/audio.c b/runner/audio.c
-index ef618a4..3c9acc4 100644
+index ef618a4..1e9a5f3 100644
 --- a/runner/audio.c
 +++ b/runner/audio.c
-@@ -185,12 +185,62 @@ int audio_init(int psg_sample_rate)
+@@ -185,12 +185,56 @@ int audio_init(int psg_sample_rate)
      cfg.channels    = 2;
      cfg.source_rate = (double)psg_sample_rate; /* internal FM+PSG mix rate */
      cfg.host_rate   = (double)got.freq;         /* device rate (48 kHz) */
@@ -76,16 +76,10 @@ index ef618a4..3c9acc4 100644
 +     * until the ring caps and drops samples one by one - the old behaviour was
 +     * a growing delay that ended in a burst of clicks. */
 +    cfg.overfull_ms    = 60.0;
-+    {   /* Measurement-only A/B: restore the pre-task-18 proportional servo. */
-+        const char *e = getenv("GENESIS_AUDIO_DRC_CLASSIC");
-+        cfg.classic_servo = (e && *e && *e != '0') ? 1 : 0;
-+        if (cfg.classic_servo)
-+            fprintf(stderr, "[audio] DRC controller: CLASSIC (measurement only)\n");
-+    }
      if (rab_init(&s_bridge, &cfg) != 0) {
          fprintf(stderr, "audio: rab_init (DRC bridge) failed\n");
          SDL_CloseAudioDevice(s_dev); s_dev = 0;
-@@ -205,12 +255,15 @@ int audio_init(int psg_sample_rate)
+@@ -205,12 +249,15 @@ int audio_init(int psg_sample_rate)
      s_stats.min_queued_bytes = UINT32_MAX;  /* low-water: nothing sampled yet */
  
      /* No manual silence prime: the bridge holds output muted until its ring
@@ -105,7 +99,7 @@ index ef618a4..3c9acc4 100644
      return 0;
  }
  
-@@ -244,7 +297,8 @@ void audio_close(void)
+@@ -244,7 +291,8 @@ void audio_close(void)
                  1e6 * (double)s_publish_max_ticks / s_perf_freq,
                  blocks ? 1e6 * (double)s_exclusion_ticks / s_perf_freq / blocks : 0);
          fprintf(stderr, "[audio callback ownership] callbacks=%llu callback_peak_us=%llu "
@@ -115,7 +109,7 @@ index ef618a4..3c9acc4 100644
                  (unsigned long long)s_trace_callbacks,
                  (unsigned long long)s_trace_callback_peak_us,
                  (unsigned long long)s_trace_wait_peak_us,
-@@ -252,6 +306,9 @@ void audio_close(void)
+@@ -252,6 +300,9 @@ void audio_close(void)
                  (unsigned long long)s_trace_repeated,
                  (unsigned long long)s_trace_underruns,
                  (unsigned long long)s_trace_overflows,
@@ -125,7 +119,7 @@ index ef618a4..3c9acc4 100644
                  (unsigned long long)s_trace_final_fill_us);
      }
  }
-@@ -388,7 +445,11 @@ void audio_flush(uint32_t wall_frame, int realtime,
+@@ -388,7 +439,11 @@ void audio_flush(uint32_t wall_frame, int realtime,
          s_callback_peak_us = 0;
          s_host_timing.conceal_events = s_bridge.stats.stretch_events;
          s_host_timing.concealed_frames = s_bridge.stats.stretch_frames;
@@ -195,10 +189,10 @@ index f3c55b1..c15f4d5 100644
      /* Copy generated samples into the caller's buffers. */
      size_t fm_avail  = ym2612_samples_available();
 diff --git a/runner/recomp_audio_drc.h b/runner/recomp_audio_drc.h
-index 0340757..7af82b4 100644
+index 0340757..bd6daff 100644
 --- a/runner/recomp_audio_drc.h
 +++ b/runner/recomp_audio_drc.h
-@@ -45,9 +45,33 @@ typedef struct {
+@@ -45,9 +45,28 @@ typedef struct {
      double max_correction;  /* clamp on ratio correction (default 0.005)       */
      double err_lp_ms;       /* error low-pass time constant ms (default 75)    */
      double slew_pp_per_s;   /* correction slew, percent-points/sec (default 0.75) */
@@ -215,11 +209,6 @@ index 0340757..7af82b4 100644
 +    double ki_per_s;        /* steady-state integral gain (default 0.02)       */
 +    double slew_steady_pp_per_s; /* steady slew limit (default 0.05)           */
 +    double rescue_ms;       /* fill excursion that enables the fast path (25)  */
-+    /* Measurement-only: 1 restores the pre-task-18 proportional servo (one
-+     * P term on the fill through `err_lp_ms`, `slew_pp_per_s`, deadband), so a
-+     * before/after capture can be taken from one binary. Never set in
-+     * production. */
-+    int    classic_servo;
      double deadband_ms;     /* +/- band around target with no correction (1.0)  */
      double em_low_ms;       /* below this = underrun emergency (default 12)     */
      double em_high_ms;      /* above this = overflow emergency (default 105)    */
@@ -232,7 +221,7 @@ index 0340757..7af82b4 100644
      /* --- Phase-1 stall concealment (brief transition/startup producer stalls) --- */
      double preroll_ms;      /* initial prime cushion; 0 => prime at target_ms.      *
                               * A boot pre-roll hides the cold-start hitch for free   *
-@@ -67,6 +91,9 @@ typedef struct {
+@@ -67,6 +86,9 @@ typedef struct {
      uint64_t overflow_drops;    /* source frames dropped on ring overflow     */
      uint64_t stretch_frames;    /* output frames synthesized by stall conceal */
      uint64_t stretch_events;    /* distinct stall episodes concealed          */
@@ -242,7 +231,7 @@ index 0340757..7af82b4 100644
      double   last_fill_ms;
      double   last_correction;   /* applied ratio correction (signed)          */
  } rab_stats;
-@@ -84,8 +111,10 @@ typedef struct rab_bridge {
+@@ -84,8 +106,10 @@ typedef struct rab_bridge {
  
      /* controller */
      double cur_step;        /* current source frames consumed per output frame */
@@ -254,7 +243,7 @@ index 0340757..7af82b4 100644
  
      /* fade / emergency */
      double gain;            /* 0..1 smooth gate for startup/underrun           */
-@@ -99,6 +128,11 @@ typedef struct rab_bridge {
+@@ -99,6 +123,11 @@ typedef struct rab_bridge {
      double loop_len;        /* looped region length in source frames           */
      double loop_pos;        /* fractional read cursor within the looped region */
  
@@ -266,7 +255,7 @@ index 0340757..7af82b4 100644
      rab_stats stats;
  } rab_bridge;
  
-@@ -173,9 +207,15 @@ void rab_config_defaults(rab_config *c) {
+@@ -173,9 +202,14 @@ void rab_config_defaults(rab_config *c) {
      c->max_correction = 0.005;
      c->err_lp_ms      = 75.0;
      c->slew_pp_per_s  = 0.75;
@@ -274,7 +263,6 @@ index 0340757..7af82b4 100644
 +    c->ki_per_s       = 0.02;
 +    c->slew_steady_pp_per_s = 0.05;
 +    c->rescue_ms      = 40.0;
-+    c->classic_servo  = 0;
      c->deadband_ms    = 1.0;
      c->em_low_ms      = 12.0;
      c->em_high_ms     = 105.0;
@@ -282,7 +270,7 @@ index 0340757..7af82b4 100644
      c->preroll_ms       = 0.0;    /* 0 => prime at target_ms (no extra boot cushion) */
      c->stretch_enable   = 1;
      c->stretch_min_ms   = 5.0;
-@@ -247,13 +287,18 @@ void rab_reset(rab_bridge *b) {
+@@ -247,13 +281,18 @@ void rab_reset(rab_bridge *b) {
      b->out_pos  = (double)(b->half - 1);
      b->cur_step = b->cfg.source_rate / b->cfg.host_rate;
      b->err_lp   = 0.0;
@@ -301,7 +289,7 @@ index 0340757..7af82b4 100644
      memset(b->last_out, 0, sizeof(b->last_out));
      memset(&b->stats, 0, sizeof(b->stats));
  }
-@@ -316,36 +361,99 @@ int rab_try_push_prepared(rab_bridge *b, const float *in, int frames) {
+@@ -316,36 +355,78 @@ int rab_try_push_prepared(rab_bridge *b, const float *in, int frames) {
      return 1;
  }
  
@@ -337,27 +325,6 @@ index 0340757..7af82b4 100644
 +        fill_ms = rab_fill_ms(b);
 +        b->stats.last_fill_ms = fill_ms;
 +        b->err_lp = 0.0;
-+    }
-+
-+    if (c->classic_servo) {
-+        /* Pre-task-18 controller: one proportional term on the fill. Kept for
-+         * the A/B listening capture only (GENESIS_AUDIO_DRC_CLASSIC=1). */
-+        double err = (fill_ms - c->target_ms) / c->target_ms;
-+        if (fill_ms > c->target_ms - c->deadband_ms &&
-+            fill_ms < c->target_ms + c->deadband_ms) err = 0.0;
-+        double alpha = dt_ms / (c->err_lp_ms + dt_ms);
-+        b->err_lp += alpha * (err - b->err_lp);
-+        double target_corr = c->kp * b->err_lp;
-+        if (target_corr >  c->max_correction) target_corr =  c->max_correction;
-+        if (target_corr < -c->max_correction) target_corr = -c->max_correction;
-+        double slew = (c->slew_pp_per_s / 100.0) * (dt_ms / 1000.0);
-+        double d = target_corr - b->corr;
-+        if (d >  slew) d =  slew;
-+        if (d < -slew) d = -slew;
-+        b->corr += d;
-+        b->cur_step = (c->source_rate / c->host_rate) * (1.0 + b->corr);
-+        b->stats.last_correction = b->corr;
-+        return;
 +    }
  
 -    /* one control update per pull; low-pass the normalized error. Use the pull
@@ -425,7 +392,7 @@ index 0340757..7af82b4 100644
  
      /* A high queue (positive error) must be consumed FASTER -> larger step. */
      b->cur_step = (c->source_rate / c->host_rate) * (1.0 + b->corr);
-@@ -420,19 +528,33 @@ static double rab__find_loop_len(const rab_bridge *b, int64_t end_i) {
+@@ -420,19 +501,33 @@ static double rab__find_loop_len(const rab_bridge *b, int64_t end_i) {
  
  void rab_pull(rab_bridge *b, int16_t *out, int frames) {
      int ch = b->cfg.channels;
@@ -466,7 +433,7 @@ index 0340757..7af82b4 100644
  
      for (int f = 0; f < frames; ++f) {
          int64_t i   = (int64_t)floor(b->out_pos);
-@@ -443,6 +565,36 @@ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
+@@ -443,6 +538,36 @@ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
          float s[2] = {0.0f, 0.0f};
          int   delivering = 0;
  
@@ -503,7 +470,7 @@ index 0340757..7af82b4 100644
          if (have) {
              /* live forward play; caught up to real audio, so leave conceal mode */
              b->concealing = 0;
-@@ -510,7 +662,7 @@ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
+@@ -510,7 +635,7 @@ void rab_pull(rab_bridge *b, int16_t *out, int frames) {
          }
  
          for (int c = 0; c < ch; ++c) {

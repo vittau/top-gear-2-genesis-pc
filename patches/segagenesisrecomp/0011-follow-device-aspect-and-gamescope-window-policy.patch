@@ -1,4 +1,4 @@
-From a97b7f78e9837604a05eed90fa9e81f2698035dd Mon Sep 17 00:00:00 2001
+From 3d110e2fea3a8d57603b7aaf629ed1d379a93b78 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Follow device aspect and Gamescope window policy

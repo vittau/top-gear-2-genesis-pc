@@ -1,4 +1,4 @@
-From ed88895ad7335496d65eb8710ddba820bb3a8e74 Mon Sep 17 00:00:00 2001
+From 2877abebd176e2e5774f808e853eef8d5a233516 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Bound linear picture sampling and record capture geometry

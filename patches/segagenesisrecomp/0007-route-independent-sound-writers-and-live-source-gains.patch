@@ -1,4 +1,4 @@
-From 18ea1179e44e726504983551b207b68efb352a3e Mon Sep 17 00:00:00 2001
+From a3ad47e8505f47d0ed4eff1e968a8bae3f17fae8 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Route independent sound writers and live source gains
@@ -8,7 +8,7 @@ Support separate music and effects chips and Z80 programs; fader changes ramp ga
  runner/audio.c                 | 126 +++++++++--
  runner/audio/event_queue.c     |  36 +++
  runner/audio/event_queue.h     |  63 +++++-
- runner/audio/mixer.c           | 386 +++++++++++++++++++++++++++++++--
+ runner/audio/mixer.c           | 386 ++++++++++++++++++++++++++++++---
  runner/audio/mixer.h           |  18 ++
  runner/audio/sn76489.c         | 201 +++++++++--------
  runner/audio/sn76489.h         |  12 +
@@ -22,10 +22,10 @@ Support separate music and effects chips and Z80 programs; fader changes ramp ga
  runner/video/genesis_bus.h     |  40 +++-
  runner/video/genesis_machine.c |  76 ++++++-
  runner/video/genesis_machine.h |   6 +
- 17 files changed, 1209 insertions(+), 311 deletions(-)
+ 17 files changed, 1201 insertions(+), 319 deletions(-)
 
 diff --git a/runner/audio.c b/runner/audio.c
-index 3c9acc4..3aa8269 100644
+index 1e9a5f3..b4f46c2 100644
 --- a/runner/audio.c
 +++ b/runner/audio.c
 @@ -1,4 +1,5 @@
@@ -48,7 +48,7 @@ index 3c9acc4..3aa8269 100644
  /* Scratch output buffer — sized for worst-case PSG frames per video frame.
   * PSG rate ~223721 Hz / 50 Hz (PAL) ≈ 4475 frames.  Double for headroom. */
  #define OUT_BUF_FRAMES 16384
-@@ -270,6 +278,7 @@ int audio_init(int psg_sample_rate)
+@@ -264,6 +272,7 @@ int audio_init(int psg_sample_rate)
  void audio_close(void)
  {
      s_extra_source = NULL;
@@ -56,7 +56,7 @@ index 3c9acc4..3aa8269 100644
      if (s_dev != 0) {
          SDL_LockAudioDevice(s_dev);
          if (s_buffer_trace) {
-@@ -344,6 +353,101 @@ void audio_discard_playback(void)
+@@ -338,6 +347,101 @@ void audio_discard_playback(void)
      SDL_UnlockAudioDevice(s_dev);
  }
  
@@ -158,7 +158,7 @@ index 3c9acc4..3aa8269 100644
  void audio_flush(uint32_t wall_frame, int realtime,
                   const int16_t *fm_buf,  size_t fm_frames,
                   const int16_t *psg_buf, size_t psg_frames)
-@@ -377,28 +481,10 @@ void audio_flush(uint32_t wall_frame, int realtime,
+@@ -371,28 +475,10 @@ void audio_flush(uint32_t wall_frame, int realtime,
       * This is now a FIXED ratio-1 conversion, never rate-modulated: the DRC
       * bridge owns the band-limited downsample to the device rate and the
       * clock-domain servo, so this mix never drops/duplicates a sample. */
@@ -188,7 +188,7 @@ index 3c9acc4..3aa8269 100644
      if (s_extra_source)
          s_extra_source(s_out, psg_frames, s_mix_rate);
  
-@@ -412,6 +498,7 @@ void audio_flush(uint32_t wall_frame, int realtime,
+@@ -406,6 +492,7 @@ void audio_flush(uint32_t wall_frame, int realtime,
          else fwrite(s_out, 1, bytes, s_wav_file);
          s_wav_data_bytes += bytes;
      }
@@ -196,7 +196,7 @@ index 3c9acc4..3aa8269 100644
  
      /* Master volume — speaker output only (applied after the WAV tap, so paired
       * captures stay bit-deterministic regardless of this setting). */
-@@ -540,6 +627,7 @@ int audio_wav_start(const char *path)
+@@ -534,6 +621,7 @@ int audio_wav_start(const char *path)
  
  void audio_wav_stop(void)
  {
@@ -346,7 +346,7 @@ index 0615596..cb182d5 100644
  /* Drain iterator. Returns 1 if *out was filled, 0 if queue empty.
   * Call repeatedly until it returns 0 to walk the frame's events in order. */
 diff --git a/runner/audio/mixer.c b/runner/audio/mixer.c
-index c15f4d5..8982ece 100644
+index c15f4d5..3944f10 100644
 --- a/runner/audio/mixer.c
 +++ b/runner/audio/mixer.c
 @@ -55,6 +55,10 @@ void audio_mixer_init(void)
@@ -360,22 +360,16 @@ index c15f4d5..8982ece 100644
      /* Arm the FM shadow if opted in (GENESIS_AUDIO_SHADOW). Default OFF ⇒
       * every fm_shadow_* call below is a cheap no-op and audio is
       * byte-identical to the canon path. */
-@@ -83,6 +87,14 @@ void audio_mixer_init(void)
+@@ -82,7 +86,7 @@ void audio_mixer_init(void)
+  * that CLAIMS to fix the boop, so we can A/B which one actually causes the jump
   * SFX trailing-boop. Default 0 = current (shipping) behavior. Dev-only. */
  static int s_mix_toggle_read = 0;
- static int s_no_spread = 0, s_no_pairguard = 0, s_no_leftover = 0, s_no_clamp = 0;
-+/* Measurement-only: drop Z80-origin writes in the single-chip path, so the
-+ * 68K-only part of SOUND EFFECTS mode can be rendered as a reference for the
-+ * BOTH-mode chip-B comparison (docs/AUDIO.md §10). Never set in normal play. */
-+static int s_mute_z80 = 0;
-+/* Measurement-only: skip the cross-axis stamp sort in the single-chip path
-+ * (docs/AUDIO.md §10 uses it to separate "the 68K stream as issued" from "the
-+ * 68K stream after the merged-axis sort"). Never set in normal play. */
-+static int s_no_sort = 0;
+-static int s_no_spread = 0, s_no_pairguard = 0, s_no_leftover = 0, s_no_clamp = 0;
++static int s_no_spread = 0, s_no_pairguard = 0, s_no_clamp = 0;
  static AudioMixerExecutor s_executor;
  static void *s_executor_context;
  void audio_mixer_set_shadow_executor(AudioMixerExecutor executor,void *context)
-@@ -99,43 +111,63 @@ static int mixer_outputs_disjoint(const int16_t *fm,size_t fm_cap,
+@@ -99,43 +103,63 @@ static int mixer_outputs_disjoint(const int16_t *fm,size_t fm_cap,
  typedef struct MixerChipJob {
      const AudioOrderedEvent *events;size_t count;
      uint32_t end;int16_t *output;size_t capacity,written;
@@ -454,19 +448,20 @@ index c15f4d5..8982ece 100644
  }
  typedef struct {MixerChipJob *fm,*psg;} MixerMainJob;
  static void mixer_main_job(void *context)
-@@ -163,16 +195,184 @@ static void mixer_read_toggles(void) {
+@@ -161,11 +185,173 @@ static void mixer_read_toggles(void) {
+     const char *e;
+     if ((e = getenv("GENESIS_MIXER_NO_SPREAD"))    && *e && *e!='0') s_no_spread   = 1;
      if ((e = getenv("GENESIS_MIXER_NO_PAIRGUARD")) && *e && *e!='0') s_no_pairguard= 1;
-     if ((e = getenv("GENESIS_MIXER_RESET_LEFTOVER")) && *e && *e!='0') s_no_leftover = 1;
+-    if ((e = getenv("GENESIS_MIXER_RESET_LEFTOVER")) && *e && *e!='0') s_no_leftover = 1;
      if ((e = getenv("GENESIS_MIXER_NO_CLAMP"))     && *e && *e!='0') s_no_clamp    = 1;
-+    if ((e = getenv("GENESIS_AUDIO_MUTE_Z80"))     && *e && *e!='0') s_mute_z80    = 1;
-+    if ((e = getenv("GENESIS_AUDIO_NO_SORT"))      && *e && *e!='0') s_no_sort     = 1;
-+    if (s_no_sort) fprintf(stderr, "[MIXER-TOGGLE] no_sort=1 (measurement only)\n");
-+    if (s_mute_z80) fprintf(stderr, "[MIXER-TOGGLE] mute_z80=1 (measurement only)\n");
-     if (s_no_spread||s_no_pairguard||s_no_leftover||s_no_clamp)
-         fprintf(stderr, "[MIXER-TOGGLE] no_spread=%d no_pairguard=%d no_leftover=%d no_clamp=%d\n",
-                 s_no_spread, s_no_pairguard, s_no_leftover, s_no_clamp);
- }
- 
+-    if (s_no_spread||s_no_pairguard||s_no_leftover||s_no_clamp)
+-        fprintf(stderr, "[MIXER-TOGGLE] no_spread=%d no_pairguard=%d no_leftover=%d no_clamp=%d\n",
+-                s_no_spread, s_no_pairguard, s_no_leftover, s_no_clamp);
++    if (s_no_spread||s_no_pairguard||s_no_clamp)
++        fprintf(stderr, "[MIXER-TOGGLE] no_spread=%d no_pairguard=%d no_clamp=%d\n",
++                s_no_spread, s_no_pairguard, s_no_clamp);
++}
++
 +/* ---- Writer-routed dual-chip drain (BOTH mode) --------------------------
 + * The game's music driver and its 68K SFX engine program the same register
 + * file on real hardware, so running both means overwriting each other's
@@ -628,10 +623,10 @@ index c15f4d5..8982ece 100644
 +            (int32_t)(((int64_t)s_chip_psg_raw[0][i] * gm) >> 16) +
 +            (int32_t)(((int64_t)s_chip_psg_raw[1][i] * gs) >> 16));
 +    }
-+}
-+
+ }
+ 
  void audio_mixer_drain(uint32_t frame_end_cycle,
-                        int16_t *fm_stereo_out, size_t fm_cap, size_t *fm_written,
+@@ -173,6 +359,7 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
                         int16_t *psg_mono_out,  size_t psg_cap, size_t *psg_written)
  {
      mixer_read_toggles();
@@ -639,7 +634,7 @@ index c15f4d5..8982ece 100644
  
      /* Always-on APPLIED-order capture (env GENESIS_AUDIO_APPLIEDDUMP=<path>):
       * records every FM/PSG write in the order + timing the mixer actually
-@@ -211,13 +411,22 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -211,13 +398,22 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
          }
      }
  
@@ -660,11 +655,11 @@ index c15f4d5..8982ece 100644
 +     * keeps the 68K engine's register bursts intact: the two stamp axes are
 +     * not comparable, and sorting a 68K-only stream by the merged axis splits
 +     * its address/data pairs and re-orders a burst into nonsense. */
-+    if (!dual && !s_no_sort) audio_event_order(evs,scratch.ordered,n,!s_no_pairguard);
++    if (!dual) audio_event_order(evs,scratch.ordered,n,!s_no_pairguard);
  
      /* Multi-frame spreading: a handler that runs long (the Sega-scream PCM
       * V-int feeds ~118k DAC writes whose stamps span ~129 frames of machine
-@@ -230,7 +439,7 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -230,7 +426,7 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
       * (address, data) pair so a pair never straddles the boundary with a
       * foreign write able to sort between its halves next frame. */
      size_t n_apply = n;
@@ -673,7 +668,7 @@ index c15f4d5..8982ece 100644
      while (n_apply > 0 && evs[n_apply - 1].e.cycle_stamp > frame_end_cycle)
          n_apply--;
      if (n_apply > 0) {
-@@ -239,6 +448,40 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -239,6 +435,40 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
              n_apply--;   /* keep the orphan address with its deferred data */
      }
      }
@@ -714,18 +709,18 @@ index c15f4d5..8982ece 100644
      if (n_apply < n) {
          AudioEvent *defer=scratch.deferred;
          size_t d = 0;
-@@ -256,8 +499,8 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -256,8 +486,8 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
      static int16_t raw_fm[8192*2],raw_psg[8192];
      if(s_executor && fm_shadow_enabled() &&
         mixer_outputs_disjoint(fm_stereo_out,fm_cap,psg_mono_out,psg_cap)){
 -        MixerChipJob fm={evs,n_apply,frame_end_cycle,fm_stereo_out,fm_cap,0,0,raw_fm};
 -        MixerChipJob psg={evs,n_apply,frame_end_cycle,psg_mono_out,psg_cap,0,s_no_leftover,raw_psg};
 +        MixerChipJob fm={evs,n_apply,frame_end_cycle,fm_stereo_out,fm_cap,0,0,raw_fm,0,MIXER_ANY_ORIGIN};
-+        MixerChipJob psg={evs,n_apply,frame_end_cycle,psg_mono_out,psg_cap,0,!s_no_leftover,raw_psg,0,MIXER_ANY_ORIGIN};
++        MixerChipJob psg={evs,n_apply,frame_end_cycle,psg_mono_out,psg_cap,0,1,raw_psg,0,MIXER_ANY_ORIGIN};
          MixerMainJob main_job={&fm,&psg};
          s_executor(mixer_main_job,&main_job,mixer_shadow_job,&fm,s_executor_context);
          if(fm.output && fm.written)fm_shadow_verify_and_substitute(fm.output,fm.written);
-@@ -278,10 +521,103 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -278,8 +508,100 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
          }
          if(fm_written)*fm_written=fm.written;
          if(psg_written)*psg_written=psg.written;
@@ -765,7 +760,7 @@ index c15f4d5..8982ece 100644
 +        MixerChipJob fm0={evs,n_apply,frame_end_cycle,s_chip_fm[0],MIXER_CHIP_SAMPLES,0,0,
 +                          s_chip_fm_raw[0],0,mask_music};
 +        MixerChipJob psg0={evs,n_apply,frame_end_cycle,s_chip_psg[0],MIXER_CHIP_SAMPLES,0,
-+                           !s_no_leftover,s_chip_psg_raw[0],0,mask_music};
++                           1,s_chip_psg_raw[0],0,mask_music};
 +        mixer_fm_job(&fm0);  mixer_psg_job(&psg0);
 +
 +        /* Compact chip B's writers into the front of the frame array (chip A is
@@ -773,11 +768,11 @@ index c15f4d5..8982ece 100644
 +        size_t nb = 0;
 +        for (size_t i = 0; i < n_apply; i++)
 +            if (mixer_event_is_sfx(&evs[i].e)) evs[nb++] = evs[i];
-+        if (!s_no_sort) audio_event_order(evs, scratch.ordered, nb, !s_no_pairguard);
++        audio_event_order(evs, scratch.ordered, nb, !s_no_pairguard);
 +        MixerChipJob fm1={evs,nb,frame_end_cycle,s_chip_fm[1],MIXER_CHIP_SAMPLES,0,0,
 +                          s_chip_fm_raw[1],1,mask_sfx};
 +        MixerChipJob psg1={evs,nb,frame_end_cycle,s_chip_psg[1],MIXER_CHIP_SAMPLES,0,
-+                           !s_no_leftover,s_chip_psg_raw[1],1,mask_sfx};
++                           1,s_chip_psg_raw[1],1,mask_sfx};
 +        mixer_fm_job(&fm1);  mixer_psg_job(&psg1);
 +        /* The mix uses the shorter of the two chips' frame; report the same
 +         * counts to the per-chip export so exporting and mixing agree exactly
@@ -825,11 +820,19 @@ index c15f4d5..8982ece 100644
 +
      for (size_t i = 0; i < n_apply; i++) {
          AudioEvent e = evs[i].e;
-+        if (s_mute_z80 && e.origin == AUDIO_ORIGIN_Z80) continue;
          if (e.port == AUDIO_PORT_PSG) {
-             if (e.cycle_stamp < psg_prev) e.cycle_stamp = psg_prev;
-             uint32_t delta = e.cycle_stamp - psg_prev;
-@@ -359,6 +695,16 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+@@ -329,9 +651,7 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
+      * it is why the offline tap was 3732 samples/frame instead of 3733.5.
+      * The remainder is kept now so the audio sample clock is the guest clock
+      * exactly (task 18 tempo fidelity); 3733/3734 samples alternate and the
+-     * long-run average is exact. GENESIS_MIXER_RESET_LEFTOVER=1 restores the
+-     * old per-frame reset for A/B measurement only. */
+-    if (s_no_leftover) psg_reset_leftover();
++     * long-run average is exact. */
+ 
+     /* Copy generated samples into the caller's buffers. */
+     size_t fm_avail  = ym2612_samples_available();
+@@ -359,6 +679,16 @@ void audio_mixer_drain(uint32_t frame_end_cycle,
          filter_present(psg_mono_out,raw_psg,psg_n,1,&s_psg_filter_mix,s_psg_filter_span,1);
      if((fm_stereo_out && fm_n>0) || (psg_mono_out && psg_n>0))s_filter_started=1;
  

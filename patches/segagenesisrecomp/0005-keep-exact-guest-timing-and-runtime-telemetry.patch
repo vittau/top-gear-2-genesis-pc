@@ -1,4 +1,4 @@
-From 4fe0b730dc1933991a5c7e12ebcb80f88153ef4a Mon Sep 17 00:00:00 2001
+From 44a99ef980ece33604854bcda9bf74045e1502c7 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Keep exact guest timing and runtime telemetry
