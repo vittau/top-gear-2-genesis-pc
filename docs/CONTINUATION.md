@@ -4,41 +4,37 @@ Historical log, preserved verbatim: [continuation-log-2026-11.md](history/contin
 
 ## Shipped
 
-The latest public release recorded in this repository is **v0.3.0**, tagged at
-`7e19228` ([release notes](../release/v0.3.0.md)). It includes widescreen,
-60-fps races, BOTH audio, save states, volumes, linear filtering, high-resolution
-road/background and detailed actors with continuous growth, RT/LT pedals and
-the native four-row setup carousel. S3, S4 and continuous actor growth were
-owner-approved and merged; they are not unfinished implementation assignments.
-The seven additional ordinary actor kinds also shipped (`06335bd` precedes
-the release tag).
+The latest public release is **v0.4.0**, tagged at `999d641` and published on
+2026-11-12 ([release notes](../release/v0.4.0.md), CI run 43313690404, all
+three platforms green). It contains everything in v0.3.0 (`7e19228`:
+widescreen, 60-fps races, BOTH audio, save states, volumes, linear filtering,
+high-resolution road/background, detailed actors with continuous growth, RT/LT
+pedals, the native four-row setup carousel) plus:
 
-Internal resolution defaults to 1×; 2×/3×/4× remains experimental and requires a
-restart. HUD/sky/poles/special artwork retain native detail. The owner has played
-Linux, Apple Silicon macOS and the Deck tarball; Windows/Intel macOS still lack
-real-device playtests. Physical trigger testing and Deck N× performance remain
-unverified. Preserve the Deck user's extracted tarball folder, ROM/settings/
-saves and existing Steam shortcut; do not require migration to AppImage.
+- smoother N× road: bounded whole-band fit of silhouettes and inner colour
+  boundaries within two native pixels ([road-wobble.md](reviews/road-wobble.md));
+- BOTH engine sound kept across quickstate loads from the menus and rewinds
+  (engine patch 0015, optional chip-1 trailer; older states still load —
+  [engine-sound-load.md](reviews/engine-sound-load.md));
+- launcher volume sliders and Race Sound labels, wrapped option help, the
+  synced Race Sound page;
+- the architecture review (Phases A–D and closing, `docs/reviews/`): safe patch
+  application, `tools/regression.py` golden, release diagnostic guards, single
+  version source, 16 area patches, native BOTH policy.
 
-## Main since that release
+S3, S4, continuous actor growth and the road smoothing were owner-approved;
+they are not unfinished assignments. Internal resolution defaults to 1×;
+2×/3×/4× remains experimental and requires a restart. HUD/sky/poles/special
+artwork retain native detail. The owner has played Linux, Apple Silicon macOS
+and the Deck tarball; Windows/Intel macOS still lack real-device playtests.
+Physical trigger testing and Deck N× performance remain unverified. Preserve
+the Deck user's extracted tarball folder, ROM/settings/saves and existing Steam
+shortcut; do not require migration to AppImage.
 
-The review work through `597f287` is merged but **not in v0.3.0**:
-
-- Phase A: safe in-place engine patch application with snapshots and tree stamps,
-  removal of retired state, and measured baseline preservation.
-- Phase B: game modules/headers/options cleanup, release diagnostic guards,
-  a single version source and the official picture/audio regression tool.
-- Overlay footer: help text wraps inside the panel at default and Deck sizes.
-- Phase C: 47 historical patches consolidated into 16 area patches, local
-  commit/export maintenance modes, dead-code removal and game-owned data paths.
-- Phase D: native BOTH sound policy and menu row drawing replace temporary
-  sound-word steering and frame-post repainting, preserving the golden output.
-
-The closing review additionally synchronizes live RACE SOUND page choices and
-repairs the HUD checker; evidence is in [closing.md](reviews/closing.md).
-No new release or cross-platform CI qualification accompanies these reviews.
 Launcher enhancements continue to be presented as **mods**. Keep the finished
 Music/SFX faders; the rejected Clean FM/engine-sample options must not return.
+`tools/regression.py` needs Python 3.11+ (on the Mac use
+`/opt/homebrew/bin/python3.14`).
 
 ## Open work
 
