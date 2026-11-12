@@ -113,3 +113,61 @@ and 174/174 base/final capture artifacts equal; this repair changes the checker,
 not those pictures. Pillow was installed as a binary wheel in the ignored
 probe venv; the first attempts used a venv without Pillow and an unavailable
 historical venv path, before the recorded reproduction above.
+
+Representative extra live-page images (the same filenames also exist under
+`build/closing/sequences/on/`):
+
+| Transition | Options-off PNG |
+| --- | --- |
+| SFX → MUSIC | `build/closing/sequences/off/0-0-to-1.png` |
+| MUSIC → SFX | `build/closing/sequences/off/1-1-to-0.png` |
+| SFX → BOTH | `build/closing/sequences/off/2-0-to-2.png` |
+| BOTH → SFX | `build/closing/sequences/off/3-2-to-0.png` |
+| MUSIC → BOTH | `build/closing/sequences/off/5-1-to-2.png` |
+| BOTH → MUSIC | `build/closing/sequences/off/6-2-to-1.png` |
+
+## Current-state continuation document
+
+`docs/CONTINUATION.md` is now 101 lines instead of 373: recorded shipped state,
+post-release main/review work, open items, resume commands and evidence links.
+It no longer simultaneously says S4 is pending and merged, revives old worker
+handles, or treats obsolete Deck drafts as current assignments. Current open
+items retain poles (38), the daytime Ayers stage-2 audit diagnosis (41), S5–S7,
+the owner-paused NTSC/licence gate (28), real-platform/physical-trigger checks
+and the remaining roadmap backlog. It preserves the reduced high-resolution
+qualification recipe, Deck tarball/shortcut continuity, withdrawn-option
+constraints and visible-launch environment caveat.
+
+Facts were checked against `release/v0.3.0.md`, task status headers, the old log
+and Git history. `v0.3.0^{}` resolves to
+`7e19228fa7edbd683270f05b71f19416a486d265`; `git merge-base --is-ancestor` exits 0
+for the S3 (`a205759`), S4 (`a8041a2`), continuous (`9f8345a`), extra-kind
+(`06335bd`) and trigger/menu (`6f05d76`) commits against that tag. Thus these
+features shipped, while the subsequent A–D review commits are not in v0.3.0.
+The document describes the release recorded in this repository, without
+claiming that online release metadata was rechecked.
+
+The full previous text is copied **verbatim**, including its historical
+contradictions, into `docs/history/continuation-log-2026-11.md`; the new document
+has a one-line pointer marking it historical. Byte equality against
+`git show 597f287:docs/CONTINUATION.md` passes: **24,643 bytes**, SHA-256
+`92acd7ed3c7358b371ada79631c96ddb0e860f2c1aaa23c0333191fb00332db0`.
+All relative file links in the new document resolve. The only AGENTS change
+is its one-line description of CONTINUATION's purpose. Evidence checks exit 0
+and are recorded in `build/closing/e3-checks.json`; `git diff --check` also
+exits 0. No rebuild is needed for these documentation changes.
+
+## Commits and limits
+
+- `f0c9050`: native live-page fix and the fourteen authorized golden updates.
+- `f384db3`: HUD evidence/ownership checker repair with fresh passing captures.
+- The continuation/archive/report update is committed separately after those.
+
+All completed captures have empty dispatch/floor/interior/unsafe manifests;
+all builds use the shared outer lock and at most three jobs. E1 dev and
+trace-OFF release pass the complete golden, with all ten WAV hashes unchanged.
+There is no new hook/seed, generated-C edit, engine patch/pin change, CI action,
+tag, release or merge. PNGs, dumps and local probe scripts stay under `build/`.
+Unverified: real hardware listening/controllers, actual Linux/Windows/Deck
+runtime/packaging and CI. The HUD check is qualified for its fixed baseline
+route/layout; it does not claim arbitrary-track raster reconstruction.

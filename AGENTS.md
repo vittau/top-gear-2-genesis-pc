@@ -9,7 +9,7 @@ framework. The finished port runs **widescreen (adaptive, 16:9+)** at a
 suggestion, not a spec. Some of the tools it names don't exist as described.
 
 Read `docs/CONTINUATION.md` when resuming coordination or high-resolution work;
-it records the accepted S3, Steam Deck draft/playtest and S4 starting point.
+it records current shipped/main state, open work, and validation entry points.
 
 ## Layout
 
