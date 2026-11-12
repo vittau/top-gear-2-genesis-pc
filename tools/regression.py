@@ -77,6 +77,10 @@ def capture(args):
                    '--widescreen', '16:9' if presentation == 'on' else 'off',
                    '--input-script', str(script), '--max-frames', '5500',
                    '--hash-frames', '60', '--fresh-evidence', '--debug', '--turbo', '--wav', str(wav)]
+            if args.benchmark:
+                # The engine benchmark still renders the game framebuffer and
+                # drains chip audio; it skips host upload/persistence/vsync.
+                cmd.extend(['--benchmark', '5500'])
             try:
                 with (directory / 'run.log').open('w') as log:
                     # subprocess.run kills and waits for its child on timeout.
@@ -119,6 +123,7 @@ def main():
     parser.add_argument('--record', action='store_true')
     parser.add_argument('--scale', type=int, choices=range(1, 5), default=1, help='additional N× checks need their own --golden file')
     parser.add_argument('--video-driver', default='dummy', help='SDL driver (dummy works on macOS and Linux; offscreen optional)')
+    parser.add_argument('--benchmark', action='store_true', help='skip host presentation/persistence/pacing (same game framebuffer and chip audio)')
     parser.add_argument('--timeout', type=int, default=180, help='per-case timeout in seconds')
     args = parser.parse_args()
     if args.scale != 1 and args.golden == GOLDEN:
