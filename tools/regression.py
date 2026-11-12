@@ -49,6 +49,28 @@ def route_script(path):
     path.write_text('\n'.join(lines + ['WAIT 200', 'EXIT 0']) + '\n')
 
 
+def insert_options(text, changes):
+    """Split absolute WAIT spans; RELEASE/HOLD/OPTION consume no frames."""
+    lines, frame = [], 1
+    pending = dict(changes)
+    for line in text.splitlines():
+        if line.startswith('WAIT '):
+            end = frame + int(line.split()[1])
+            for at in sorted(k for k in pending if frame <= k < end):
+                if at > frame:
+                    lines.append(f'WAIT {at - frame}')
+                lines.append(f'OPTION mods.racesound.mode {pending.pop(at)}')
+                frame = at
+            if end > frame:
+                lines.append(f'WAIT {end - frame}')
+            frame = end
+        else:
+            lines.append(line)
+    if pending:
+        raise ValueError(f'live options past end of script: {pending}')
+    return '\n'.join(lines) + '\n'
+
+
 def capture(args):
     import tomllib
     out = args.out.resolve()
@@ -56,63 +78,96 @@ def capture(args):
     script = out / 'route.input'
     route_script(script)
     result, counts = {}, {}
-    for presentation in ('off', 'on'):
-        for sound in ('sfx', 'music'):
-            name = f'{presentation}-{sound}'
-            directory = out / name
-            directory.mkdir(exist_ok=True)
-            (directory / 'settings.ini').write_text('[meta]\nsettings_version = 2\n')
-            wav = directory / 'race.wav'
-            # An isolated settings directory and explicit overrides prevent a
-            # developer's saved options/diagnostic environment affecting the run.
-            env = {k: v for k, v in os.environ.items()
-                   if not k.startswith(('TG2_', 'GENESIS_', 'LNG_'))}
-            env.update(SDL_VIDEODRIVER=args.video_driver, SDL_AUDIODRIVER='dummy',
-                       SDL_RENDER_DRIVER='software', SDL_RENDER_VSYNC='0', GENESIS_USER_DIR=str(directory) + '/',
-                       TG2_RACE_60FPS=str(int(presentation == 'on')),
-                       TG2_HIDE_OVERSCAN=str(int(presentation == 'on')),
-                       TG2_HUD_MODE='centered', TG2_RACE_SOUND=sound,
-                       TG2_HIGHRES_SCALE=str(args.scale))
-            cmd = [str(args.exe.resolve()), str(args.rom.resolve()), '--no-launcher',
-                   '--widescreen', '16:9' if presentation == 'on' else 'off',
-                   '--input-script', str(script), '--max-frames', '5500',
-                   '--hash-frames', '60', '--fresh-evidence', '--debug', '--turbo', '--wav', str(wav)]
-            if args.uncapped:
-                # Full runtime measurement preserves rendering and WAV work;
-                # the separate engine benchmark profile suppresses WAV audio.
-                at = cmd.index('--max-frames')
-                del cmd[at:at + 2]
-                cmd.remove('--turbo')
-                cmd.extend(['--measure-runtime', '5400', '--runtime-uncapped'])
-            try:
-                with (directory / 'run.log').open('w') as log:
-                    # subprocess.run kills and waits for its child on timeout.
-                    completed = subprocess.run(cmd, env=env, stdout=log,
-                                               stderr=subprocess.STDOUT, timeout=args.timeout)
-                if completed.returncode:
-                    raise RuntimeError(f'{name}: exit {completed.returncode}; see {directory / "run.log"}')
-                frames = {}
-                for frame, width, height, value in re.findall(
-                        r'\[FBHASH\] frame=(\d+) w=(\d+) h=(\d+) hash=0x([0-9A-Fa-f]+)',
-                        (directory / 'run.log').read_text()):
-                    frames[frame] = dict(width=int(width), height=int(height), hash=value.upper())
-                expected_frames = {str(f) for f in range(60, 5400, 60)}
-                if frames.keys() != expected_frames:
-                    raise RuntimeError(f'{name}: incomplete frame cadence ({len(frames)}/89)')
-                digest = hashlib.sha256()
-                with wav.open('rb') as stream:
-                    for chunk in iter(lambda: stream.read(65536), b''):
-                        digest.update(chunk)
-                counts[name] = {}
-                for filename, (section, key) in MANIFESTS.items():
-                    manifest = tomllib.loads((directory / filename).read_text())
-                    counts[name][filename] = len(manifest[section][key])
-                if any(counts[name].values()):
-                    raise RuntimeError(f'{name}: nonempty evidence: {counts[name]}')
-                result[name] = dict(frames=frames, wav_sha256=digest.hexdigest())
-                print(f'{name}: {len(frames)} frames, WAV {digest.hexdigest()}, manifests {counts[name]}', flush=True)
-            finally:
-                wav.unlink(missing_ok=True)
+    cases = [(f'{p}-{s}', p, s, False, False) for p in ('off', 'on')
+             for s in ('sfx', 'music', 'both')]
+    cases += [(f'{p}-live-race', p, 'both', True, False) for p in ('off', 'on')]
+    cases += [(f'{p}-sound-page', p, 'sfx', False, True) for p in ('off', 'on')]
+    for name, presentation, sound, live, page in cases:
+        directory = out / name
+        directory.mkdir(exist_ok=True)
+        (directory / 'settings.ini').write_text('[meta]\nsettings_version = 2\n')
+        case_script = script
+        limit = 5400
+        shots = []
+        if live:
+            case_script = directory / 'route.input'
+            # OPTION uses exactly the runtime-menu setter, at fixed frames.
+            text = script.read_text()
+            case_script.write_text(insert_options(text, {4200: 0, 4500: 1, 4800: 2}))
+        if page:
+            case_script = directory / 'route.input'
+            lines = ['WAIT 400', 'PRESS START 8', 'WAIT 200', 'PRESS DOWN 6',
+                     'WAIT 40', 'PRESS DOWN 6', 'WAIT 40', 'PRESS START 8',
+                     'WAIT 200', 'PRESS START 8', 'WAIT 200',
+                     'ASSERT_RAM16 0xFF2554 4']
+            def shot(label):
+                target = directory / (label + '.png')
+                shots.append(target)
+                lines.extend(['SCREENSHOT ' + str(target), 'WAIT 1'])
+            shot('sfx')
+            for key, label in [('DOWN', 'music'), ('DOWN', 'both'),
+                               ('UP', 'music-again'), ('UP', 'sfx-again')]:
+                lines.extend(['PRESS ' + key + ' 6', 'WAIT 120'])
+                shot(label)
+            for mode in (2, 1, 0):
+                lines.extend([f'OPTION mods.racesound.mode {mode}', 'WAIT 120'])
+                shot('live-' + ('sfx', 'music', 'both')[mode])
+            lines.append('WAIT 300')
+            case_script.write_text('\n'.join(lines) + '\n')
+            limit = 2161
+        wav = directory / 'race.wav'
+        # An isolated settings directory and explicit overrides prevent a
+        # developer's saved options/diagnostic environment affecting the run.
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(('TG2_', 'GENESIS_', 'LNG_'))}
+        env.update(SDL_VIDEODRIVER=args.video_driver, SDL_AUDIODRIVER='dummy',
+                   SDL_RENDER_DRIVER='software', SDL_RENDER_VSYNC='0', GENESIS_USER_DIR=str(directory) + '/',
+                   TG2_RACE_60FPS=str(int(presentation == 'on')),
+                   TG2_HIDE_OVERSCAN=str(int(presentation == 'on')),
+                   TG2_HUD_MODE='centered', TG2_RACE_SOUND=sound,
+                   TG2_HIGHRES_SCALE=str(args.scale))
+        cmd = [str(args.exe.resolve()), str(args.rom.resolve()), '--no-launcher',
+               '--widescreen', '16:9' if presentation == 'on' else 'off',
+               '--input-script', str(case_script), '--max-frames', str(limit if page else 5500),
+               '--hash-frames', '60', '--fresh-evidence', '--debug', '--turbo', '--wav', str(wav)]
+        if args.uncapped:
+            # Full runtime measurement preserves rendering and WAV work;
+            # the separate engine benchmark profile suppresses WAV audio.
+            at = cmd.index('--max-frames')
+            del cmd[at:at + 2]
+            cmd.remove('--turbo')
+            cmd.extend(['--measure-runtime', str(limit), '--runtime-uncapped'])
+        try:
+            with (directory / 'run.log').open('w') as log:
+                # subprocess.run kills and waits for its child on timeout.
+                completed = subprocess.run(cmd, env=env, stdout=log,
+                                           stderr=subprocess.STDOUT, timeout=args.timeout)
+            if completed.returncode:
+                raise RuntimeError(f'{name}: exit {completed.returncode}; see {directory / "run.log"}')
+            frames = {}
+            for frame, width, height, value in re.findall(
+                    r'\[FBHASH\] frame=(\d+) w=(\d+) h=(\d+) hash=0x([0-9A-Fa-f]+)',
+                    (directory / 'run.log').read_text()):
+                frames[frame] = dict(width=int(width), height=int(height), hash=value.upper())
+            expected_frames = {str(f) for f in range(60, limit, 60)}
+            if frames.keys() != expected_frames:
+                raise RuntimeError(f'{name}: incomplete frame cadence ({len(frames)}/{len(expected_frames)})')
+            digest = hashlib.sha256()
+            with wav.open('rb') as stream:
+                for chunk in iter(lambda: stream.read(65536), b''):
+                    digest.update(chunk)
+            counts[name] = {}
+            for filename, (section, key) in MANIFESTS.items():
+                manifest = tomllib.loads((directory / filename).read_text())
+                counts[name][filename] = len(manifest[section][key])
+            if any(counts[name].values()):
+                raise RuntimeError(f'{name}: nonempty evidence: {counts[name]}')
+            result[name] = dict(frames=frames, wav_sha256=digest.hexdigest())
+            if shots:
+                result[name]['screenshots'] = {p.stem: hashlib.sha256(p.read_bytes()).hexdigest() for p in shots}
+            print(f'{name}: {len(frames)} frames, WAV {digest.hexdigest()}, manifests {counts[name]}', flush=True)
+        finally:
+            wav.unlink(missing_ok=True)
     (out / 'manifest-counts.json').write_text(json.dumps(counts, indent=2) + '\n')
     return result
 
@@ -143,7 +198,7 @@ def main():
             sys.stderr.writelines(difflib.unified_diff(expected.splitlines(True), actual.splitlines(True),
                                                      fromfile=str(args.golden), tofile='actual'))
             return 1
-        print('PASS: all 356 frame hashes and four WAV hashes match; all manifest counts zero.')
+        print('PASS: all frame, WAV and SOUND-page screenshot hashes match; all manifest counts zero.')
         return 0
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f'FAIL: {error}', file=sys.stderr)
