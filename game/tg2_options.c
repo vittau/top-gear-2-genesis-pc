@@ -16,10 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if RECOMP_LAUNCHER
 #include "recomp_launcher.h"
 #include "recomp_runtime_ui.h"
-#endif
 
 /* ── Option registry ─────────────────────────────────────────────────────── */
 
@@ -104,7 +102,7 @@ static const Tg2Option s_options[] = {
       "Centered keeps the widescreen HUD with the car and effects. Edges "
       "anchors the instruments and track map to the left and right margins. "
       "Only meaningful while widescreen is on.",
-      "Edges", "Centered",
+      NULL, NULL,
       0, &s_hud_edges, TG2_OPT_CHOICE, s_hud_choices, s_hud_labels, 2,
       tg2_video_set_hud_mode },
     { "overscan", "mods.overscan", "hidden",
@@ -122,7 +120,7 @@ static const Tg2Option s_options[] = {
       "Stock Top Gear 2 races play either music or sound effects. Both runs "
       "both: the cartridge's music driver stays resident while the race SFX "
       "engine also runs. The in-game SOUND menu offers the same choice.",
-      "Both", "Sound effects",
+      NULL, NULL,
       0, &s_racesound, TG2_OPT_CHOICE, s_sound_choices, s_sound_labels, 3,
       apply_race_sound },
     /* Music and sound effects are separate faders. The split is by *writer*
@@ -134,27 +132,17 @@ static const Tg2Option s_options[] = {
       "Music level, as a percentage of the stock mix. Only the cartridge's "
       "music driver is affected; engine, nitro and effect sounds keep their "
       "own slider. 100% is the stock level.",
-      "100%", "0%",
+      NULL, NULL,
       100, &s_musicvol, TG2_OPT_INT, NULL, NULL, 0, apply_musicvol, 0, 100, 5 },
     { "sfxvol", "mods.sfxvol", "level",
       "SFX volume", "SFX volume", "Sound",
       "Sound-effects level, as a percentage of the stock mix: the 68K FM/PSG "
       "engine and the race Z80 sample player (engine, nitro, impacts). Music "
       "keeps its own slider. 100% is the stock level.",
-      "100%", "0%",
+      NULL, NULL,
       100, &s_sfxvol, TG2_OPT_INT, NULL, NULL, 0, apply_sfxvol, 0, 100, 5 },
 };
 #define TG2_OPTION_COUNT ((int)(sizeof s_options / sizeof s_options[0]))
-
-/* Options that shipped for a while and were withdrawn by the owner after
- * listening (2026-11-09). An older settings.ini may still carry their
- * sections: loading ignores them (nothing reads those keys) and the next save
- * drops them. */
-static const char *const s_retired_sections[] = {
-    "mods.cleanfm",
-    "mods.dacresample",
-};
-#define TG2_RETIRED_COUNT ((int)(sizeof s_retired_sections / sizeof s_retired_sections[0]))
 
 int tg2_race60_requested(void) { return s_race60 != 0; }
 
@@ -209,48 +197,13 @@ static int parse_option(const Tg2Option *o, const char *v)
     return parse_bool(v) ? 1 : 0;
 }
 
-/* One-time migration for the pre-settings.ini surface: tg2.ini next to the
- * executable used to hold race_60fps. Read only when settings.ini has no
- * [mods.race60] section yet. */
-static int legacy_ini_bool(const char *settings_path, const char *key, int *out)
-{
-    if (!settings_path || !*settings_path) return 0;
-    char path[1200];
-    snprintf(path, sizeof path, "%s", settings_path);
-    char *a = strrchr(path, '/'), *b = strrchr(path, '\\');
-    char *sep = !a ? b : !b ? a : a > b ? a : b;
-    size_t off = sep ? (size_t)(sep + 1 - path) : 0;
-    snprintf(path + off, sizeof path - off, "tg2.ini");
-    FILE *f = fopen(path, "rb");
-    if (!f) return 0;
-    char line[256];
-    size_t klen = strlen(key);
-    int found = 0;
-    while (fgets(line, sizeof line, f)) {
-        char *p = line;
-        while (*p == ' ' || *p == '\t') ++p;
-        if (*p == '#' || *p == ';' || *p == '[' || *p == '\0') continue;
-        if (strncmp(p, key, klen)) continue;
-        p += klen;
-        while (*p == ' ' || *p == '\t') ++p;
-        if (*p != '=' && *p != ':') continue;
-        ++p;
-        *out = parse_bool(p);
-        found = 1;
-    }
-    fclose(f);
-    return found;
-}
-
 void tg2_options_load(const char *settings_path)
 {
     for (int i = 0; i < TG2_OPTION_COUNT; ++i)
         *s_options[i].value = s_options[i].default_value;
-    int seen[TG2_OPTION_COUNT] = {0};
     FILE *f = settings_path ? fopen(settings_path, "rb") : NULL;
     char line[512];
     const Tg2Option *current = NULL;
-    int current_index = -1;
     while (f && fgets(line, sizeof line, f)) {
         char *s = trim(line);
         if (!*s || *s == ';' || *s == '#') continue;
@@ -258,11 +211,9 @@ void tg2_options_load(const char *settings_path)
             char *end = strchr(s, ']');
             if (end) *end = '\0';
             current = NULL;
-            current_index = -1;
             for (int i = 0; i < TG2_OPTION_COUNT; ++i)
                 if (!strcmp(s + 1, s_options[i].section)) {
                     current = &s_options[i];
-                    current_index = i;
                 }
             continue;
         }
@@ -273,12 +224,8 @@ void tg2_options_load(const char *settings_path)
         char *key = trim(s);
         if (strcmp(key, current->key)) continue;
         *current->value = parse_option(current, trim(eq + 1));
-        seen[current_index] = 1;
     }
     if (f) fclose(f);
-    for (int i = 0; i < TG2_OPTION_COUNT; ++i)
-        if (!seen[i] && !strcmp(s_options[i].id, "race60"))
-            (void)legacy_ini_bool(settings_path, "race_60fps", &s_race60);
     for (int i = 0; i < TG2_OPTION_COUNT; ++i)
         apply_option(&s_options[i]);
 }
@@ -311,8 +258,6 @@ int tg2_options_save(const char *settings_path)
             skip = 0;
             for (int i = 0; i < TG2_OPTION_COUNT; ++i)
                 if (!strcmp(s + 1, s_options[i].section)) skip = 1;
-            for (int i = 0; i < TG2_RETIRED_COUNT; ++i)
-                if (!strcmp(s + 1, s_retired_sections[i])) skip = 1;
         }
         if (!skip) fputs(line, out);
     }
@@ -381,7 +326,6 @@ void tg2_options_apply_env(void)
 
 /* ── In-game overlay rows ─────────────────────────────────────────────────── */
 
-#if RECOMP_LAUNCHER
 /* One player-facing video/audio group across shared and game descriptors.
  * Settings keys and the descriptor order within each group stay unchanged. */
 static const char *runtime_section_name(const char *section) {
@@ -431,17 +375,11 @@ static const RecompRuntimeUiItem s_runtime_items[] = {
       "engine also runs. The in-game SOUND menu offers the same choice.",
       RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, s_sound_labels, 3, NULL },
 };
-#endif
 
 const struct RecompRuntimeUiItem *tg2_options_runtime_items(size_t *count)
 {
-#if RECOMP_LAUNCHER
     if (count) *count = sizeof s_runtime_items / sizeof s_runtime_items[0];
     return s_runtime_items;
-#else
-    if (count) *count = 0;
-    return NULL;
-#endif
 }
 
 int tg2_options_runtime_get(const char *key, int *out)
@@ -477,11 +415,7 @@ int tg2_options_runtime_set(const char *key, int value)
 
 /* ── Headless overlay driver (debug command) ──────────────────────────────── */
 
-#if RECOMP_LAUNCHER
 int runner_runtime_ui_open(void);   /* runner/main.c */
-#else
-static int runner_runtime_ui_open(void) { return 0; }
-#endif
 
 static void push_key(SDL_Keycode key)
 {
@@ -536,7 +470,6 @@ void tg2_options_ui_command(int id, const char *json)
 
 /* ── Launcher mod provider ────────────────────────────────────────────────── */
 
-#if RECOMP_LAUNCHER
 static const RecompLauncherCModProvider *s_base;
 static char s_error[160];
 
@@ -618,7 +551,7 @@ static int tg2_feature_get(void *ctx, int i, RecompLauncherCModFeature *out)
         snprintf(out->status, sizeof out->status, "%s",
                  *o->value ? o->status_on : o->status_off);
     out->enabled = o->kind == TG2_OPT_INT ? 1 : (*o->value != 0);
-    out->option_count = o->kind == TG2_OPT_CHOICE ? 1 : 0;
+    out->option_count = o->kind == TG2_OPT_BOOL ? 0 : 1;
     return 1;
 }
 
@@ -652,10 +585,8 @@ static int tg2_option_get(void *ctx, const char *package, const char *feature,
             out->step = 1;
             out->choice_count = o->choice_count;
             snprintf(out->id, sizeof out->id, "%s", o->key);
-            snprintf(out->label, sizeof out->label, "Placement");
-            snprintf(out->description, sizeof out->description,
-                     "Centered keeps the HUD with the car; Edges anchors it to the "
-                     "widescreen margins.");
+            snprintf(out->label, sizeof out->label, "%s", o->name);
+            snprintf(out->description, sizeof out->description, "%s", o->description);
             snprintf(out->value, sizeof out->value, "%s", o->choices[*o->value]);
             snprintf(out->default_value, sizeof out->default_value, "%s",
                      o->choices[o->default_value]);
@@ -785,11 +716,3 @@ const RecompLauncherCModProvider *tg2_mods(const RecompLauncherCModProvider *bas
     result.last_error = tg2_last_error;
     return &result;
 }
-#else
-struct RecompLauncherCModProvider;
-const struct RecompLauncherCModProvider *tg2_mods(
-    const struct RecompLauncherCModProvider *base)
-{
-    return base;
-}
-#endif
