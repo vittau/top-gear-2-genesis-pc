@@ -43,7 +43,7 @@ static Projection pending;
 static struct {
     uint64_t actors, native, fallbacks, positions, palettes, priorities;
     uint64_t kinds[256], reasons[8];
-    double floor_error, anchor_error;
+    double floor_error;
 } totals;
 
 /* ---- LOD evidence log (TG2_ACTOR_LOG=path), qualification only ---------- */
@@ -190,7 +190,7 @@ static void evidence_hook(uint32_t pc) {
 int tg2_actors_active(void) {
     static int allowed = -1;
     if (allowed < 0) { const char *s = getenv("TG2_ACTORS"); allowed = !s || *s != '0'; }
-    return allowed && tg2_highres_present_scale() > 1;
+    return allowed && tg2_highres_scale() > 1;
 }
 void tg2_actors_latch(uint32_t pc) { evidence_hook(pc); }
 void tg2_actors_log_header(void) { evidence_hook(0xB5FA); }
@@ -199,11 +199,11 @@ void tg2_actors_begin(Tg2ActorSet *set) { memset(set, 0, sizeof *set); pending.p
 /* All addresses/attributes are resolved while the mapper owns this record.
  * Presentation subsequently reads only these pieces and the displayed VRAM. */
 static int capture_model(Tg2ActorSet *set, unsigned record, unsigned model,
-                         unsigned *key, unsigned short *first, unsigned short *count) {
+                         unsigned short *first, unsigned short *count) {
     unsigned art = mem32(record), table = mem32(record + 4);
     if (!valid_pointer(art) || !valid_pointer(table) || model >= 40) return 0;
     unsigned h = mem32(table + model * 4), start = set->piece_count;
-    *key = h; *first = start; *count = 0;
+    *first = start; *count = 0;
     if (!valid_pointer(h)) return 0;
     for (unsigned n = 0; n < 16; ++n, h += 10) {
         unsigned list = art + 8 + mem16(h), pieces = mem16(list);
@@ -275,12 +275,12 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
         (record >= 0xFF8E94 && ram16(0x1878) == ram16(0x17D6))) { ++set->native_objects; return -1; }
     if (set->count == TG2_MAX_ACTORS) { ++set->dropped; return -1; }
     Tg2Actor a = {0};
-    a.record = record; a.art = mem32(record); a.kind = kind; a.path = path;
+    a.record = record; a.kind = kind; a.path = path;
     a.car = record >= 0xFF8E94; a.guest_model = g_cpu.D[7] & 255;
     unsigned level = a.guest_model;
     a.model = a.car ? car_model(a.guest_model, &level) : tabulated(kind) ? 0 : a.guest_model;
     a.fallback = !a.car && !tabulated(kind) ? 1 : 0;
-    a.level = level; a.rattr = mem16(record + 8); a.scale = ram16(0x17E0);
+    a.level = level; a.scale = ram16(0x17E0);
     a.scale4 = pending.d4 & 65535;
     /* $A41C indexes kind $81's moving-object slot with the original low
      * byte at $FF1800. Its projected lateral changes, its slot does not. */
@@ -318,11 +318,11 @@ int tg2_actors_object(Tg2ActorSet *set, unsigned piece_index) {
     double reference = projection_reference(a.car);
     a.continuous = reference > 0 ? a.projection / reference : 0;
     unsigned start = set->piece_count;
-    if (!capture_model(set, record, a.guest_model, &a.guest_key, &a.guest_first, &a.guest_count)) {
+    if (!capture_model(set, record, a.guest_model, &a.guest_first, &a.guest_count)) {
         ++set->dropped; return -1;
     }
-    if (!capture_model(set, record, a.model, &a.model_key, &a.model_first, &a.model_count)) {
-        a.model = a.guest_model; a.model_key = a.guest_key; a.model_first = a.guest_first;
+    if (!capture_model(set, record, a.model, &a.model_first, &a.model_count)) {
+        a.model = a.guest_model; a.model_first = a.guest_first;
         a.model_count = a.guest_count; a.fallback = 2;
     }
     if (set->piece_count < start) return -1;
@@ -483,8 +483,6 @@ void tg2_actors_paint(const Tg2ActorCanvas *c) {
         const Art *m=&art_cache[p->art];
         double k=p->size*c->scale, ax=(a->x+c->origin)*c->scale, ay=a->y*c->scale;
         p->drawn_x=ax;p->drawn_y=ay;p->draw_origin=c->origin;p->draw_scale=c->scale;
-        error=fmax(fabs(p->drawn_x-(a->x+c->origin)*c->scale),fabs(p->drawn_y-a->y*c->scale));
-        if(error>totals.anchor_error)totals.anchor_error=error;
         double radius=fmax(1,1/k)*0.5;
         int x0=(int)floor(ax+(m->x0-radius)*k), x1=(int)ceil(ax+(m->x0+m->w+radius)*k);
         int y0=(int)floor(ay+(m->y0-radius)*k), y1=(int)ceil(ay+(m->y0+m->h+radius)*k);
@@ -541,9 +539,9 @@ int tg2_actors_json(char *out,int cap) {
 }
 
 int tg2_actors_stats_json(char *out,int cap) {
-    int n=snprintf(out,cap,"{\"actors\":%llu,\"native\":%llu,\"fallbacks\":%llu,\"position_mismatches\":%llu,\"palette_mismatches\":%llu,\"priority_mismatches\":%llu,\"max_floor_error\":%.8f,\"max_drawn_anchor_error\":%.8f,\"fallback_reasons\":[",
+    int n=snprintf(out,cap,"{\"actors\":%llu,\"native\":%llu,\"fallbacks\":%llu,\"position_mismatches\":%llu,\"palette_mismatches\":%llu,\"priority_mismatches\":%llu,\"max_floor_error\":%.8f,\"fallback_reasons\":[",
         (unsigned long long)totals.actors,(unsigned long long)totals.native,(unsigned long long)totals.fallbacks,
-        (unsigned long long)totals.positions,(unsigned long long)totals.palettes,(unsigned long long)totals.priorities,totals.floor_error,totals.anchor_error);
+        (unsigned long long)totals.positions,(unsigned long long)totals.palettes,(unsigned long long)totals.priorities,totals.floor_error);
     for(int i=0;i<8 && n>0 && n<cap;++i) n+=snprintf(out+n,cap-n,"%s%llu",i?",":"",(unsigned long long)totals.reasons[i]);
     if(n>0 && n<cap)n+=snprintf(out+n,cap-n,"],\"kinds\":{");
     int comma=0;

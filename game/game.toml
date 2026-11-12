@@ -5,15 +5,10 @@ jump_table_autodiscovery = true
 discovery_files = ["irq.discovery.toml", "menu.discovery.toml", "driver.discovery.toml", "road.discovery.toml"]
 
 [ram_layout]
-game_mode = 0
 vint_runcount = 0xFF01C6
-vint_routine = 0
-plc_pending = 0
 initial_ssp = 0x00FFFFFE
 vbla_stack = 0x00FFFFFE
 intr_stack = 0x00FFFFFE
-player_object = 0
-level_modes = []
 
 [functions]
 # These are per-frame loop tops seeded as entries so a quickstate can resume

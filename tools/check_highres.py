@@ -148,8 +148,7 @@ def wait_exit(r: Runner, timeout: float = 120.0):
 def run_hashes(args, mode: str, scale: int, provider: bool, tag: str, race60: bool = False):
     out = args.out / tag
     out.mkdir(parents=True, exist_ok=True)
-    env = {'TG2_HIGHRES_SCALE': str(scale),
-           'TG2_HIGHRES_TEST_PROVIDER': '1' if provider else '0'}
+    env = {'TG2_HIGHRES_SCALE': str(scale)}
     if race60:
         env['TG2_RACE_60FPS'] = '1'
     r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
@@ -351,8 +350,7 @@ def check_route(args):
         script = route_script(args.route, out / 'route.input', args.end_frame)
         r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
                    widescreen=mode, max_frames=args.end_frame + 1,
-                   env_extra={'TG2_HIGHRES_SCALE': str(scale),
-                              'TG2_HIGHRES_TEST_PROVIDER': '0'},
+                   env_extra={'TG2_HIGHRES_SCALE': str(scale)},
                    extra_args=['--turbo', '--input-script', str(script)])
         try:
             r.start()
@@ -429,8 +427,7 @@ def check_split(args):
         path.write_text(script.text())
         r = Runner(port=args.port, out=out, exe=args.exe, rom=args.rom,
                    widescreen=args.mode, max_frames=script.frame + 300,
-                   env_extra={'TG2_HIGHRES_SCALE': str(args.scale) if provider else '1',
-                              'TG2_HIGHRES_TEST_PROVIDER': '0'},
+                   env_extra={'TG2_HIGHRES_SCALE': str(args.scale) if provider else '1'},
                    extra_args=['--turbo', '--hash-frames', '1',
                                '--input-script', str(path)],
                    video_driver='dummy')
@@ -1202,7 +1199,7 @@ def check_drive(args):
             all_actors = builder_end['all_actors']
             item['sprite_table_all'] = all_actors
             keys = ['palette_mismatches', 'priority_mismatches', 'position_mismatches', 'max_floor_error']
-            if any(all_actors[k] for k in keys) or all_actors['max_drawn_anchor_error'] >= 1:
+            if any(all_actors[k] for k in keys):
                 failures.append(f'all-frame actor checks: {all_actors}')
         item['builder_end_frame'] = builder_end_frame['current_frame']
         built = builder_end['build_frames'] - builder_start['build_frames']

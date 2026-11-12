@@ -124,7 +124,7 @@ def main():
                       any(f not in hashes for f in range(a.start, a.start + a.count + 1))):
         raise RuntimeError('runtime ended without the complete measurement window')
     changes = [f for f in range(a.start + 1, a.start + a.count + 1) if hashes.get(f) != hashes.get(f - 1)]
-    summary = dict(exit=code, command=args, race_headroom=env.get('TG2_RACE_HEADROOM', '0'),
+    summary = dict(exit=code, command=args,
                    cold_boot={f: hashes.get(f) for f in [60, 300]},
                    start=a.start, frames=a.count, changed_pictures=len(changes),
                    pictures_per_60_frames=len(changes) * 60 / a.count,

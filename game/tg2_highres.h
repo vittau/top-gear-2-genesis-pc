@@ -12,8 +12,10 @@
  * S3  the road strip rasteriser: the road rows are redrawn at N x from the
  *     game's own per-line numbers (width, centre, atlas row, palette), with
  *     fitted silhouettes and analytic coverage on every road boundary.
- *     Everything else keeps native detail/size: nearest at Linear Off, RGB
- *     filtered with explicit plane/sprite coverage at Linear On.
+ *     Other native art is nearest at Linear Off and RGB filtered with explicit
+ *     plane/sprite coverage at Linear On.
+ * S4  qualified actors grow continuously from their authored sprite models;
+ *     unsupported kinds retain the native path.
  */
 #pragma once
 
@@ -33,9 +35,6 @@ struct GVDP;
 #define TG2_HIGHRES_MAX_SCALE 4
 int tg2_highres_scale(void);
 
-/* Scale the builder will actually present at: 1 at the stock scale, otherwise
- * the render scale. */
-int tg2_highres_present_scale(void);
 /* The existing live Linear Filter option, paid for only in N x races. */
 int tg2_highres_linear_filter(void);
 /* Copy the completed 1x row and its explicit native-art ownership after HUD
@@ -53,10 +52,6 @@ unsigned tg2_highres_filter_incomplete(void);
 /* Per-row classification. Values are stable for capture dumps and tools. */
 enum {
     TG2_ROW_ROAD     = 1u << 0, /* plane B atlas row is a road template  */
-    TG2_ROW_GROUND   = 1u << 1, /* atlas Y 432..447: ground/separator    */
-    TG2_ROW_PANORAMA = 1u << 2, /* atlas Y 448..511: skyline/sky         */
-    TG2_ROW_WINDOW   = 1u << 3, /* the window plane hides plane A here   */
-    TG2_ROW_BANK1    = 1u << 4, /* road palette bank bit (pair second)   */
 };
 
 /* Compact per-row presentation state (docs/HIGHRES.md §7.2). Captured only
@@ -69,7 +64,6 @@ typedef struct Tg2RowState {
     unsigned short cram[64];    /* palette at this line (raster changes) */
     unsigned short hscroll[2];  /* plane A / plane B H-scroll, this row  */
     unsigned char bank[2];      /* road palette bank at the left/right edge */
-    short left, right;          /* road silhouette in atlas x, road rows */
     short width_k;              /* normalised atlas row used by the road */
     unsigned char flags;        /* TG2_ROW_*                             */
 } Tg2RowState;

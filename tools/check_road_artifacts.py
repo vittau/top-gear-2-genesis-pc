@@ -86,10 +86,10 @@ NX_FIT_LIMIT = 1.5
 
 def load_nx(path):
     data = path.read_bytes()
-    if data[:8] not in (NX_MAGIC, b'TG2NXR02'):
+    if data[:8] != NX_MAGIC:
         raise ValueError(f'invalid N x road capture: {path}')
     frame, scale, w1, native_w, count, size = struct.unpack_from('<6I', data, 8)
-    dtype = NX_DTYPE if data[:8] == NX_MAGIC else np.dtype(NX_DTYPE.descr[:-1])
+    dtype = NX_DTYPE
     if size != dtype.itemsize or len(data) != 32 + count * size:
         raise ValueError(f'incomplete N x road capture: {path}')
     rows = np.frombuffer(data, dtype=dtype, offset=32)

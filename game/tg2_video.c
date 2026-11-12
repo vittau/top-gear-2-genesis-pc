@@ -36,23 +36,10 @@ static void presentation_clear(void);
  * window-plane colour artefacts documented in docs/WIDESCREEN.md. */
 static int hide_overscan = 1;
 void tg2_video_set_hide_overscan(int on) { hide_overscan = on != 0; }
-int tg2_video_get_hide_overscan(void) {
-    const char *s = getenv("TG2_HIDE_OVERSCAN");
-    if (s) return !(s[0] == '0' || s[0] == 'n' || s[0] == 'N' || s[0] == 'f' || s[0] == 'F');
-    return hide_overscan;
-}
-static int hud_edges, hud_configured;
-void tg2_video_set_hud_mode(int edges) {
-    hud_edges = edges != 0;
-    hud_configured = 1;
-}
-int tg2_video_get_hud_mode(void) {
-    if (!hud_configured) {
-        const char *s = getenv("TG2_HUD_MODE");
-        tg2_video_set_hud_mode(s && (!strcmp(s, "edges") || !strcmp(s, "1")));
-    }
-    return hud_edges;
-}
+static int tg2_video_get_hide_overscan(void) { return hide_overscan; }
+static int hud_edges;
+void tg2_video_set_hud_mode(int edges) { hud_edges = edges != 0; }
+static int tg2_video_get_hud_mode(void) { return hud_edges; }
 /* The race picture only uses native lines 8..207. Rows 0..7 are the window
  * band a CRT hid in overscan and rows 208..223 are the bare backdrop, so with
  * Hide overscan on those bands are cropped from the presented picture instead
@@ -113,7 +100,7 @@ static int cropped_height(int nh) {
  * raises the flag, so the transition costs one frame, not a squashed picture. */
 static int highres_wanted;
 static int canvas_scale(void) {
-    return highres_wanted ? tg2_highres_present_scale() : 1;
+    return highres_wanted ? tg2_highres_scale() : 1;
 }
 static int width(int dw, int dh, int nw, int nh) {
     /* The canvas follows the presented height: with the empty race bands
@@ -434,8 +421,7 @@ static int hud_tile(unsigned attr) {
  * the same font cells, so a tile match alone carried it to the right edge.
  * Only texels in the cluster columns move. Columns, not lines, so a split
  * screen's lower HUD keeps working. */
-static int hud_region(int line, int x, int side) {
-    (void)line;
+static int hud_region(int x, int side) {
     return side < 0 ? x < 96 : x >= 160;
 }
 static unsigned hud_plane_pixels, hud_marker_pixels, hud_sprite_pixels;
@@ -468,7 +454,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
             continue;
         unsigned attr, c = pixel(v, ba, x - ha, line + va, &attr);
         int side = hud_tile(attr);
-        if (side && !hud_region(line, x, side))
+        if (side && !hud_region(x, side))
             side = 0;
         if (side && c) {
             removed[x] = 1;
@@ -507,7 +493,7 @@ static void hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
              * two markers). They belong to the same left/right clusters and
              * must move with them, or the map separates from its markers. */
             int side = marker ? 1 : hud_tile(attr);
-            if (!marker && side && !hud_region(line, x, side))
+            if (!marker && side && !hud_region(x, side))
                 side = 0;
             int hud = marker || side != 0;
             if (attr & 0x1000)
@@ -691,21 +677,15 @@ static unsigned weather_pixel(const GVDP *v, int line, int nx,
     return (attr & 0x8000) ? ap : 0;
 }
 /* Private per-line margin evidence, before sprites and HUD relocation.
- * Optional frame window keeps focused investigations small; a full route run
- * leaves both unset and audits every presented picture, synthesized included. */
+ * Audits every presented picture, synthesized included. */
 static FILE *margin_audit;
 static int margin_audit_checked;
-static uint64_t margin_audit_from, margin_audit_to = ~(uint64_t)0;
 static void audit_margins(const GVDP *v, int line, const uint32_t *native,
                           int nw, const uint32_t *out, int w) {
     if (reference_pass) return; /* evidence pass is not another presented row */
     if (!margin_audit_checked) {
         margin_audit_checked = 1;
         const char *path = getenv("TG2_MARGIN_AUDIT");
-        const char *from = getenv("TG2_MARGIN_AUDIT_FROM");
-        const char *to = getenv("TG2_MARGIN_AUDIT_TO");
-        if (from && *from) margin_audit_from = strtoull(from, NULL, 10);
-        if (to && *to) margin_audit_to = strtoull(to, NULL, 10);
         if (path && *path) {
             margin_audit = fopen(path, "w");
             if (!margin_audit) { perror(path); exit(1); }
@@ -713,7 +693,6 @@ static void audit_margins(const GVDP *v, int line, const uint32_t *native,
         }
     }
     if (!margin_audit || w <= nw) return;
-    if (present_frame < margin_audit_from || present_frame > margin_audit_to) return;
     unsigned ba = (v->reg[2] & 56) << 10, bb = (v->reg[4] & 7) << 13;
     unsigned hbase = (v->reg[13] & 63) << 10;
     int hm = v->reg[11] & 3, hi = hm == 0 ? 0 : hm == 2 ? line & ~7 : line;
@@ -850,7 +829,7 @@ static void draw_scanline(const GVDP *v, int line, const uint32_t *native, int n
  * explicit native-layer coverage; it does not change LOD, size or positions. */
 static void render_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
                             uint32_t *out, int w) {
-    int scale = tg2_highres_present_scale();
+    int scale = tg2_highres_scale();
     /* A wide native menu/2P canvas can also be divisible by N and wider
      * than nw*N. Dimensions alone do not make it an N x race picture. */
     if (scale > 1 && (nw != 256 || !race(v))) scale = 1;
@@ -914,9 +893,9 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         last_frame_race = audit_race_frame;
         /* Overscan can return before the first visible race row. Select the
          * displayed SAT now at 1x too, so 60-fps Off retains margin sprites. */
-        if (last_frame_race && !synthesizing && tg2_highres_present_scale()<=1)
+        if (last_frame_race && !synthesizing && tg2_highres_scale()<=1)
             select_scene(v);
-        highres_wanted = last_frame_race && tg2_highres_present_scale() > 1;
+        highres_wanted = last_frame_race && tg2_highres_scale() > 1;
         if (last_frame_race && !reference_pass)
             tg2_highres_picture_start();
         crop_race_ok = audit_race_frame;
@@ -1048,7 +1027,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
             unsigned attr;
             pixel(v,ba,x-ha,line+va,&attr);
             int side=hud_tile(attr);
-            if(side && hud_region(line,x,side)) actor_front[origin+x]=65535;
+            if(side && hud_region(x,side)) actor_front[origin+x]=65535;
         }
     }
     hud_row(v, line, ha, hb, va, vb, ba, bb, pal, nw, out, w);
@@ -1400,7 +1379,7 @@ static void scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     static GVDPRasterRow filtered_raster;
     const GVDPRasterRow *saved_layers = filter_layers;
     int count;
-    if (tg2_highres_present_scale()>1 && gvdp_capture_presented_scanline(row_vdp, line, &filtered_raster)) {
+    if (tg2_highres_scale()>1 && gvdp_capture_presented_scanline(row_vdp, line, &filtered_raster)) {
         count = gvdp_compose_captured(&filtered_raster, indices);
         filter_layers = &filtered_raster;
     } else {
@@ -1434,7 +1413,7 @@ static int compose_presented(uint32_t *pixels, int stride, int width,
                              int native_w, int native_h) {
     if (!pixels || native_h != 224 || !last_frame_race)
         return 0;
-    int scale = tg2_highres_present_scale();
+    int scale = tg2_highres_scale();
     if (scale <= 1)
         return 0;
     /* A wider canvas is asked for one frame late (see canvas_scale); never
@@ -1495,7 +1474,7 @@ void tg2_video_command(int id, const char *json) {
                   "\"highres_capture_frames\":%u,"
                   "\"highres_capture_us\":%.3f,\"highres_capture_rows\":%u,"
                   "\"highres_build_frames\":%u,\"highres_build_us\":%.3f",
-                  tg2_highres_scale(), tg2_highres_present_scale(),
+                  tg2_highres_scale(), tg2_highres_scale(),
                   tg2_highres_capture_frames(),
                   tg2_highres_capture_us(), tg2_highres_capture_rows_done(),
                   tg2_highres_build_frames(), tg2_highres_build_us());
@@ -1554,7 +1533,7 @@ void tg2_video_highres_command(int id, const char *json) {
                      "\"capture_frames\":%u,\"serial\":%u,"
                      "\"capture_us\":%.3f,\"capture_rows\":%u,"
                      "\"build_frames\":%u,\"build_us\":%.3f",
-                     id, tg2_highres_scale(), tg2_highres_present_scale(),
+                     id, tg2_highres_scale(), tg2_highres_scale(),
                      tg2_highres_capture_frames(),
                      serial, tg2_highres_capture_us(),
                      tg2_highres_capture_rows_done(),
@@ -1593,18 +1572,18 @@ void tg2_video_highres_command(int id, const char *json) {
 /* Reuse the framework's immutable presented-row seam; sprite/status work is
  * not repeated on the live VDP. Off uses exactly the legacy row producer. */
 static int filter_raster_enabled(const GVDP *v) {
-    return tg2_highres_present_scale()>1 && race(v);
+    return tg2_highres_scale()>1 && race(v);
 }
 static void scanline_presented(const GVDP *v, int line, int nw, uint32_t *out,
                                int w, GameVideoNativeRow native_row, void *ctx,
                                const GVDPRasterRow *raster) {
-    filter_layers = tg2_highres_present_scale()>1 ? raster : NULL;
+    filter_layers = tg2_highres_scale()>1 ? raster : NULL;
     scanline(v, line, native_row(ctx), nw, out, w);
     filter_layers = NULL;
 }
 /* A render scale above 1 owns the canvas even with widescreen off; enabled()
  * keeps reporting the widescreen option itself. */
-static int presented_width(void) { return tg2_highres_present_scale() > 1; }
+static int presented_width(void) { return tg2_highres_scale() > 1; }
 const GameVideo tg2_video = {
     .configure = configure, .enabled = enabled, .width = width, .scanline = scanline,
     .renderer_enabled = renderer_enabled, .present_window = present_window,

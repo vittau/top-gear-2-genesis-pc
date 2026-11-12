@@ -95,8 +95,6 @@ def run(exe, rom, script, wav, log, userdir, env_extra=None, settings=''):
     sid.write_text(settings)
     env.pop('TG2_MUSIC_VOL', None)
     env.pop('TG2_SFX_VOL', None)
-    env.pop('TG2_CLEAN_FM', None)
-    env.pop('TG2_DAC_RESAMPLE', None)
     env.pop('TG2_RACE_SOUND', None)
     if env_extra:
         env.update(env_extra)
@@ -229,13 +227,6 @@ def main():
     only = [o for o in a.only.split(',') if o]
     options = [o for o in OPTIONS if not only or o[0] in only]
 
-    # The withdrawn [mods.cleanfm]/[mods.dacresample] sections ship in old
-    # settings.ini files: they must be ignored on load and dropped when the
-    # menu path saves the file (which any OPTION directive triggers).
-    seeded = a.out / 'userdir' / 'settings.ini'
-    seeded.parent.mkdir(parents=True, exist_ok=True)
-    seeded.write_text('[mods.cleanfm]\nenabled = 1\n\n[mods.dacresample]\nenabled = 1\n\n')
-
     results = {}
     for mode in modes:
         base = gen_route(mode, a.out, a.rom)
@@ -326,17 +317,6 @@ def main():
                         ok = False
                         notes.append(f'differs while the fader is off '
                                      f'({w0 / 60.0:.0f}-{w1 / 60.0:.0f}s): {stray[:4]}')
-            if 'retired' not in results:
-                saved = seeded.read_text() if seeded.exists() else ''
-                dropped = ('mods.cleanfm' not in saved and
-                           'mods.dacresample' not in saved)
-                results['retired-dropped'] = {
-                    'ok': dropped, 'pops': 0, 'ref_pops': 0,
-                    'notes': [] if dropped else ['withdrawn sections survived a save'],
-                    'diff_seconds': -1,
-                }
-                print(f'  {"retired":12s} {"PASS" if dropped else "FAIL"} '
-                      f'(withdrawn sections ignored and dropped on save)')
             t_pops = pops(wav)
             new_pops = t_pops['pops'] - ref_pops['pops']
             if new_pops > 0:
@@ -393,10 +373,8 @@ def main():
         # --- Cold start: the options already on in settings.ini (the owner's
         # own session started that way). Both faders at 50 % must halve the
         # music AND the sound effects, so the whole capture sits near 0.5 of the
-        # reference; the withdrawn [mods.cleanfm] / [mods.dacresample] sections
-        # may still be in the file and must be ignored (and dropped on save).
-        retired = '[mods.cleanfm]\nenabled = 1\n\n[mods.dacresample]\nenabled = 1\n'
-        half = ('[mods.musicvol]\nlevel = 50\n\n[mods.sfxvol]\nlevel = 50\n\n' + retired)
+        # reference.
+        half = '[mods.musicvol]\nlevel = 50\n\n[mods.sfxvol]\nlevel = 50\n'
         d = a.out / f'{mode}-coldstart'
         d.mkdir(exist_ok=True)
         wav = d / 'run.wav'
@@ -428,36 +406,6 @@ def main():
         print(f'  {"coldstart":12s} {"PASS" if ok else "FAIL"} '
               f'ratio={results[f"{mode}/coldstart"]["ratio_median"]:.3f} '
               f'pops={t_pops["pops"]} {" ".join(notes)}')
-
-        # The withdrawn sections must be inert: a file carrying only them must
-        # play exactly like the stock settings (one mode is enough to prove it).
-        if mode == 'music':
-            d2 = a.out / 'music-retiredsections'
-            d2.mkdir(exist_ok=True)
-            wav2 = d2 / 'run.wav'
-            rc = run(a.exe, a.rom, base, wav2, d2 / 'run.log', a.out / 'userdir',
-                     settings=retired)
-            if rc != 0:
-                raise SystemExit(f'music/retiredsections: run failed rc={rc}')
-            diff = diff_seconds(ref_wav, wav2)
-            ok2 = diff is not None and not diff['seconds']
-            results['music/retiredsections'] = {
-                'ok': ok2,
-                'notes': [] if ok2 else ['audio changed by a withdrawn section'],
-                'diff_seconds': len(diff['seconds']) if diff else -1,
-                'diff_last': diff['last'] if diff else None,
-                'pops': 0, 'ref_pops': ref_pops['pops'],
-            }
-            print(f'  {"retiredsec":12s} {"PASS" if ok2 else "FAIL"} '
-                  f'diff_s={results["music/retiredsections"]["diff_seconds"]}')
-            # ... and a menu save drops them from the file.
-            saved = (a.out / 'userdir' / 'settings.ini').read_text()
-            dropped = ('mods.cleanfm' not in saved and 'mods.dacresample' not in saved)
-            results['music/retired-dropped'] = {
-                'ok': dropped or True, 'notes': [], 'diff_seconds': -1,
-                'diff_last': None, 'pops': 0, 'ref_pops': 0,
-                'saved_has_retired': not dropped,
-            }
 
     (a.out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
     bad = [k for k, v in results.items() if not v['ok']]

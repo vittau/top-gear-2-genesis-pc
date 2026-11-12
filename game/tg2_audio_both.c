@@ -57,9 +57,6 @@ void audio_set_first_z80_is_sfx(int is_sfx);
 /* Work-RAM addresses (see docs/RAM_MAP.md / docs/AUDIO.md). */
 #define RAM_SOUND_MODE   0x240Eu   /* word: 0 = SFX, 1 = MUSIC            */
 #define RAM_MENU_PAGE    0x2554u   /* word: menu controller (page index)  */
-#define RAM_MENU_VALUE   0x2560u   /* word: RACE SOUND page value (A4+$0C)*/
-#define RAM_MENU_DIRTY   0x2556u   /* word: A4+$02 redraw request         */
-#define RAM_MENU_STATE   0x256Cu   /* word: A4+$18 page state             */
 #define RACE_SOUND_PAGE  4         /* $FF2554 while the value page is open*/
 
 /* RACE SOUND choices.  SFX and MUSIC are the cartridge's own 0/1; BOTH is
@@ -74,7 +71,6 @@ static int s_mode = TG2_SOUND_SFX;  /* player's choice; stock default */
  * exactly how a live BOTH/SFX switch used to kill the music. */
 static int s_applied = TG2_SOUND_SFX;
 static int s_patched;               /* present/restore nesting depth */
-static int s_page_seen;             /* RACE SOUND page handler observed */
 /* One saved cartridge value per nesting level, so an SFX-side read nested
  * inside a music-side read (or vice versa) restores exactly. */
 #define PATCH_DEPTH 8
@@ -261,7 +257,6 @@ static int menu_value_handler(void)
 
     if (a4 < 0xFF0000u) return 0;  /* not work RAM: run the stock handler */
 
-    s_page_seen = 1;
 
     /* The page must show the session's choice even when the cartridge word is
      * stale: a fresh boot with BOTH persisted, or a guest reset, leaves the
@@ -304,7 +299,6 @@ static int menu_value_handler(void)
         }
     } else if (d0 & 0x70u) {           /* A/B/C: leave the page */
         ram_write16(a4 + 0x02u, 3);
-        s_page_seen = 0;
         g_cpu.D[0] = 0;
         g_cpu.SR = (uint16_t)((g_cpu.SR & ~(SR_N|SR_Z|SR_V|SR_C)) | SR_Z);
         return 1;
@@ -633,7 +627,6 @@ void tg2_audio_frame_pre(void)
 void tg2_audio_reset(void)
 {
     s_patched = 0;
-    s_page_seen = 0;
     s_saved_n = 0;
     s_sfx_upload = 0;
     /* A guest reset reboots the cartridge (no race running, so the player's
@@ -662,7 +655,6 @@ void tg2_frame_post(uint64_t frame_count)
      * repaint it as "BOTH" on every frame the page is open (the page can be
      * re-entered from several routes and its tiles are rebuilt per visit). */
     int open = race_sound_page_open();
-    s_page_seen = open;
 
     if (!open) {
         if (s_saved_n) restore_row();

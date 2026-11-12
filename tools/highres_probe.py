@@ -131,11 +131,9 @@ def main():
         nitro_at=10**9, nitro_for=0, shot_every=600)
     r = Runner(port=a.port, out=a.out, exe=a.exe, rom=a.rom, widescreen='off',
                max_frames=200000,
-               env_extra={'TG2_HIDE_OVERSCAN': '0',
-                          'TG2_LOD_DUMP': str((a.out / 'lod.bin').resolve())},
+               env_extra={'TG2_HIDE_OVERSCAN': '0'},
                extra_args=['--turbo'], video_driver='dummy')
     samples = []
-    lod = 0
     result = 'error'
     try:
         r.start()
@@ -170,12 +168,7 @@ def main():
     finally:
         code = r.stop()
     (a.out / 'samples.json').write_text(json.dumps(samples) + '\n')
-    lod_bin = a.out / 'lod.bin'
-    lod_entries = 0
-    if lod_bin.exists():
-        lod_entries = lod_bin.stat().st_size // 48
-    lod = lod_entries
-    summary = dict(result=result, samples=len(samples), lod_entries=lod, exit_code=code,
+    summary = dict(result=result, samples=len(samples), exit_code=code,
                    manifests=manifests(a.out), files=sorted(p.name for p in a.out.iterdir()))
     (a.out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary))

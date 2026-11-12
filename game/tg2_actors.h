@@ -31,10 +31,10 @@ typedef struct Tg2Actor {
     short lateral;              /* projection input, for temporal matching   */
     unsigned short object;      /* car number or moving-scenery slot         */
     unsigned identity;          /* scenery world depth (16.16), or car slot  */
-    unsigned record, art, guest_key, model_key;
+    unsigned record;
     short gx, gy, clip;         /* guest integer anchor, first hidden row    */
     unsigned short first_piece; /* scene piece index when it started (depth) */
-    unsigned short rattr, scale, scale4;
+    unsigned short scale, scale4;
     unsigned short guest_first, guest_count, model_first, model_count;
     unsigned char kind, guest_model, model, level, path, high, fallback, car;
 } Tg2Actor;

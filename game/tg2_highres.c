@@ -52,7 +52,7 @@ static unsigned s_native_serial[TG2_HIGHRES_ROWS];
 static int s_native_width[TG2_HIGHRES_ROWS];
 static unsigned s_filtered_frames, s_filter_incomplete;
 int tg2_highres_linear_filter(void) {
-    return g_app_config.linear_filter && tg2_highres_present_scale() > 1;
+    return g_app_config.linear_filter && tg2_highres_scale() > 1;
 }
 unsigned tg2_highres_filtered_frames(void) { return s_filtered_frames; }
 unsigned tg2_highres_filter_incomplete(void) { return s_filter_incomplete; }
@@ -93,8 +93,6 @@ int tg2_highres_scale(void) {
     }
     return scale;
 }
-
-int tg2_highres_present_scale(void) { return tg2_highres_scale(); }
 
 /* ── Cost measurement (only with TG2_HIGHRES_TIMING=1) ───────────────────── */
 
@@ -184,10 +182,9 @@ static void atlas_row(const GVDP *v, const Tg2RowState *r, int py,
 
 /* Build the row's runs and its road silhouette. Returns 0 when the row shows
  * no road. The road always covers the seam (atlas x 0); a row whose seam texel
- * is not road keeps the first..last road texel as its silhouette for the
- * capture dump but is not redrawn (runs->valid stays 0). */
+ * is not road supplies palette banks but is not redrawn (runs->valid stays 0). */
 static int road_runs(const GVDP *v, const Tg2RowState *r, int py, RoadRuns *runs,
-                     short *left, short *right, unsigned char *bank) {
+                     unsigned char *bank) {
     unsigned char texel[512];
     atlas_row(v, r, py, texel);
     runs->count = runs->first = runs->last = runs->valid = 0;
@@ -206,8 +203,6 @@ static int road_runs(const GVDP *v, const Tg2RowState *r, int py, RoadRuns *runs
     }
     if (!found)
         return 0;
-    *left = (short)l;
-    *right = (short)rr;
     bank[0] = (unsigned char)((texel[256 + l] >> 4) & 1);
     bank[1] = (unsigned char)((texel[256 + rr] >> 4) & 1);
     if (found != 2)
@@ -234,7 +229,7 @@ static int road_runs(const GVDP *v, const Tg2RowState *r, int py, RoadRuns *runs
 
 void tg2_highres_capture_native(int line, const uint32_t *pixels,
                                 const unsigned char *foreground, int width) {
-    if (tg2_highres_present_scale() <= 1 || line < 0 || line >= TG2_HIGHRES_ROWS ||
+    if (tg2_highres_scale() <= 1 || line < 0 || line >= TG2_HIGHRES_ROWS ||
         !pixels || !foreground || width <= 0 || width > 4096) return;
     memcpy(s_native_rgb[line], pixels, (size_t)width * sizeof *pixels);
     memcpy(s_native_foreground[line], foreground, (size_t)width);
@@ -281,7 +276,6 @@ void tg2_highres_capture_row(const GVDP *v, int line, int ha, int hb) {
     int py = (line + r->vsram[1]) & 511;
     unsigned char flags = 0;
     short k = -1;
-    r->left = r->right = 0;
     s_runs[line].valid = 0;
     if (py < 288) {                       /* templates 1/2: width 4 + 2k   */
         k = (short)(py < 144 ? py : py - 144);
@@ -289,25 +283,15 @@ void tg2_highres_capture_row(const GVDP *v, int line, int ha, int hb) {
     } else if (py < 432) {                /* templates 3/4: wider ramp     */
         k = (short)(py < 360 ? py - 288 : py - 360);
         flags |= TG2_ROW_ROAD;
-    } else if (py < 448) {
-        flags |= TG2_ROW_GROUND;
-    } else {
-        flags |= TG2_ROW_PANORAMA;
     }
     r->bank[0] = r->bank[1] = 0;
     if (flags & TG2_ROW_ROAD) {
         /* The second member of each authored pair carries the palette-bank
          * bit (lane-mark phase). Measured from the live name table. */
-        if (!road_runs(v, r, py, &s_runs[line], &r->left, &r->right, r->bank)) {
-            r->left = r->right = 0;
+        if (!road_runs(v, r, py, &s_runs[line], r->bank)) {
             flags &= (unsigned char)~TG2_ROW_ROAD;
-        } else if (r->bank[0]) {
-            flags |= TG2_ROW_BANK1;
         }
     }
-    if (((v->reg[18] & 128) ? line >= (v->reg[18] & 31) * 8
-                            : line < (v->reg[18] & 31) * 8))
-        flags |= TG2_ROW_WINDOW;
     r->width_k = k;
     r->flags = flags;
     ++s_capture_rows;
@@ -884,7 +868,7 @@ static void filter_native(uint32_t *pixels, int stride, int w1, int scale,
 
 int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
                       int native_w, int native_h, int first, int last) {
-    int scale = tg2_highres_present_scale();
+    int scale = tg2_highres_scale();
     if (scale <= 1 || !pixels || width <= 0 || stride < width)
         return 0;
     if (width % scale || native_h <= 0 || native_h > TG2_HIGHRES_ROWS)
