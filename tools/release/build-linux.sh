@@ -19,7 +19,7 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 build="$repo/build-release/linux"
 out="$repo/build-release/dist/linux"
 version="0.3.0"
-jobs="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 8)}"
+jobs="${JOBS:-3}"
 rom=""
 sdl=""
 
