@@ -352,3 +352,12 @@ the invocation (no saved state), not the merge. Deck draft
 target `6f05d76`, CI 43129850288, tar.gz only, version `0.2.0-g6f05d76`, SHA-256
 `8f0b6fc99ae2565b58abb8a75e38b6962f77c60c84802bd628f9f07770bae359`. It awaits the
 owner's Deck test (triggers, menu, 2× sprites and performance).
+
+**Worktrees closed (2026-11-11, owner request).** `tg2-highres-s4` and
+`tg2-trigger-pedals` were removed through Orca after their work merged. The
+OpenCode session was idle and no processes remained. Their branches are on
+origin. Before removal, the full trees (superproject, engine and recomp-ui,
+untracked files included) were saved as `refs/keep/*-20261111` and as verified bundles,
+and the reports, summaries, review PNGs and the MP4 were archived. Everything is in
+`~/.cache/tg2-worktree-backups/20261111-highres-s4-triggers/` (`manifest.txt`).
+Only the main checkout remains registered.
