@@ -1,0 +1,69 @@
+From 22f323bfc030bb2f0b3701447ee67b7c3209f954 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 15:54:08 -0300
+Subject: [PATCH] Additive analog triggers for games whose pedals are face
+ buttons
+
+A game whose accelerate and brake are face buttons can offer its analog
+pedals too, without touching the launcher's remap table or settings.ini:
+GameSpec.pad_trigger_bits receives LT and RT already compared against that
+player's own analog deadzone and returns the GPAD_* bits to OR into the
+player's mask. The face-button bindings keep working, so menus, the
+menu-dismiss latch and existing saved bindings are unaffected. NULL leaves
+every other game exactly as before. (Top Gear 2: RT = Genesis B accelerate,
+LT = Genesis A brake.)
+---
+ runner/game_spec.h |  8 ++++++++
+ runner/gamepad.c   | 10 ++++++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/runner/game_spec.h b/runner/game_spec.h
+index 9930836..7a82ee1 100644
+--- a/runner/game_spec.h
++++ b/runner/game_spec.h
+@@ -61,6 +61,14 @@ typedef struct GameSpec {
+      * "21:9" or "32:9" enables it. A saved choice, including off, still wins. */
+     const char *video_default;
+     unsigned logical_players;       /* 0 = native two ports; host input/UI capacity */
++    /* Additive analog triggers for a game whose accelerate/brake are face
++     * buttons: called after the player's normal bindings resolve, with LT and
++     * RT already compared against that player's analog deadzone. Return the
++     * GPAD_* bits to OR into the mask (0 for none). The face-button bindings,
++     * settings.ini keys and the launcher remap table are untouched, so this is
++     * purely an extra way to press the same buttons and menus keep working.
++     * NULL = no trigger input (the shared default). */
++    uint16_t (*pad_trigger_bits)(int player, int lt_held, int rt_held);
+     /* Host players live out of the box, before settings.ini: 0/1 keeps the
+      * shared default (player 1 only), 2 also enables player 2's default
+      * bindings (right-hand keyboard set + second gamepad). A saved
+diff --git a/runner/gamepad.c b/runner/gamepad.c
+index 24e04ef..67e42d9 100644
+--- a/runner/gamepad.c
++++ b/runner/gamepad.c
+@@ -15,6 +15,7 @@
+ 
+ #include "gamepad.h"
+ #include "input_map.h"
++#include "game_spec.h"
+ 
+ #include <SDL2/SDL.h>
+ #include <stdio.h>
+@@ -167,6 +168,15 @@ uint16_t gamepad_player_mask(int player)
+     if (ly < -dz) m |= input_button_bit(GB_UP);
+     if (ly >  dz) m |= input_button_bit(GB_DOWN);
+ 
++    /* Additive analog pedals, when the game asks for them: a trigger past the
++     * same deadzone presses the game's accelerate/brake button for this
++     * player, alongside (never instead of) the face-button bindings. */
++    if (g_game_spec.pad_trigger_bits) {
++        int lt = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
++        int rt = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
++        m |= g_game_spec.pad_trigger_bits(player, lt > dz, rt > dz);
++    }
++
+     return m;
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

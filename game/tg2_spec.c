@@ -6,6 +6,7 @@
  * docs/FRAMERATE.md; its preference is latched at each race start. */
 #include "game_spec.h"
 #include "tg2_icon.h"
+#include "tg2_controls.h"
 #include "genesis_runtime.h"
 #include "tg2_video.h"
 #include "tg2_options.h"
@@ -80,6 +81,7 @@ static int tg2_instruction_hook(uint32_t pc)
 {
     /* Frame boundary offered for a host snapshot (F-keys / overlay). */
     glue_state_boundary(pc);
+    if (tg2_controls_hook(pc)) return 1;
     if (pc == 0x0235C0u || pc == 0x0235C4u) {
         unsigned address = g_cpu.A[0] & 0xFFFFFFu;
         if (address >= 0xFF0000u && address <= 0x1000000u - sizeof pw_trace.work) {
@@ -179,6 +181,7 @@ const GameSpec g_game_spec = {
      * M/N/comma, right Shift = Start, second gamepad) are live from a fresh
      * install. A saved settings.ini keeps whatever device it recorded. */
     .default_players = 2,
+    .pad_trigger_bits = tg2_pad_trigger_bits,
     .load_settings = tg2_options_load,
     .save_settings = tg2_options_save,
     .runtime_ui_items = tg2_options_runtime_items,

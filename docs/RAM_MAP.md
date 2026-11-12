@@ -153,6 +153,21 @@ Its required-country word is therefore `$FF260E`, not `$FF2594`.
 | `$FF18CA+$34/$36` | words | Boost speed accumulator / decay set by the boost branch | `$00CF80..$00CFAE` |
 | `$FF18FA` | byte | Remapped controls: bit0 LEFT, bit1 RIGHT, bit2 BRAKE, bit3 ACCEL, bit4 **NITRO**, bit5 UP, bit6 DOWN, bit7 START | `$00D80A..$00D872`; measured per button over TCP |
 | `$FF19AE..$FF19BA` | 7 words | Raw-pad bit index per control: `[UP DOWN LEFT RIGHT B A C]` → output bit | default TYPE 1 is `[5,6,0,1,3,2,4]` |
+| `$007942` | 4 x 7 words | CONTROL TYPE presets; row 0 is TYPE 1, read as `[LEFT RIGHT UP DOWN A B C]` → output bit | `$007980` loads `lea $7942(pc)` and indexes by the type word |
+| `$00797A` | code | Applies the player's preset to its raw-pad table | reads `$FF1BC6`/`$FF201E`, writes `$FF19AE`/`$FF1E06` |
+| `$FF1BC6` | word | Player-1 control type (0 = TYPE 1); P2 at `$FF201E` | boot `$002116`/`$00212C`; setup exit `$021860` |
+| `$FF2562` | word | TYPE 1..4 value edited on the CONTROL page (P2 at `$FF25D0`) | handler `$021CB2` (`+$C(a4)`); copied out by `$021860` |
+| `$FF2554` | word | Setup carousel menu-controller marker (`$00B4` while live) | `$021860` record base; `$FF2556` = state, `$FF255A` = row |
+| `$021A62` | code | Carousel input handler: rows 0..4 = RACE, PLAYER, GEARS, SPEED, CONTROL, wrapping 0..4 | `jmp` (a0) from the `$0219CA` state table |
+| `$021E14` | code | Carousel row-list draw leaf (palette fade included) | state 0 sub 2 |
+| `$021CB2` | code | CONTROL page value handler, clamps the edited type to 0..3 | state 4 sub 1 |
+
+The port removes the CONTROL carousel row by replacing the carousel's input
+handler (`$021A62`, four rows wrapping 0..3) and its row/page draw (`$021F54`,
+which emits only the first four rows of the row-list block) as native game
+code; the type therefore stays at its TYPE 1 boot value. See
+`docs/CONTROLS.md` for the native routines, the page/descriptor structures and
+the trigger mapping.
 
 **Nitro input.** Canonical bit 4, which the default CONTROL TYPE 1 maps from
 the raw `C` button. Holding `C` with throttle on an unmodified car drains the

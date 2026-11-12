@@ -1,0 +1,166 @@
+From b40629cee424adbf98770ff6c2cbc89bb5c80942 Mon Sep 17 00:00:00 2001
+From: Vitor Machado <2932830+vittau@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 15:54:08 -0300
+Subject: [PATCH] Dev probe: two virtual pads plus analog axes over TCP
+
+The menu-dismiss latch probe could only hold buttons on one virtual
+controller, which cannot exercise an analog trigger mapping without hardware:
+SDL's gamecontroller layer derives a trigger from the raw signed axis, so a
+probe needs to drive the axis itself. The virtual pad probe now takes a pad
+slot (1 or 2) and a virtual_axis command takes a controller-axis value in the
+LT/RT 0..32767 range (or a stick's signed value) and applies it through
+SDL_JoystickSetVirtualAxis. Both are dev/TCP-only, like virtual_pad.
+---
+ runner/cmd_server.c | 19 +++++++++++--
+ runner/main.c       | 67 ++++++++++++++++++++++++++++++++++++---------
+ 2 files changed, 71 insertions(+), 15 deletions(-)
+
+diff --git a/runner/cmd_server.c b/runner/cmd_server.c
+index 0308abb..febd861 100644
+--- a/runner/cmd_server.c
++++ b/runner/cmd_server.c
+@@ -563,19 +563,32 @@ static void handle_key(int id, const char *json)
+     else send_err(id, "unknown key (return escape space tab up down left right f1..f9)");
+ }
+ 
+-extern int runner_debug_virtual_pad(int attach, const char *button, int down);
++extern int runner_debug_virtual_pad(int slot, int attach, const char *button, int down);
++extern int runner_debug_virtual_axis(int slot, const char *axis, int value);
+ 
+ static void handle_virtual_pad(int id, const char *json)
+ {
+     char button[24] = {0};
+     json_get_str(json, "button", button, sizeof(button));
+-    if (runner_debug_virtual_pad(json_get_int(json, "attach", 0), button,
++    if (runner_debug_virtual_pad(json_get_int(json, "pad", 1) - 1,
++                                 json_get_int(json, "attach", 0), button,
+                                  json_get_int(json, "held", 1)))
+         send_ok(id);
+     else
+         send_err(id, "virtual controller unavailable or unknown button");
+ }
+ 
++static void handle_virtual_axis(int id, const char *json)
++{
++    char axis[16] = {0};
++    json_get_str(json, "axis", axis, sizeof(axis));
++    if (runner_debug_virtual_axis(json_get_int(json, "pad", 1) - 1, axis,
++                                  json_get_int(json, "value", 0)))
++        send_ok(id);
++    else
++        send_err(id, "virtual controller unavailable or unknown axis");
++}
++
+ static void handle_ui_open(int id, const char *json)
+ {
+     char section[64] = {0};
+@@ -2309,6 +2322,8 @@ static CmdResult dispatch_command(const char *json, uint32_t frame_num)
+         handle_ui_open(id, json);
+     } else if (strcmp(cmd, "virtual_pad") == 0) {
+         handle_virtual_pad(id, json);
++    } else if (strcmp(cmd, "virtual_axis") == 0) {
++        handle_virtual_axis(id, json);
+     } else if (strcmp(cmd, "ui_rows") == 0) {
+         handle_ui_rows(id);
+     } else if (strcmp(cmd, "pad") == 0) {
+diff --git a/runner/main.c b/runner/main.c
+index bb95c70..3a0f502 100644
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -651,31 +651,38 @@ int runner_debug_key(const char *name, int down, int shift)
+     }
+     return 0;
+ }
+-/* Dev/TCP virtual pad: a headless probe can attach an SDL virtual controller
+- * and hold its buttons, which is the only way to exercise the gamepad half of
+- * the menu-dismiss release latch without hardware. */
+-static SDL_Joystick *s_virtual_pad;
+-int runner_debug_virtual_pad(int attach, const char *button, int down)
++/* Dev/TCP virtual pads: a headless probe can attach SDL virtual controllers
++ * and hold their buttons and analog axes, which is the only way to exercise
++ * the gamepad half of the menu-dismiss release latch or an analog trigger
++ * mapping without hardware. Slots are 0 and 1 so both game ports can be
++ * driven at once. */
++static SDL_Joystick *s_virtual_pad[2];
++static SDL_Joystick *virtual_pad_for_slot(int slot, int attach)
+ {
+-    if (attach && !s_virtual_pad) {
++    if (slot < 0 || slot >= 2) return NULL;
++    if (!s_virtual_pad[slot] && attach) {
+         /* A headless window never takes keyboard focus, and SDL then ignores
+          * every joystick state update; a probe needs the device to be live. */
+         SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+         SDL_JoystickID id = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER,
+                                                       6, 16, 0);
+-        if (id < 0) return 0;
++        if (id < 0) return NULL;
+         /* AttachVirtual returns an instance id; find the device index that
+          * carries it, because SDL_JoystickOpen takes a device index. */
+-        for (int i = 0; i < SDL_NumJoysticks() && !s_virtual_pad; ++i) {
++        for (int i = 0; i < SDL_NumJoysticks() && !s_virtual_pad[slot]; ++i) {
+             SDL_Joystick *candidate = SDL_JoystickOpen(i);
+             if (!candidate) continue;
+-            if (SDL_JoystickInstanceID(candidate) == id) s_virtual_pad = candidate;
++            if (SDL_JoystickInstanceID(candidate) == id) s_virtual_pad[slot] = candidate;
+             else SDL_JoystickClose(candidate);
+         }
+-        if (!s_virtual_pad) return 0;
+     }
+-    if (!button || !*button) return 1;
+-    if (!s_virtual_pad) return 0;
++    return s_virtual_pad[slot];
++}
++int runner_debug_virtual_pad(int slot, int attach, const char *button, int down)
++{
++    SDL_Joystick *pad = virtual_pad_for_slot(slot, attach);
++    if (!button || !*button) return pad != NULL;
++    if (!pad) return 0;
+     static const struct { const char *name; int button; } names[] = {
+         { "a", SDL_CONTROLLER_BUTTON_A }, { "b", SDL_CONTROLLER_BUTTON_B },
+         { "x", SDL_CONTROLLER_BUTTON_X }, { "y", SDL_CONTROLLER_BUTTON_Y },
+@@ -688,7 +695,41 @@ int runner_debug_virtual_pad(int attach, const char *button, int down)
+     };
+     for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
+         if (strcmp(button, names[i].name) != 0) continue;
+-        SDL_JoystickSetVirtualButton(s_virtual_pad, names[i].button, down ? 1 : 0);
++        SDL_JoystickSetVirtualButton(pad, names[i].button, down ? 1 : 0);
++        SDL_JoystickUpdate();
++        return 1;
++    }
++    return 0;
++}
++/* Analog half of the same probe: a synthetic trigger must run through the
++ * real SDL_GameController axis read, the player's deadzone and the game's
++ * additive trigger mapping, exactly like a physical pad. */
++int runner_debug_virtual_axis(int slot, const char *axis, int value)
++{
++    SDL_Joystick *pad = virtual_pad_for_slot(slot, 1);
++    if (!axis || !*axis || !pad) return 0;
++    static const struct { const char *name; int axis; } names[] = {
++        { "lx", SDL_CONTROLLER_AXIS_LEFTX }, { "ly", SDL_CONTROLLER_AXIS_LEFTY },
++        { "rx", SDL_CONTROLLER_AXIS_RIGHTX }, { "ry", SDL_CONTROLLER_AXIS_RIGHTY },
++        { "lt", SDL_CONTROLLER_AXIS_TRIGGERLEFT },
++        { "rt", SDL_CONTROLLER_AXIS_TRIGGERRIGHT },
++    };
++    for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
++        if (strcmp(axis, names[i].name) != 0) continue;
++        int raw = value;
++        if (names[i].axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ||
++            names[i].axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
++            /* The probe takes a controller-axis value (0 released .. 32767
++             * fully pulled); SDL's gamecontroller layer derives that from the
++             * raw signed joystick axis as (raw + 32768) / 2. */
++            if (raw < 0) raw = 0;
++            if (raw > 32767) raw = 32767;
++            raw = raw * 2 - 32768;
++        } else {
++            if (raw < -32768) raw = -32768;
++            if (raw > 32767) raw = 32767;
++        }
++        SDL_JoystickSetVirtualAxis(pad, names[i].axis, raw);
+         SDL_JoystickUpdate();
+         return 1;
+     }
+-- 
+2.54.0 (Apple Git-157)
+
