@@ -68,15 +68,15 @@ def capture(args):
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(('TG2_', 'GENESIS_', 'LNG_'))}
             env.update(SDL_VIDEODRIVER=args.video_driver, SDL_AUDIODRIVER='dummy',
-                       SDL_RENDER_DRIVER='software', GENESIS_USER_DIR=str(directory) + '/',
+                       SDL_RENDER_DRIVER='software', SDL_RENDER_VSYNC='0', GENESIS_USER_DIR=str(directory) + '/',
                        TG2_RACE_60FPS=str(int(presentation == 'on')),
                        TG2_HIDE_OVERSCAN=str(int(presentation == 'on')),
                        TG2_HUD_MODE='centered', TG2_RACE_SOUND=sound,
-                       TG2_HIGHRES_SCALE='1')
+                       TG2_HIGHRES_SCALE=str(args.scale))
             cmd = [str(args.exe.resolve()), str(args.rom.resolve()), '--no-launcher',
                    '--widescreen', '16:9' if presentation == 'on' else 'off',
                    '--input-script', str(script), '--max-frames', '5500',
-                   '--hash-frames', '60', '--fresh-evidence', '--turbo', '--wav', str(wav)]
+                   '--hash-frames', '60', '--fresh-evidence', '--debug', '--turbo', '--wav', str(wav)]
             try:
                 with (directory / 'run.log').open('w') as log:
                     # subprocess.run kills and waits for its child on timeout.
@@ -117,9 +117,12 @@ def main():
     parser.add_argument('--out', type=Path, default=ROOT / 'build/regression')
     parser.add_argument('--golden', type=Path, default=GOLDEN)
     parser.add_argument('--record', action='store_true')
+    parser.add_argument('--scale', type=int, choices=range(1, 5), default=1, help='additional N× checks need their own --golden file')
     parser.add_argument('--video-driver', default='dummy', help='SDL driver (dummy works on macOS and Linux; offscreen optional)')
     parser.add_argument('--timeout', type=int, default=180, help='per-case timeout in seconds')
     args = parser.parse_args()
+    if args.scale != 1 and args.golden == GOLDEN:
+        parser.error("N× checks require a separate --golden path; the canonical golden is 1×")
     try:
         actual = json.dumps(capture(args), indent=2, sort_keys=True) + '\n'
         (args.out / 'hashes.json').write_text(actual)
