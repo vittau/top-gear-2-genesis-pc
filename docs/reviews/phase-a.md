@@ -119,7 +119,10 @@ See `native-audit-baseline-comparison.json`, `native-turbo-comparison.log`,
 `probe-fps-final-turbo.log` and `probe-road-final.log`. The temporary baseline
 source checkout was restored to HEAD, and the qualified final executable was
 restored and compared with its saved copy before the final turbo run. There
-is no unresolved picture/sound difference or final probe failure.
+is no unresolved picture/sound difference or final probe failure. After
+comparison, bulk native road exports and per-frame RAM/VRAM dumps were removed;
+`native-audit-file-hashes.json` retains all 2,503 qualified audit hashes, and the
+summaries, comparison results, scripts, logs and selected screenshots remain.
 
 Verified scope is local development behavior, metadata, patch safety and the
 listed directed checks. Linux/Windows execution, release packaging, real
