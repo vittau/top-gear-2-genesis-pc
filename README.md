@@ -32,6 +32,13 @@ macOS (Apple Silicon and Intel).
   identical to the original. The cost is 50 ms of extra display latency, and
   you can turn it off.
 
+- **Higher internal resolution (experimental).** At 2×, 3× or 4× the road
+  and background are redrawn from the game's own per-line road data, and the
+  opponent cars and roadside objects are drawn from the game's most detailed
+  artwork. They grow smoothly as they approach instead of jumping between
+  sizes, also in 60 fps races. The HUD, the sky, poles and a few special
+  pieces keep their original detail. The default 1× is the original picture.
+
 - **Music and sound effects together.** The original makes you choose music
   *or* sound effects during races. A new **BOTH** choice in the game's own
   *Sound → Race Sound* menu plays them together.
@@ -253,10 +260,12 @@ saved to `settings.ini`:
 | HUD | Centered, Edges | Centered |
 | Hide overscan | On (crops the empty top/bottom race bands), Off | On |
 | Race sound | Sound effects, Music, Both | Sound effects |
+| Music volume, SFX volume | 0–100 % of the original mix | 100 % |
+| Internal resolution (experimental) | 1× (off), 2×, 3×, 4×; applies on the next launch | 1× |
 | Diagnostics (bug report) | On, Off | Off |
 
 Race sound is also in the game's own *Sound* menu. Both menus change the same
-setting. Linear filter (Graphics) is off by default and avoids edge artifacts
+setting. Linear filter (Video) is off by default and avoids edge artifacts
 at the picture boundary (see [docs/LINEAR_FILTER.md](docs/LINEAR_FILTER.md)).
 A change to 60 fps races takes effect from the next race.
 
@@ -346,7 +355,7 @@ Packaging, CI and the release process are described in
 | Doc | Content |
 | --- | --- |
 | [docs/STATUS.md](docs/STATUS.md) | Current state and known limitations |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after v0.1.0 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work |
 | [docs/BRINGUP.md](docs/BRINGUP.md) | How the recompilation was brought up |
 | [docs/WIDESCREEN.md](docs/WIDESCREEN.md) | Widescreen renderer design |
 | [docs/FRAMERATE.md](docs/FRAMERATE.md) | 60 fps design and the physics parity proof |
