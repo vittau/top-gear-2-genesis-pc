@@ -31,6 +31,8 @@ typedef enum Tg2OptionKind {
 } Tg2OptionKind;
 
 typedef struct Tg2Option {
+    unsigned runtime_index;  /* stable row order within the runtime model */
+    const char *runtime_section; /* runtime placement differs from launcher groups */
     const char *id;           /* stable id: package/feature/overlay key */
     const char *section;      /* settings.ini section it is saved under */
     const char *key;          /* key inside that section */
@@ -87,14 +89,14 @@ void tg2_options_race_sound_changed(int mode)
 
 static const Tg2Option s_options[] = {
     /* Another option is one more row here. */
-    { "race60", "mods.race60", "enabled",
+    { 2, "Mods", "race60", "mods.race60", "enabled",
       "60 fps races", "60 fps races", "Presentation",
       "Interpolate race pictures at 60 fps with 50 ms of added display delay. "
       "Physics and sound keep stock timing. Off restores the stock rate. "
       "Changes take effect from the next race.",
       "Enabled (60 pictures/s)", "Disabled (stock rate)",
       1, &s_race60, TG2_OPT_BOOL, NULL, NULL, 0, NULL },
-    { "hud", "mods.hud", "placement",
+    { 3, "Mods", "hud", "mods.hud", "placement",
       "HUD", "HUD at edges", "Presentation",
       "Centered keeps the widescreen HUD with the car and effects. Edges "
       "anchors the instruments and track map to the left and right margins. "
@@ -102,7 +104,7 @@ static const Tg2Option s_options[] = {
       NULL, NULL,
       0, &s_hud_edges, TG2_OPT_CHOICE, s_hud_choices, s_hud_labels, 2,
       tg2_video_set_hud_mode },
-    { "overscan", "mods.overscan", "hidden",
+    { 4, "Mods", "overscan", "mods.overscan", "hidden",
       "Hide overscan", "Hide overscan", "Presentation",
       "Crops the empty bands a CRT hid in overscan: the eight-row window band at "
       "the top of the race screen and the sixteen blank bottom lines, so the "
@@ -112,7 +114,7 @@ static const Tg2Option s_options[] = {
       "Cropped", "Shown",
       1, &s_hide_overscan, TG2_OPT_BOOL, NULL, NULL, 0,
       tg2_video_set_hide_overscan },
-    { "racesound", "mods.racesound", "mode",
+    { 5, "Sound", "racesound", "mods.racesound", "mode",
       "RACE SOUND", "RACE SOUND", "Sound",
       "Stock Top Gear 2 races play either music or sound effects. Both runs "
       "both: the cartridge's music driver stays resident while the race SFX "
@@ -124,14 +126,14 @@ static const Tg2Option s_options[] = {
      * (see docs/AUDIO.md): the resident Z80 music driver is music; the 68K
      * FM/PSG engine and the race SFX PCM image are sound effects. 100% is the
      * stock level and leaves the generated stream byte-identical. */
-    { "musicvol", "mods.musicvol", "level",
+    { 0, "Audio", "musicvol", "mods.musicvol", "level",
       "Music volume", "Music volume", "Sound",
       "Music level, as a percentage of the stock mix. Only the cartridge's "
       "music driver is affected; engine, nitro and effect sounds keep their "
       "own slider. 100% is the stock level.",
       NULL, NULL,
       100, &s_musicvol, TG2_OPT_INT, NULL, NULL, 0, apply_musicvol, 0, 100, 5 },
-    { "sfxvol", "mods.sfxvol", "level",
+    { 1, "Audio", "sfxvol", "mods.sfxvol", "level",
       "SFX volume", "SFX volume", "Sound",
       "Sound-effects level, as a percentage of the stock mix: the 68K FM/PSG "
       "engine and the race Z80 sample player (engine, nitro, impacts). Music "
@@ -339,9 +341,8 @@ static const char *const runtime_sections[] = {"VIDEO", "AUDIO", "SYSTEM", "MODS
 const RecompRuntimeUiLayout tg2_runtime_layout = {
     runtime_section_name, runtime_sections, sizeof runtime_sections / sizeof runtime_sections[0]
 };
-/* Runtime order and section placement are policy; all player text, choices
- * and ranges come from the same descriptors the launcher consumes. */
-static const unsigned runtime_order[] = {4, 5, 0, 1, 2, 3};
+/* Runtime placement, player text, choices and ranges all come from the
+ * same descriptors the launcher consumes. */
 static RecompRuntimeUiItem s_runtime_items[TG2_OPTION_COUNT];
 static char s_runtime_keys[TG2_OPTION_COUNT][64];
 
@@ -349,13 +350,13 @@ const struct RecompRuntimeUiItem *tg2_options_runtime_items(size_t *count)
 {
     static int initialized;
     if (!initialized) {
-        for (int i = 0; i < TG2_OPTION_COUNT; ++i) {
-            const Tg2Option *o = &s_options[runtime_order[i]];
+        for (int n = 0; n < TG2_OPTION_COUNT; ++n) {
+            const Tg2Option *o = &s_options[n];
+            unsigned i = o->runtime_index;
             RecompRuntimeUiItem *item = &s_runtime_items[i];
             snprintf(s_runtime_keys[i], sizeof s_runtime_keys[i], "%s.%s", o->section, o->key);
             item->key = s_runtime_keys[i];
-            item->section = o->kind == TG2_OPT_INT ? "Audio" :
-                            !strcmp(o->group, "Sound") ? "Sound" : "Mods";
+            item->section = o->runtime_section;
             item->label = o->name;
             item->description = o->description;
             item->type = o->kind == TG2_OPT_INT ? RECOMP_RUNTIME_UI_INT :
