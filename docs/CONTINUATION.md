@@ -370,3 +370,4 @@ passed all five jobs, and the release is marked Latest. Linux tarball SHA-256
 haven't been tried on real gamepad hardware, Deck N× performance is unmeasured, and
 Windows/Intel Mac remain unplayed. The `deck-triggers-20261111` draft is now
 superseded by v0.3.0.
+The `deck-triggers-20261111` draft was deleted at the owner's request (no tag existed).
