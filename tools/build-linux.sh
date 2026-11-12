@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Usage: tools/build-linux.sh [ROM] [BUILD_DIR]
+# Acquires the shared heavy-build lock itself; invoke without an outer flock.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 "$repo/tools/apply-engine-patches.sh"
