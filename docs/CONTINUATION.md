@@ -341,3 +341,14 @@ are promoted with continuous growth. The owner played Egypt at 4×/60 fps and sa
 "Está ótimo". Still open: poles/specials (task 38), the Ayers road audit
 (task 41), task 40 (triggers + CONTROL TYPE removal, OpenCode), S5–S7, and
 Deck/GPU performance at N×.
+
+**Task 40 merged (2026-11-11, `6f05d76`).** RT/LT pedals plus a native four-row
+setup carousel. The owner approved the menu on the Mac; the triggers haven't been tried on
+real hardware yet. G1 and the four control scenarios pass on the merge. A short
+Auckland 2× actor drive from a cold start fails the road-artefact summary with every
+violation count at 0. It fails the same way on pre-merge `0e8a7bf`, so this is
+the invocation (no saved state), not the merge. Deck draft
+[deck-triggers-20261111](https://github.com/vittau/top-gear-2-genesis-pc/releases/tag/untagged-aa4dacb9b6f0ac141fd8):
+target `6f05d76`, CI 43129850288, tar.gz only, version `0.2.0-g6f05d76`, SHA-256
+`8f0b6fc99ae2565b58abb8a75e38b6962f77c60c84802bd628f9f07770bae359`. It awaits the
+owner's Deck test (triggers, menu, 2× sprites and performance).
