@@ -51,7 +51,12 @@ typedef struct {
 } Tg2VideoTopRow;
 
 extern int tg2v_actor_audit;
-extern int tg2v_actor_free, tg2v_reference_pass;
+extern int tg2v_actor_free;
+#ifdef GEN_ENABLE_TRACE
+extern int tg2v_reference_pass;
+#else
+#define tg2v_reference_pass 0
+#endif
 extern unsigned short *tg2v_actor_front;
 void tg2v_actor_native_row(const GVDP *v,int line,int nw,const uint32_t *native,
                               uint32_t *out,GVDPRasterRow *free_row,unsigned short *tg2v_owners);

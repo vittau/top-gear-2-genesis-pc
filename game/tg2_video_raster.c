@@ -118,7 +118,12 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     int w1 = w / scale;
     static unsigned char foreground[4096], occluder[4096];
     static unsigned short front[4096];
-    static uint32_t stripped[256], reference[4096];
+    static uint32_t stripped[256];
+#ifdef GEN_ENABLE_TRACE
+    static uint32_t reference[4096];
+#else
+    const uint32_t *reference = NULL;
+#endif
     static GVDPRasterRow free_row;
     const GVDPRasterRow *original=tg2v_filter_layers;
     int layers = tg2v_filter_layers && tg2v_filter_layers->width >= (unsigned)nw;
@@ -128,11 +133,13 @@ static void render_scanline(const GVDP *v, int line, const uint32_t *native, int
     }
     tg2v_actor_free=0;
     /* Keep the actual native+margin picture for same-frame downscale evidence. */
+#ifdef GEN_ENABLE_TRACE
     if(tg2_highres_native_dump_active()) {
         tg2v_reference_pass=1;
         render_scanline_1x(v,line,native,nw,reference,w1);
         tg2v_reference_pass=0;
     }
+#endif
     if(layers && tg2_actors_active()) {
         tg2v_actor_native_row(v,line,nw,native,stripped,&free_row,tg2v_owners);
         tg2v_filter_layers=&free_row; native=stripped; tg2v_actor_free=1;

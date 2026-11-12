@@ -11,7 +11,10 @@ const GVDPRasterRow *tg2v_filter_layers;
 unsigned char *tg2v_filter_foreground;
 unsigned char *tg2v_actor_occluder;
 unsigned short *tg2v_actor_front;
-int tg2v_actor_free, tg2v_reference_pass;
+int tg2v_actor_free;
+#ifdef GEN_ENABLE_TRACE
+int tg2v_reference_pass;
+#endif
 unsigned short tg2v_owners[256];
 #ifdef GEN_ENABLE_TRACE
 unsigned long long tg2v_actor_rows, tg2v_actor_row_mismatches;
