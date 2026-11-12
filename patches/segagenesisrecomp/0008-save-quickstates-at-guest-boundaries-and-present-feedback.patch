@@ -1,4 +1,4 @@
-From 3de6b8fabd32bb3ca525b913b60ba374b673e6e7 Mon Sep 17 00:00:00 2001
+From 511fc9635b88070145ee226c34ab310a145ccfc7 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Save quickstates at guest boundaries and present feedback
@@ -143,7 +143,7 @@ index 3997259..0308abb 100644
          extern int runner_custom_video_set(const char *, int, int);
          char mode[64] = {0};
 diff --git a/runner/game_spec.h b/runner/game_spec.h
-index a15a33c..29883e7 100644
+index 63856e8..8e5bc21 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
 @@ -77,6 +77,13 @@ typedef struct GameSpec {
@@ -444,7 +444,7 @@ index ad17ac9..8ba9579 100644
  /* ---- Vectored exceptions (Phase 7A) ----
   * Real semantics for TRAP #N / TRAPV / RTR / RESET / ILLEGAL / A-line /
 diff --git a/runner/main.c b/runner/main.c
-index 4c3d6ec..4e852ab 100644
+index 70eecf7..bfc92dc 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -44,6 +44,7 @@

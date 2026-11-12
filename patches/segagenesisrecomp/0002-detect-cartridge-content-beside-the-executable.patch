@@ -1,4 +1,4 @@
-From a1be1b2851c0611d620dc43960b290cf6a9a450c Mon Sep 17 00:00:00 2001
+From 72e56f3de6db761655ceb09b630a71055dc30237 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Detect cartridge content beside the executable

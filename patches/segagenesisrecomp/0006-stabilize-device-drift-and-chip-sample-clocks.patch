@@ -1,4 +1,4 @@
-From ed204a3db442f8248db08d90b1d6294b27e2e555 Mon Sep 17 00:00:00 2001
+From 73e6d665ea5fc013077b3eddd33f82cc7e9b7ff6 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Stabilize device drift and chip sample clocks

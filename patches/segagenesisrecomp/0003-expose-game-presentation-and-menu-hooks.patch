@@ -1,4 +1,4 @@
-From ba0a4020a75c2b9bdc12176951598b9bc4602c6f Mon Sep 17 00:00:00 2001
+From 9a9f37f96d875841a36adfc5bbcf1636f963e7b8 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Expose game presentation and menu hooks
@@ -6,10 +6,10 @@ Subject: [PATCH] Expose game presentation and menu hooks
 Let the game own settings, native video geometry, app identity and player defaults without embedding game policy in the runner.
 ---
  runner/app_config.c |   6 +-
- runner/game_spec.h  |  26 ++++++
+ runner/game_spec.h  |  28 +++++++
  runner/game_video.h |  34 +++++++-
  runner/main.c       | 196 ++++++++++++++++++++++++++++++++++++++++----
- 4 files changed, 245 insertions(+), 17 deletions(-)
+ 4 files changed, 247 insertions(+), 17 deletions(-)
 
 diff --git a/runner/app_config.c b/runner/app_config.c
 index 0701202..041453b 100644
@@ -36,7 +36,7 @@ index 0701202..041453b 100644
  }
  static const char *video_mod_error(void *ctx) { (void)ctx;return s_mod_error; }
 diff --git a/runner/game_spec.h b/runner/game_spec.h
-index f36db11..a15a33c 100644
+index f36db11..63856e8 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
 @@ -26,6 +26,7 @@
@@ -70,7 +70,7 @@ index f36db11..a15a33c 100644
      /* Game-owned additive features may compose with the common video provider. */
      const struct RecompLauncherCModProvider *(*mods)(
          const struct RecompLauncherCModProvider *base);
-@@ -66,6 +82,15 @@ typedef struct GameSpec {
+@@ -66,6 +82,17 @@ typedef struct GameSpec {
       * Hedgehog". Build/backend/debug identity belongs in logs and About. */
      const char *display_name;
      const char *short_name;          /* "Sonic1" — shows up in info / ping */
@@ -78,6 +78,8 @@ index f36db11..a15a33c 100644
 +     * Set before any SDL video init, including the launcher. NULL preserves
 +     * SDL's default. The environment may override it for host integration. */
 +    const char *app_id;
++    /* Directory basename for per-game user data (NULL uses GenesisRecomp). */
++    const char *data_directory_name;
 +    /* Optional embedded RGBA8 icon, row-major, width*4 bytes per row. Immutable
 +     * game-owned pixels; SDL copies them when the gameplay window is created.
 +     * Native Wayland uses app_id + installed desktop metadata instead. */
@@ -86,7 +88,7 @@ index f36db11..a15a33c 100644
      /* Box-art file staged next to the exe under assets/img/, e.g.
       * "boxart-sonic3.tga". NULL => the shared "boxart.tga" (single-boxart
       * repos). Needed when several game modes build into ONE exe dir (the
-@@ -273,6 +298,7 @@ typedef struct GameSpec {
+@@ -273,6 +300,7 @@ typedef struct GameSpec {
       * use this to swap interpreter execution for native execution
       * one function at a time during divergence hunting. NULL+0 is
       * legal and means "no overrides". */

@@ -1,4 +1,4 @@
-From 7c9055e8acb9aac3fa3547b365c8b418d02f6bc1 Mon Sep 17 00:00:00 2001
+From d66bf9147e602039c6cc3f74b594f0fdc31fc24d Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Dispatch pushed RTS targets with exact stack deltas
@@ -9,7 +9,7 @@ Account every guest stack adjustment before choosing a normal return or a comput
  1 file changed, 102 insertions(+), 74 deletions(-)
 
 diff --git a/profiles/genesis/code_generator.c b/profiles/genesis/code_generator.c
-index 2a02db3..f6f49d8 100644
+index 2a02db3..74748c3 100644
 --- a/profiles/genesis/code_generator.c
 +++ b/profiles/genesis/code_generator.c
 @@ -1963,6 +1963,77 @@ static void emit_mem_shift(FILE *f, const M68KInstr *instr,
@@ -27,9 +27,9 @@ index 2a02db3..f6f49d8 100644
 + * unaccounted — ADD.W (SP)+,Dn popped a word `_sp_popped` never saw — so a loop
 + * that pushes a word and pops it through ADD.W drifted the delta negative by
 + * 2 bytes per iteration and turned a plain return into a dispatch to whatever
-+ * sat in the return slot. Top Gear 2's $7336 RTS at $754A dispatched to $650C
-+ * (an interior label) after sixteen iterations of its sprite loop; the
-+ * scene-init continuation was then skipped for the rest of the session.
++ * sat in the return slot. A sprite loop's RTS dispatched to an interior
++ * label after sixteen iterations; the scene-init continuation was then
++ * skipped for the rest of the session.
 + *
 + * One rule for every mnemonic, used both by the has_sp_adjust pre-scan and by
 + * the single accounting emission in emit_instr, so the two cannot disagree. */

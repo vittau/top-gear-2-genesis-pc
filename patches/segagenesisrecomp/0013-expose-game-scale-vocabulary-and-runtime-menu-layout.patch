@@ -1,4 +1,4 @@
-From 62fa3395ecf99f81e156cd09696c6719e8e2864a Mon Sep 17 00:00:00 2001
+From efb91660cd3cbcda724243caa57efb36e680ef75 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Expose game scale vocabulary and runtime menu layout
@@ -10,7 +10,7 @@ Use the game render-scale choices and host menu layout after the complete runtim
  2 files changed, 71 insertions(+), 4 deletions(-)
 
 diff --git a/runner/game_spec.h b/runner/game_spec.h
-index a420f99..92bf49f 100644
+index 94f1af3..cee8b19 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
 @@ -38,6 +38,22 @@ typedef struct {
@@ -44,7 +44,7 @@ index a420f99..92bf49f 100644
      int (*runtime_ui_get)(const char *key, int *out);
      int (*runtime_ui_set)(const char *key, int value);
      /* Game-owned additive features may compose with the common video provider. */
-@@ -314,6 +331,8 @@ typedef struct GameSpec {
+@@ -316,6 +333,8 @@ typedef struct GameSpec {
       * one function at a time during divergence hunting. NULL+0 is
       * legal and means "no overrides". */
  
@@ -54,7 +54,7 @@ index a420f99..92bf49f 100644
  
  /*
 diff --git a/runner/main.c b/runner/main.c
-index 281a24e..2f1d398 100644
+index eecc5ff..d522692 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -337,6 +337,32 @@ static const char *const s_hd_labels[]={"Native","2x","4x","8x","16x","32x","64x

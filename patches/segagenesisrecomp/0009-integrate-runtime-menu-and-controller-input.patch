@@ -1,4 +1,4 @@
-From 58d68bc23d1c9a7f45167022b38140a8c376937a Mon Sep 17 00:00:00 2001
+From e549ace28e7182143522b78f731c3984ee06e9b6 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:20 -0300
 Subject: [PATCH] Integrate runtime menu and controller input
@@ -62,7 +62,7 @@ index 0308abb..febd861 100644
          handle_ui_rows(id);
      } else if (strcmp(cmd, "pad") == 0) {
 diff --git a/runner/game_spec.h b/runner/game_spec.h
-index 29883e7..a420f99 100644
+index 8e5bc21..94f1af3 100644
 --- a/runner/game_spec.h
 +++ b/runner/game_spec.h
 @@ -45,6 +45,14 @@ typedef struct GameSpec {
@@ -236,7 +236,7 @@ index b164191..5a2cd3f 100644
  uint16_t input_button_bit(GenesisButton b);
  
 diff --git a/runner/main.c b/runner/main.c
-index 4e852ab..4b9ca0b 100644
+index bfc92dc..fb907bd 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -438,6 +438,12 @@ int runner_options_set(const char *key, int value) {

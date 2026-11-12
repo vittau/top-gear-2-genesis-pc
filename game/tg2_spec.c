@@ -203,6 +203,7 @@ const GameSpec g_game_spec = {
 #endif
     .display_name = "Top Gear 2",
     .short_name = "TG2",
+    .data_directory_name = "TG2Recomp",
     .app_id = "tg2recomp",
     .icon_rgba = tg2_icon_rgba,
     .icon_width = 32,

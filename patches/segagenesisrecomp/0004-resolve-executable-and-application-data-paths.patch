@@ -1,22 +1,22 @@
-From ca28ef0468d17920080d822511a92fdd9d2b7978 Mon Sep 17 00:00:00 2001
+From 9e4b8919cc64a6e1fa110f7c50bae1bdb2b16d57 Mon Sep 17 00:00:00 2001
 From: Vitor Machado <2932830+vittau@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 10:52:19 -0300
 Subject: [PATCH] Resolve executable and application data paths
 
 Anchor assets, cartridge lookup and writable user data to the actual image or macOS bundle rather than inherited launcher state.
 ---
- runner/app_paths.h         | 139 +++++++++++++++++++++++++++++++++++++
+ runner/app_paths.h         | 140 +++++++++++++++++++++++++++++++++++++
  runner/diagnostic_replay.c |   7 ++
- runner/main.c              | 128 ++++++++++++++++++++++++++++++++--
- 3 files changed, 267 insertions(+), 7 deletions(-)
+ runner/main.c              | 128 +++++++++++++++++++++++++++++++--
+ 3 files changed, 268 insertions(+), 7 deletions(-)
  create mode 100644 runner/app_paths.h
 
 diff --git a/runner/app_paths.h b/runner/app_paths.h
 new file mode 100644
-index 0000000..930ceb2
+index 0000000..1a4a243
 --- /dev/null
 +++ b/runner/app_paths.h
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,140 @@
 +/* Locations of user data in a packaged macOS release.
 + *
 + * A plain folder keeps the historical rule: settings, logs, saves and assets
@@ -27,7 +27,7 @@ index 0000000..930ceb2
 + *       is where the assets ship, but the folder the player sees and drops the
 + *       cartridge into is the one containing X.app. User data therefore goes
 + *       beside the .app when that folder is writable, otherwise to
-+ *       ~/Library/Application Support/TG2Recomp/. An app installed in an
++ *       ~/Library/Application Support/<game>/. An app installed in an
 + *       Applications folder always uses Application Support, which also
 + *       holds the cartridge the launcher imports.
 + *
@@ -143,12 +143,13 @@ index 0000000..930ceb2
 +    return access(path, W_OK | X_OK) == 0;
 +}
 +
-+/* ~/Library/Application Support/TG2Recomp/ (created on demand). */
-+static int genesis_macos_app_support(char *out, size_t cap)
++/* ~/Library/Application Support/<game>/ (created on demand). */
++static int genesis_macos_app_support(const char *directory_name, char *out, size_t cap)
 +{
 +    const char *home = getenv("HOME");
 +    if (!home || !*home || !out || cap < 2) return 0;
-+    snprintf(out, cap, "%s/Library/Application Support/TG2Recomp/", home);
++    if (!directory_name || !*directory_name) directory_name = "GenesisRecomp";
++    snprintf(out, cap, "%s/Library/Application Support/%s/", home, directory_name);
 +    mkdir(out, 0700);   /* EEXIST is fine; Library/Application Support exists */
 +    return 1;
 +}
@@ -175,7 +176,7 @@ index 3ddda98..5588ac2 100644
      playing = 1;
      snprintf(path, sizeof path, "%s", playback);
 diff --git a/runner/main.c b/runner/main.c
-index 0020ad8..345e8c2 100644
+index 0020ad8..e409aa1 100644
 --- a/runner/main.c
 +++ b/runner/main.c
 @@ -55,6 +55,8 @@
@@ -253,7 +254,7 @@ index 0020ad8..345e8c2 100644
  }
  
 +#ifdef __APPLE__
-+/* A double-clicked TG2Recomp.app runs from X.app/Contents/MacOS. Anchor the
++/* A double-clicked app runs from X.app/Contents/MacOS. Anchor the
 + * cartridge search and user data on the folder the player actually sees (the
 + * one containing X.app), and fall back to Application Support when the app
 + * sits in a read-only location such as /Applications. Assets are unaffected:
@@ -268,13 +269,13 @@ index 0020ad8..345e8c2 100644
 +    if (!genesis_macos_bundle_parent(exe_dir, parent, sizeof parent)) return;
 +    snprintf(s_exe_dir, sizeof s_exe_dir, "%s", parent);
 +    if (genesis_macos_is_installed_location(parent) &&
-+        genesis_macos_app_support(data_dir, sizeof data_dir)) {
++        genesis_macos_app_support(g_game_spec.data_directory_name, data_dir, sizeof data_dir)) {
 +        snprintf(s_data_dir, sizeof s_data_dir, "%s", data_dir);
 +        s_rom_library = 1;
 +        fprintf(stderr, "[paths] installed app; user data and cartridge: %s\n", s_data_dir);
 +    } else if (genesis_path_is_writable(parent)) {
 +        snprintf(s_data_dir, sizeof s_data_dir, "%s", parent);
-+    } else if (genesis_macos_app_support(data_dir, sizeof data_dir)) {
++    } else if (genesis_macos_app_support(g_game_spec.data_directory_name, data_dir, sizeof data_dir)) {
 +        snprintf(s_data_dir, sizeof s_data_dir, "%s", data_dir);
 +        s_rom_library = 1;
 +        fprintf(stderr, "[paths] bundle folder is read-only; user data: %s\n", s_data_dir);
