@@ -15,11 +15,11 @@ included, and generated C is not part of the source repository.
   <a href="docs/images/sound-both.png"><img src="docs/images/sound-both.png" width="32%" alt="The game's Race Sound menu showing the new BOTH choice"></a>
 </p>
 
-Every race picture in this README uses the experimental 4× internal
-resolution at 16:9, with *Hide overscan* on, the HUD centred, *Linear filter*
-off and 60 fps races on: the picture a player gets with those settings. They
-are saved from the running game at the 4× canvas's own size (1424×800 at
-16:9) and are not resampled.
+The race pictures here use the experimental 4× internal resolution, with
+*Hide overscan* on, the HUD centred, *Linear filter* off and 60 fps races on:
+the picture a player gets with those settings. They are saved from the running
+game at the 4× canvas's own size, without resampling; only the 1× half of the
+internal-resolution comparison is at the default 1×.
 
 ## Status and features
 
@@ -73,11 +73,11 @@ release candidates until they are. See [docs/STATUS.md](docs/STATUS.md) for the 
 
 The same moment of a race in Egypt in Original (the Genesis's 256-pixel-wide
 race frame), 16:9 and 21:9, all at 4× internal resolution. The wider views
-show the yellow rival the original frame cuts in half at the left edge, and
-the temple relief on the right, of which the original frame shows only its
-left end; the 21:9 view also carries the coastline beyond it. All three have
-*Hide overscan* on, so the empty black bands above and below the race are
-cropped.
+show the yellow rival that the original frame cuts in half at the left edge,
+and the temple relief on the right, of which the original frame shows only its
+left end; the 21:9 view also adds more of the lake and shoreline on the left.
+All three have *Hide overscan* on, so the empty black bands above and below
+the race are cropped.
 
 <p align="center">
   <a href="docs/images/aspect-original-cropped.png"><img src="docs/images/aspect-original-cropped.png" width="40%" alt="Original view of the race in Egypt"></a>
@@ -124,7 +124,8 @@ marks lose their stair steps, and the cars gain detail.
 <p align="center">
   <a href="docs/images/highres-1x-vs-4x.png"><img src="docs/images/highres-1x-vs-4x.png" width="100%" alt="The same race moment at 1× and at 4× internal resolution, zoomed"></a>
   <br>
-  <em>1× (left, the default and the original picture) and 4× (right).</em>
+  <em>Video → Internal resolution (experimental): 1× (left, the default and
+  the original picture) and 4× (right).</em>
 </p>
 
 ## ROM requirements

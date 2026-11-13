@@ -14,9 +14,11 @@ Two modes, both headless (SDL dummy, one process at a time):
   Original / 16:9 / 21:9 or 1x / 4x pair.
 
 The pictures use whatever ``settings.ini`` next to the executable holds
-(internal resolution, linear filter, Hide overscan, HUD, 60 fps races). This
-tool only forces the widescreen mode through the usual ``--widescreen``
-switch and asserts the settings actually in effect through ``tg2_video``.
+(linear filter, Hide overscan, HUD, 60 fps races). This tool forces the
+widescreen mode through the usual ``--widescreen`` switch and the render scale
+through the runner's ``TG2_HIGHRES_SCALE`` override (the same value the
+settings row writes), then asserts through ``tg2_video`` that every option in
+effect is the one the README picture claims.
 
 Everything it writes is ROM-derived and must stay under the ignored build
 directory; never commit its output.
@@ -52,7 +54,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Canada's snow scene is Banff (5 laps), the track the old picture showed.
 SCENES = {
     'egypt': dict(country=3, slot=0, track='Egypt / Abu Simbel'),
-    'france': dict(country=4, slot=2, track='France / Nice'),
+    'france': dict(country=4, slot=0, track='France / Bordeaux'),
     'canada': dict(country=2, slot=0, track='Canada / Banff'),
     'night': dict(country=0, slot=2, track='Australasia / Canterbury Plains (night)'),
 }
