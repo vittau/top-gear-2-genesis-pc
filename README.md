@@ -11,9 +11,15 @@ included, and generated C is not part of the source repository.
 
 <p align="center">
   <a href="docs/images/title.png"><img src="docs/images/title.png" width="32%" alt="Top Gear 2 title screen"></a>
-  <a href="docs/images/race-egypt.png"><img src="docs/images/race-egypt.png" width="35%" alt="The start of a race in Egypt in 16:9"></a>
+  <a href="docs/images/race-egypt.png"><img src="docs/images/race-egypt.png" width="35%" alt="A race in Egypt at 4× internal resolution, in 16:9"></a>
   <a href="docs/images/sound-both.png"><img src="docs/images/sound-both.png" width="32%" alt="The game's Race Sound menu showing the new BOTH choice"></a>
 </p>
+
+Every race picture in this README uses the experimental 4× internal
+resolution at 16:9, with *Hide overscan* on, the HUD centred, *Linear filter*
+off and 60 fps races on: the picture a player gets with those settings. They
+are saved from the running game at the 4× canvas's own size (1424×800 at
+16:9) and are not resampled.
 
 ## Status and features
 
@@ -65,14 +71,16 @@ release candidates until they are. See [docs/STATUS.md](docs/STATUS.md) for the 
 
 ### Widescreen
 
-The same moment of a race in Original (the Genesis's 256-pixel-wide race
-frame), 16:9 and 21:9. The wider views reveal the tyre stack on the left and
-the tree on the right, which the original frame cuts off. All three have
+The same moment of a race in Egypt in Original (the Genesis's 256-pixel-wide
+race frame), 16:9 and 21:9, all at 4× internal resolution. The wider views
+show the yellow rival the original frame cuts in half at the left edge, and
+the temple relief on the right, of which the original frame shows only its
+left end; the 21:9 view also carries the coastline beyond it. All three have
 *Hide overscan* on, so the empty black bands above and below the race are
 cropped.
 
 <p align="center">
-  <a href="docs/images/aspect-original-cropped.png"><img src="docs/images/aspect-original-cropped.png" width="40%" alt="Original view of the race"></a>
+  <a href="docs/images/aspect-original-cropped.png"><img src="docs/images/aspect-original-cropped.png" width="40%" alt="Original view of the race in Egypt"></a>
   <br>
   <em>Original</em>
 </p>
@@ -97,9 +105,9 @@ centred. Extending every non-race screen that has scenery is planned.
 The game has 64 races in 16 countries, with night, snow, rain and fog.
 
 <p align="center">
-  <a href="docs/images/track-france.png"><img src="docs/images/track-france.png" width="32%" alt="A sunny race in France in 16:9"></a>
-  <a href="docs/images/track-night.png"><img src="docs/images/track-night.png" width="32%" alt="A night race in Australasia in 16:9"></a>
-  <a href="docs/images/track-snow.png"><img src="docs/images/track-snow.png" width="32%" alt="A snow race in Canada in 16:9"></a>
+  <a href="docs/images/track-france.png"><img src="docs/images/track-france.png" width="32%" alt="A sunny race in France in 16:9 at 4× internal resolution"></a>
+  <a href="docs/images/track-night.png"><img src="docs/images/track-night.png" width="32%" alt="A night race in Australasia in 16:9 at 4× internal resolution"></a>
+  <a href="docs/images/track-snow.png"><img src="docs/images/track-snow.png" width="32%" alt="A snow race in Canada in 16:9 at 4× internal resolution"></a>
   <br>
   <em>France, Australasia at night, and Canada in the snow.</em>
 </p>
