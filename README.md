@@ -112,6 +112,21 @@ The game has 64 races in 16 countries, with night, snow, rain and fog.
   <em>France, Australasia at night, and Canada in the snow.</em>
 </p>
 
+### Higher internal resolution
+
+*Internal resolution*, an experimental row in the Video menu, redraws the road
+and the scenery from the game's own per-line road data and the opponent cars
+from the game's most detailed artwork at 2×, 3× or 4×; the default 1× is the
+original picture. Both halves below show the same moment at the same integer
+zoom, so every pixel is a real picture pixel: at 4× the road edges and lane
+marks lose their stair steps, and the cars gain detail.
+
+<p align="center">
+  <a href="docs/images/highres-1x-vs-4x.png"><img src="docs/images/highres-1x-vs-4x.png" width="100%" alt="The same race moment at 1× and at 4× internal resolution, zoomed"></a>
+  <br>
+  <em>1× (left, the default and the original picture) and 4× (right).</em>
+</p>
+
 ## ROM requirements
 
 Use a **Top Gear 2 (USA)** cartridge dump:
