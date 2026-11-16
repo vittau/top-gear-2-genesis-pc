@@ -42,8 +42,14 @@ macOS (Apple Silicon and Intel).
   and background are redrawn from the game's own per-line road data, and the
   opponent cars and roadside objects are drawn from the game's most detailed
   artwork. They grow smoothly as they approach instead of jumping between
-  sizes, also in 60 fps races. The HUD, the sky, poles and a few special
-  pieces keep their original detail. The default 1× is the original picture.
+  sizes, also in 60 fps races. The HUD, poles and a few special pieces keep
+  their original detail. The default 1× is the original picture.
+
+- **Sky gradients (optional).** *Mods → SKY GRADIENTS* replaces each track's
+  flat sky with a soft vertical gradient built from that track's own sky
+  colour: darker at the top, lighter and hazier at the horizon, with gentler
+  ramps for rain, snow and fog and a deep blue night sky. It follows hills,
+  lightning, fades and split screen. Off by default.
 
 - **Music and sound effects together.** The original makes you choose music
   *or* sound effects during races. A new **BOTH** choice in the game's own
@@ -286,6 +292,7 @@ saved to `settings.ini`:
 | Race sound | Sound effects, Music, Both | Sound effects |
 | Music volume, SFX volume | 0–100 % of the original mix | 100 % |
 | Internal resolution (experimental) | 1× (off), 2×, 3×, 4×; applies on the next launch | 1× |
+| Sky gradients (Mods) | On, Off | Off |
 | Diagnostics (bug report) | On, Off | Off |
 
 Race sound is also in the game's own *Sound* menu. Both menus change the same
