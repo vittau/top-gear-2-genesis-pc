@@ -4,12 +4,12 @@
 /* Reuse the framework's immutable presented-row seam; sprite/status work is
  * not repeated on the live VDP. Off uses exactly the legacy row producer. */
 static int filter_raster_enabled(const GVDP *v) {
-    return tg2_highres_scale()>1 && tg2_race_picture(v);
+    return (tg2_highres_scale()>1 && tg2_race_picture(v)) || tg2_sky_enabled();
 }
 static void scanline_presented(const GVDP *v, int line, int nw, uint32_t *out,
                                int w, GameVideoNativeRow native_row, void *ctx,
                                const GVDPRasterRow *raster) {
-    tg2v_filter_layers = tg2_highres_scale()>1 ? raster : NULL;
+    tg2v_filter_layers = (tg2_highres_scale()>1 || tg2_sky_enabled()) ? raster : NULL;
     tg2v_scanline(v, line, native_row(ctx), nw, out, w);
     tg2v_filter_layers = NULL;
 }

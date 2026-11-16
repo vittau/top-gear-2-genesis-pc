@@ -15,6 +15,7 @@
  * SAT or scheduling state is touched.
  */
 #include "tg2_highres.h"
+#include "tg2_sky.h"
 #include "tg2_road_fit.h"
 #include "tg2_actors.h"
 #include "tg2_memory.h"
@@ -1005,6 +1006,11 @@ int tg2_highres_build(uint64_t frame, uint32_t *pixels, int stride, int width,
                 paint_road_row(src, j, scale, w1, native_w, &plan, row, s_src_row, filtered);
         }
     }
+    tg2_sky_paint(pixels, stride, width, scale, first);
+    if (filtered && tg2_sky_enabled())
+        for (int y=0;y<native_h;++y)
+            for (int x=0;x<w1;++x)
+                if (tg2_sky_pixel(y,x)) s_native_foreground[y][x]=0;
     if (filtered) {
         if (first < 0 || first >= last || last > native_h) { first = 0; last = native_h; }
         /* Optional one-frame coverage evidence, aligned with the runner's

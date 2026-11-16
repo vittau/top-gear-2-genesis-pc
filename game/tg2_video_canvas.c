@@ -79,7 +79,7 @@ int tg2v_enabled(void) { return tg2v_mode != 0; }
 /* Ownership is independent of the viewport: Hide overscan must also reach a
  * stock 4:3 frame, whose width stays native. */
 int tg2v_renderer_enabled(void) {
-    return tg2v_mode != 0 || tg2v_race60 || tg2v_tg2_video_get_hide_overscan();
+    return tg2v_mode != 0 || tg2v_race60 || tg2v_tg2_video_get_hide_overscan() || tg2_sky_enabled();
 }
 static int cropped_height(int nh) {
     return tg2v_presented_cropped && nh > CROP_BANDS ? nh - CROP_BANDS : nh;

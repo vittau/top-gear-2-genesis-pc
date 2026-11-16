@@ -171,6 +171,7 @@ void tg2v_note_crop_row(int line, const uint32_t *out, int w) {
 static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, int nw,
                                uint32_t *out, int w) {
     int origin = (w - nw) / 2;
+    tg2_sky_begin_row(v, line, w);
     tg2v_pa_extend_mask = 0;
     if (!line) {
         tg2v_audit_race_frame = nw == 256 && tg2_race_picture(v);
@@ -215,6 +216,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
     if (!tg2_race_picture(v) || !(v->reg[1] & 64)) {
         if (!tg2v_reference_pass) ++tg2v_native_lines;
         memcpy(out + origin, native, nw * sizeof *out);
+        tg2_sky_native(v,line,native,out,nw,w);
         if (tg2v_audit_race_frame) {
             tg2v_window_margins(v, line, native, nw, out, w);
 
@@ -252,6 +254,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
         out[x] = pal[bp ? bp : v->reg[7] & 63];
         unsigned ap = tg2v_weather_pixel(v, line, nx, ha, va, ba);
         if (ap) out[x] = pal[ap];
+        if (tg2_sky_mask) tg2_sky_mask[x] = !ap && tg2_sky_source(bp,(line+vb)&511,v->reg[7]&63);
         if (tg2v_filter_foreground) tg2v_filter_foreground[x] = ap != 0;
         if (tg2v_actor_occluder) tg2v_actor_occluder[x] = (bp && (b&0x8000)) || ap;
     }
@@ -294,6 +297,7 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
                 continue; /* solid high-priority window, as in the native compositor */
             if ((s->attr & 0x8000) || !(bp && (b & 0x8000))) {
                 out[ox] = pal[((s->attr >> 9) & 48) | c];
+                if (tg2_sky_mask) tg2_sky_mask[ox] = 0;
                 if (tg2v_filter_foreground) tg2v_filter_foreground[ox] = 1;
                 if (!tg2v_reference_pass) ++tg2v_frame_margin_pixels;
             }
@@ -325,5 +329,6 @@ static void render_scanline_1x(const GVDP *v, int line, const uint32_t *native, 
             if(side && tg2v_hud_region(x,side)) tg2v_actor_front[origin+x]=65535;
         }
     }
+    tg2_sky_native(v,line,native,out,nw,w);
     tg2v_hud_row(v, line, ha, hb, va, vb, ba, bb, pal, nw, out, w);
 }

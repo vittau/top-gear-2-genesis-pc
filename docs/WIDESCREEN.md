@@ -799,3 +799,15 @@ The runner clamps linear sampling to the active presented picture, including
 the overscan-cropped 200-line race and viewport size changes. Nearest output
 is unchanged and a fresh configuration defaults to filtering Off. See
 [Metal edge captures and default-preference validation](LINEAR_FILTER.md).
+
+## Gradient skies
+
+The optional **Gradient skies** mod (launcher Presentation and in-game Mods)
+is Off by default, persists in `[mods.skies] enabled`, and toggles live.
+It uses the presented row's live palette-3 entry 15 and each race's base
+colour/weather class. The ramp spans the current pinned sky band, follows
+hills, and shares one per-line colour across the native picture and margins.
+Native layer ownership protects panorama silhouettes, HUD, cars, sprites,
+weather, tunnels and the window band. N× evaluates each output row directly;
+no ordered dither is used. See [task 42](tasks/42-gradient-skies.md) for the
+approved colour table and qualification evidence.

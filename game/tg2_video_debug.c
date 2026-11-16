@@ -18,6 +18,8 @@ void tg2_video_command(int id, const char *json) {
                      tg2v_hud_sprite_pixels,
                      tg2v_tg2_video_get_hide_overscan(), tg2v_presented_cropped, tg2v_crop_frames,
                      tg2v_crop_withheld);
+    n += snprintf(out+n, sizeof out-n, ",");
+    n += tg2_sky_json(out+n, sizeof out-n);
     n += snprintf(out + n, sizeof out - n,
                   ",\"race60\":%d,\"presentation_delay_frames\":%d,\"presentation_frame\":%llu,"
                   "\"from_frame\":%llu,\"to_frame\":%llu,\"phase_num\":%u,\"phase_den\":%u",

@@ -189,6 +189,7 @@ void tg2v_hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                      ap && (a & 0x8000) ? ap : bp && (b & 0x8000) ? bp :
                      sp ? sp : ap ? ap : bp ? bp : v->reg[7] & 63;
         out[origin + x] = pal[c];
+        if (tg2_sky_mask) tg2_sky_mask[origin+x] = !sp && !ap && tg2_sky_source(bp,(line+vb)&511,v->reg[7]&63);
         if (tg2v_actor_front) tg2v_actor_front[origin+x] = sp ? spr_front[x] : 0;
         if (tg2v_actor_occluder) tg2v_actor_occluder[origin+x] = (ap && (a&0x8000)) || (bp && (b&0x8000));
         if (tg2v_filter_foreground)
@@ -198,6 +199,7 @@ void tg2v_hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
     for (int x = 0; x < w; ++x)
         if (shifted[x]) {
             out[x] = pal[shifted[x]];
+            if (tg2_sky_mask) tg2_sky_mask[x] = 0;
             if (tg2v_actor_front) tg2v_actor_front[x] = 65535;
             if (tg2v_filter_foreground) tg2v_filter_foreground[x] = 1;
         }
@@ -244,11 +246,13 @@ unsigned tg2v_window_margins(const GVDP *v, int line, const uint32_t *native,
     if (mask & 1)
         for (int x = 0; x < origin; ++x) {
             out[x] = native[0];
+            if (tg2_sky_mask) tg2_sky_mask[x] = 0;
             if (tg2v_filter_foreground) tg2v_filter_foreground[x] = 1;
         }
     if (mask & 2)
         for (int x = origin + nw; x < w; ++x) {
             out[x] = native[nw - 1];
+            if (tg2_sky_mask) tg2_sky_mask[x] = 0;
             if (tg2v_filter_foreground) tg2v_filter_foreground[x] = 1;
         }
     return mask;
@@ -291,11 +295,13 @@ void tg2v_plane_a_margins(const GVDP *v, int line, const uint32_t *native,
         if (side)
             for (int x = origin + nw; x < w; ++x) {
                 out[x] = native[edge];
+                if (tg2_sky_mask) tg2_sky_mask[x] = 0;
                 if (tg2v_filter_foreground) tg2v_filter_foreground[x] = 1;
             }
         else
             for (int x = 0; x < origin; ++x) {
                 out[x] = native[edge];
+                if (tg2_sky_mask) tg2_sky_mask[x] = 0;
                 if (tg2v_filter_foreground) tg2v_filter_foreground[x] = 1;
             }
     }

@@ -3,6 +3,7 @@
  * Public game/runner interfaces remain in tg2_video.h. */
 #pragma once
 #include "tg2_video.h"
+#include "tg2_sky.h"
 #include "tg2_highres.h"
 #include "tg2_actors.h"
 #include "cmd_server.h"

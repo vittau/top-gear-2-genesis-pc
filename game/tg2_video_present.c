@@ -350,7 +350,7 @@ void tg2v_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
     static GVDPRasterRow filtered_raster;
     const GVDPRasterRow *saved_layers = tg2v_filter_layers;
     int count;
-    if (tg2_highres_scale()>1 && gvdp_capture_presented_scanline(row_vdp, line, &filtered_raster)) {
+    if ((tg2_highres_scale()>1 || tg2_sky_enabled()) && gvdp_capture_presented_scanline(row_vdp, line, &filtered_raster)) {
         count = gvdp_compose_captured(&filtered_raster, indices);
         tg2v_filter_layers = &filtered_raster;
     } else {
@@ -384,6 +384,9 @@ void tg2v_scanline(const GVDP *v, int line, const uint32_t *native, int nw,
  * the machine's own picture and height. */
 int tg2v_compose_presented(uint32_t *pixels, int stride, int tg2v_width,
                              int native_w, int native_h) {
+    if (pixels && native_h == 224 && (!tg2v_last_frame_race || tg2_highres_scale() <= 1))
+        tg2_sky_paint(pixels, stride, tg2v_width, 1,
+            tg2v_hide_overscan && tg2v_crop_top_rows == CROP_TOP ? CROP_TOP : 0);
     if (!pixels || native_h != 224 || !tg2v_last_frame_race)
         return 0;
     int scale = tg2_highres_scale();

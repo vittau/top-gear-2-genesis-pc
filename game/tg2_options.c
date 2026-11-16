@@ -9,6 +9,7 @@
  */
 #include "tg2_options.h"
 #include "tg2_video.h"
+#include "tg2_sky.h"
 #include "tg2_audio.h"
 #include "audio/mixer.h"
 #include "runtime_ui.h"
@@ -57,6 +58,7 @@ typedef struct Tg2Option {
 static int s_race60 = 1;        /* task default: 60 fps races On */
 static int s_hud_edges = 0;     /* task default: HUD Centered */
 static int s_hide_overscan = 1; /* task default: Hide overscan On */
+static int s_gradient_skies;
 static int s_racesound = 0;     /* 0 = SOUND EFFECTS (stock), 1 = MUSIC, 2 = BOTH */
 static int s_musicvol = 100;    /* % of the stock music level */
 static int s_sfxvol = 100;      /* % of the stock sound-effects level */
@@ -114,6 +116,14 @@ static const Tg2Option s_options[] = {
       "Cropped", "Shown",
       1, &s_hide_overscan, TG2_OPT_BOOL, NULL, NULL, 0,
       tg2_video_set_hide_overscan },
+    { 6, "Mods", "skies", "mods.skies", "enabled",
+      "Gradient skies", "Gradient skies", "Presentation",
+      "Add a soft vertical sky gradient using each track's own sky colour, "
+      "weather and time of day. Follows hills and palette effects. "
+      "Changes take effect immediately. Off keeps the original flat skies.",
+      "Enabled", "Disabled",
+      0, &s_gradient_skies, TG2_OPT_BOOL, NULL, NULL, 0,
+      tg2_video_set_gradient_skies },
     { 5, "Sound", "racesound", "mods.racesound", "mode",
       "RACE SOUND", "RACE SOUND", "Sound",
       "Stock Top Gear 2 races play either music or sound effects. Both runs "
@@ -302,6 +312,9 @@ void tg2_options_apply_env(void)
                             overscan[0] == 'N' || overscan[0] == 'f' ||
                             overscan[0] == 'F');
     tg2_video_set_hide_overscan(s_hide_overscan);
+    const char *skies = getenv("TG2_GRADIENT_SKIES");
+    if (skies) s_gradient_skies = atoi(skies) != 0;
+    tg2_video_set_gradient_skies(s_gradient_skies);
     const char *sound = getenv("TG2_RACE_SOUND");
     if (sound) {
         int mode = 0;
