@@ -40,7 +40,7 @@ Music/SFX faders; the rejected Clean FM/engine-sample options must not return.
 
 - [Gradient skies, task 42](tasks/42-gradient-skies.md): merged to `main`
   (`a57c5cd`), MODS → SKY GRADIENTS ON/OFF, default OFF; Off is byte-identical.
-  Owner playtest pending. Kyoto/Lucerne night joins were reviewed and left
+  Owner played and accepted it (2026-11-16). Kyoto/Lucerne night joins were reviewed and left
   unchanged ([audit](tasks/42-sky-seam-audit.md)).
 - [Detailed compound poles, task 38](tasks/38-highres-poles.md): mapped, not
   implemented; preserve compound identity, height, clipping and priority.
