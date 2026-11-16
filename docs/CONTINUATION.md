@@ -4,7 +4,12 @@ Historical log, preserved verbatim: [continuation-log-2026-11.md](history/contin
 
 ## Shipped
 
-The latest public release is **v0.4.0**, tagged at `999d641` and published on
+The latest public release is **v0.5.0**, tagged at `09e3311` and published on
+2026-11-16 ([release notes](../release/v0.5.0.md), CI run 43895258840, all
+three platforms green). It adds the optional **SKY GRADIENTS** mod (task 42,
+default OFF) to v0.4.0.
+
+v0.4.0 was tagged at `999d641` and published on
 2026-11-12 ([release notes](../release/v0.4.0.md), CI run 43313690404, all
 three platforms green). It contains everything in v0.3.0 (`7e19228`:
 widescreen, 60-fps races, BOTH audio, save states, volumes, linear filtering,
@@ -38,10 +43,6 @@ Music/SFX faders; the rejected Clean FM/engine-sample options must not return.
 
 ## Open work
 
-- [Gradient skies, task 42](tasks/42-gradient-skies.md): merged to `main`
-  (`a57c5cd`), MODS → SKY GRADIENTS ON/OFF, default OFF; Off is byte-identical.
-  Owner played and accepted it (2026-11-16). Kyoto/Lucerne night joins were reviewed and left
-  unchanged ([audit](tasks/42-sky-seam-audit.md)).
 - [Detailed compound poles, task 38](tasks/38-highres-poles.md): mapped, not
   implemented; preserve compound identity, height, clipping and priority.
 - [Ayers Rock road audit, task 41](tasks/41-ayers-road-audit.md): low-priority
