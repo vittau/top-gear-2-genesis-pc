@@ -2,6 +2,8 @@
 
 Fog horizon amendment: the owner approved `dLh = 0, kh = 1` to join the
 flat fog panorama without a seam; top and 60% stops are unchanged.
+The correction, all 64 flat-camera captures and seam table are recorded in
+[the follow-up audit](42-sky-seam-audit.md).
 
 Owner-approved colour proposal: https://claude.ai/artifact/5DpWnnC8DNjBjkcEe6qSYs
 
