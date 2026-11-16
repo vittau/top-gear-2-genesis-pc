@@ -1,5 +1,8 @@
 # Task 42 — Gradient skies
 
+Fog horizon amendment: the owner approved `dLh = 0, kh = 1` to join the
+flat fog panorama without a seam; top and 60% stops are unchanged.
+
 Owner-approved colour proposal: https://claude.ai/artifact/5DpWnnC8DNjBjkcEe6qSYs
 
 ## Specification
@@ -24,7 +27,7 @@ Never change hue or re-tune the approved numbers.
 |---|---|---:|---:|---:|---:|
 | night | base 001, no precipitation | -0.07 | 0.90 | +0.10 | 0.70 |
 | nightrain | base 001, bit 5 | -0.06 | 0.90 | +0.06 | 0.70 |
-| fog | bit 3 | -0.035 | 1.00 | +0.025 | 1.00 |
+| fog | bit 3 | -0.035 | 1.00 | 0.00 | 1.00 |
 | snow | bits 5+6 | -0.07 | 0.90 | +0.06 | 0.60 |
 | rain | bit 5 only | -0.09 | 0.85 | +0.05 | 0.70 |
 | overcast | otherwise, C < 0.03 | -0.07 | 1.00 | +0.05 | 0.80 |
@@ -52,7 +55,7 @@ build and regression exit codes, branch and commits. No CI, tags or releases.
 | 1 | Australasia / Ayers Rock | `0x00` | `456` | day | `#6d8fb6` | `#92aece` | `#b2c3d7` |
 | 2 | Australasia / Canterbury Plains | `0x10` | `001` | night | `#00000e` | `#000031` | `#0e1d40` |
 | 3 | Australasia / Sydney | `0xA5` | `333` | rain | `#5d5d5d` | `#777777` | `#868686` |
-| 4 | Britain / Loch Ness | `0x08` | `444` | fog | `#878787` | `#929292` | `#9a9a9a` |
+| 4 | Britain / Loch Ness | `0x08` | `444` | fog | `#878787` | `#929292` | `#929292` |
 | 5 | Britain / London | `0x00` | `345` | day | `#547596` | `#7792ae` | `#96a6b8` |
 | 6 | Britain / Sheffield | `0x00` | `345` | day | `#547596` | `#7792ae` | `#96a6b8` |
 | 7 | Britain / Stonehenge | `0x01` | `135` | day | `#07598f` | `#3177ae` | `#658bac` |
@@ -70,7 +73,7 @@ build and regression exit codes, branch and commits. No CI, tags or releases.
 | 19 | France / Paris | `0xA5` | `001` | nightrain | `#000013` | `#000031` | `#061435` |
 | 20 | Germany / Bavaria | `0x24` | `246` | rain | `#4677a8` | `#5792ce` | `#79a1cb` |
 | 21 | Germany / Cologne | `0x00` | `234` | day | `#335b7b` | `#577792` | `#778a9b` |
-| 22 | Germany / Frankfurt | `0x08` | `444` | fog | `#878787` | `#929292` | `#9a9a9a` |
+| 22 | Germany / Frankfurt | `0x08` | `444` | fog | `#878787` | `#929292` | `#929292` |
 | 23 | Germany / Munich | `0x65` | `256` | snow | `#4b97b3` | `#57aece` | `#8dbcd0` |
 | 24 | Greece / Athens | `0x90` | `001` | night | `#00000e` | `#000031` | `#0e1d40` |
 | 25 | Greece / Meteora | `0x00` | `445` | day | `#747395` | `#9292ae` | `#a9a9ba` |
@@ -95,7 +98,7 @@ build and regression exit codes, branch and commits. No CI, tags or releases.
 | 44 | Scandinavia / Copenhagen | `0x00` | `224` | day | `#3c377f` | `#575792` | `#6d6f93` |
 | 45 | Scandinavia / Helsinki | `0x64` | `234` | snow | `#47627a` | `#577792` | `#748798` |
 | 46 | Scandinavia / Reykjavik | `0x64` | `356` | snow | `#6798b4` | `#77aece` | `#9ebed2` |
-| 47 | Scandinavia / Stockholm | `0x09` | `444` | fog | `#878787` | `#929292` | `#9a9a9a` |
+| 47 | Scandinavia / Stockholm | `0x09` | `444` | fog | `#878787` | `#929292` | `#929292` |
 | 48 | South America / Chile | `0x00` | `345` | day | `#547596` | `#7792ae` | `#96a6b8` |
 | 49 | South America / Mexico | `0x00` | `125` | day | `#0a32a0` | `#3157ae` | `#5770a4` |
 | 50 | South America / Peru | `0x00` | `344` | day | `#547676` | `#779292` | `#95a5a5` |
@@ -111,7 +114,7 @@ build and regression exit codes, branch and commits. No CI, tags or releases.
 | 60 | U.S.A. / Las Vegas | `0x10` | `001` | night | `#00000e` | `#000031` | `#0e1d40` |
 | 61 | U.S.A. / Los Angeles | `0x00` | `046` | day | `#0c73a1` | `#0092ce` | `#6aa5c9` |
 | 62 | U.S.A. / New York | `0x64` | `337` | snow | `#6565dc` | `#7777ff` | `#8f96e6` |
-| 63 | U.S.A. / San Francisco | `0x0A` | `444` | fog | `#878787` | `#929292` | `#9a9a9a` |
+| 63 | U.S.A. / San Francisco | `0x0A` | `444` | fog | `#878787` | `#929292` | `#929292` |
 
 ## Implementation and results
 
@@ -203,7 +206,7 @@ channel code of error; the standalone 64-track production-code check has
 | Bavaria (20) | rain | `4677a8 / 5892ce / 79a1cb` | 1 | `rain-bavaria/on.png` |
 | Sydney (3) | rain/storm | `5d5d5d / 777777 / 868686` | 0 | `storm-sydney/on.png` |
 | Munich (23) | snow | `4b97b3 / 57aece / 8dbcd0` | 0 | `snow-munich/on.png` |
-| Loch Ness (4) | fog | `878787 / 929292 / 9a9a9a` | 0 | `fog-lochness/on.png` |
+| Loch Ness (4) | fog | `878787 / 929292 / 929292` | 0 | `fog-lochness/on.png` |
 | Galway (33) | overcast | `989898 / aeaeae / bebebe` | 0 | `overcast-galway/on.png` |
 
 Every class has live CRAM equal to its descriptor base in the selected stock

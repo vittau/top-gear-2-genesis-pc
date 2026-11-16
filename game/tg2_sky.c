@@ -8,7 +8,7 @@ typedef struct { double L, a, b; } Lab;
 typedef struct { double top, kt, horizon, kh; const char *name; } Rule;
 static const Rule rules[] = {
     {-.07,.90,.10,.70,"night"}, {-.06,.90,.06,.70,"nightrain"},
-    {-.035,1,.025,1,"fog"}, {-.07,.90,.06,.60,"snow"},
+    {-.035,1,0,1,"fog"}, {-.07,.90,.06,.60,"snow"},
     {-.09,.85,.05,.70,"rain"}, {-.07,1,.05,.80,"overcast"},
     {-.10,1.25,.07,.60,"day"}
 };

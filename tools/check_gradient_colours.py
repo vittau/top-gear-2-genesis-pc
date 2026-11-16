@@ -51,6 +51,9 @@ def main():
         cells=[v.strip().strip('`') for v in line.strip('|').split('|')]
         if len(cells)==8 and cells[0].isdigit() and re.fullmatch(r'#[0-9a-fA-F]{6}',cells[5]):refs.append(cells)
     assert len(refs)==64
+    # Owner-approved fog seam correction: its horizon joins the original
+    # grey panorama; guard this separately from the document parser.
+    assert all(ref[7].lower()=='#929292' for ref in refs if ref[4]=='fog')
     checks=[]
     for line,ref in zip(result.stdout.splitlines(),refs,strict=True):
         i,cls,*stops=line.split()
