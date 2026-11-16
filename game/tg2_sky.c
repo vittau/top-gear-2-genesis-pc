@@ -39,7 +39,7 @@ static void lab_rgb(Lab c, double rgb[3]) {
     rgb[1]=-1.2684380046*l+2.6097574011*m-.3413193965*s;
     rgb[2]=-.0041960863*l-.7034186147*m+1.7076147010*s;
 }
-/* The approved reference uses a 1e-4 linear-sRGB numerical tolerance.
+/* Match the approved references with a 1e-4 linear-sRGB numerical tolerance.
  * It matters near black: strict zero changes the night top by four codes. */
 static int in_gamut(const double rgb[3]) {
     return rgb[0]>=-1e-4 && rgb[1]>=-1e-4 && rgb[2]>=-1e-4 &&
@@ -91,6 +91,13 @@ void tg2_sky_begin_row(const GVDP *v,int line,int width) {
         }
     }
     if(!active || !race(v) || !(v->reg[1]&64))return;
+    /* A completed fade hides the whole picture. Do not lift its black with
+     * a positive horizon offset; intermediate palette states use the rule. */
+    if (!(v->cram[63]&0xEEE)) {
+        unsigned visible=0;
+        for (int i=0;i<64;++i) visible|=v->cram[i]&0xEEE;
+        if (!visible) return;
+    }
     tg2_sky_mask=masks[line];memset(tg2_sky_mask,0,width);
     valid[line]=1;live[line]=v->cram[63];atlas[line]=(line+v->vsram[1])&511;
 }
@@ -126,16 +133,20 @@ void tg2_sky_paint(uint32_t *pixels,int stride,int width,int scale,int first) {
     for(int half=0;half<(split?2:1);++half) {
         int lo=split?half*112:first,hi=split?(half+1)*112:208;
         int top=lo,bottom=lo,seen=0;
+        if(split && !half && tg2v_hide_overscan && tg2v_crop_top_rows==8) top=8;
         for(int y=lo;y<hi;++y) if(valid[y]) {
             if(atlas[y]==448) {seen=1;bottom=y;}
             else if(seen)break;
         }
+        /* The short split-screen camera can start inside the panorama:
+         * all remaining sky holes are already at/below the clipped horizon.
+         * Apply the horizon stop there rather than inventing extra sky. */
+        if(!seen || bottom<top) bottom=top;
         band_top[half]=top;band_bottom[half]=bottom;
-        if(!seen || bottom<=top)continue;
-        for(int y=lo;y<hi;++y) if(valid[y]) {
+        for(int y=lo;y<hi;++y) if(valid[y] && memchr(masks[y],1,(size_t)frame_width)) {
             for(int j=0;j<scale;++j) {
                 double position=y+(double)j/scale;
-                uint32_t c=ramp(live[y],(position-top)/(bottom-top));
+                uint32_t c=ramp(live[y],bottom>top?(position-top)/(bottom-top):1);
                 uint32_t *row=pixels+(size_t)(y*scale+j)*stride;
                 for(int x=0;x<width;++x) if(masks[y][x/scale]) {row[x]=c;++painted;}
             }
@@ -146,4 +157,17 @@ int tg2_sky_json(char *out,int size) {
     return snprintf(out,size,"\"sky_base\":%u,\"sky_live\":%u,\"sky_stops\":[%u,%u,%u],\"gradient_skies\":%d,\"sky_class\":\"%s\",\"sky_descriptor\":%u,\"sky_pixels\":%u,\"sky_bands\":[[%d,%d],[%d,%d]]",
         base_sky,live[band_top[0]],ramp(base_sky,0)&0xFFFFFF,ramp(base_sky,.6)&0xFFFFFF,ramp(base_sky,1)&0xFFFFFF,
         enabled,rules[kind].name,descriptor,painted,band_top[0],band_bottom[0],band_top[1],band_bottom[1]);
+}
+
+int tg2_sky_rows_json(char *out,int size) {
+    int n=snprintf(out,size,",\"sky_rows\":[");
+    for(int y=0;y<224 && n<size;++y) {
+        unsigned count=0;
+        if(enabled && active && valid[y])
+            for(int x=0;x<frame_width;++x) count+=masks[y][x]!=0;
+        n+=snprintf(out+n,size-n,"%s[%d,%u,%u]",y?",":"",
+            enabled && active && valid[y]?atlas[y]:-1,live[y],count);
+    }
+    if(n<size)n+=snprintf(out+n,size-n,"]");
+    return n;
 }

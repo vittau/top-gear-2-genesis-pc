@@ -12,3 +12,5 @@ int tg2_sky_source(unsigned index, int atlas_y, unsigned backdrop);
 void tg2_sky_paint(uint32_t *pixels, int stride, int width, int scale, int first);
 int tg2_sky_pixel(int line, int x);
 int tg2_sky_json(char *out, int size);
+
+int tg2_sky_rows_json(char *out, int size);

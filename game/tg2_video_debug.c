@@ -42,6 +42,8 @@ void tg2_video_command(int id, const char *json) {
                           tg2v_rows[i].ha, tg2v_rows[i].hb, tg2v_rows[i].va, tg2v_rows[i].vb, tg2v_rows[i].a, tg2v_rows[i].b);
         n += snprintf(out + n, sizeof out - n, "]");
     }
+    if (json && strstr(json, "\"rows\""))
+        n += tg2_sky_rows_json(out+n, sizeof out-n);
     if (json && strstr(json, "\"top\"")) {
         n += snprintf(out + n, sizeof out - n, ",\"top\":[");
         for (int row = 0; row < 8; ++row) {

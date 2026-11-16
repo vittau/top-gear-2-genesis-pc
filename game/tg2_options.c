@@ -71,6 +71,8 @@ static void apply_volumes(void)
 static void apply_musicvol(int value) { s_musicvol = value; apply_volumes(); }
 static void apply_sfxvol(int value)   { s_sfxvol = value;   apply_volumes(); }
 
+static const char *const s_sky_labels[] = { "OFF", "ON" };
+
 static const char *const s_hud_choices[] = { "centered", "edges" };
 static const char *const s_hud_labels[]  = { "Centered", "Edges" };
 
@@ -117,12 +119,12 @@ static const Tg2Option s_options[] = {
       1, &s_hide_overscan, TG2_OPT_BOOL, NULL, NULL, 0,
       tg2_video_set_hide_overscan },
     { 6, "Mods", "skies", "mods.skies", "enabled",
-      "Gradient skies", "Gradient skies", "Presentation",
+      "SKY GRADIENTS", "SKY GRADIENTS", "Presentation",
       "Add a soft vertical sky gradient using each track's own sky colour, "
       "weather and time of day. Follows hills and palette effects. "
       "Changes take effect immediately. Off keeps the original flat skies.",
-      "Enabled", "Disabled",
-      0, &s_gradient_skies, TG2_OPT_BOOL, NULL, NULL, 0,
+      "ON", "OFF",
+      0, &s_gradient_skies, TG2_OPT_BOOL, NULL, s_sky_labels, 2,
       tg2_video_set_gradient_skies },
     { 5, "Sound", "racesound", "mods.racesound", "mode",
       "RACE SOUND", "RACE SOUND", "Sound",
@@ -373,7 +375,7 @@ const struct RecompRuntimeUiItem *tg2_options_runtime_items(size_t *count)
             item->label = o->name;
             item->description = o->description;
             item->type = o->kind == TG2_OPT_INT ? RECOMP_RUNTIME_UI_INT :
-                         o->kind == TG2_OPT_CHOICE ? RECOMP_RUNTIME_UI_CHOICE : RECOMP_RUNTIME_UI_BOOL;
+                         (o->kind == TG2_OPT_CHOICE || o->labels) ? RECOMP_RUNTIME_UI_CHOICE : RECOMP_RUNTIME_UI_BOOL;
             item->minimum = o->kind == TG2_OPT_INT ? o->min_value : 0;
             item->maximum = o->kind == TG2_OPT_INT ? o->max_value :
                               o->kind == TG2_OPT_CHOICE ? o->choice_count - 1 : 1;

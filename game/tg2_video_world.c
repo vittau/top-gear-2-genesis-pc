@@ -189,7 +189,13 @@ void tg2v_hud_row(const GVDP *v, int line, int ha, int hb, int va, int vb,
                      ap && (a & 0x8000) ? ap : bp && (b & 0x8000) ? bp :
                      sp ? sp : ap ? ap : bp ? bp : v->reg[7] & 63;
         out[origin + x] = pal[c];
-        if (tg2_sky_mask) tg2_sky_mask[origin+x] = !sp && !ap && tg2_sky_source(bp,(line+vb)&511,v->reg[7]&63);
+        if (tg2_sky_mask) {
+            int b_wins = sp && (spr_attr[x]&0x8000) ? 0 :
+                ap && (a&0x8000) ? 0 : bp && (b&0x8000) ? 1 :
+                sp || ap ? 0 : 1;
+            tg2_sky_mask[origin+x] = b_wins &&
+                tg2_sky_source(bp,(line+vb)&511,v->reg[7]&63);
+        }
         if (tg2v_actor_front) tg2v_actor_front[origin+x] = sp ? spr_front[x] : 0;
         if (tg2v_actor_occluder) tg2v_actor_occluder[origin+x] = (ap && (a&0x8000)) || (bp && (b&0x8000));
         if (tg2v_filter_foreground)

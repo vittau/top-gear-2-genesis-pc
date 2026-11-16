@@ -15,6 +15,7 @@ HARNESS=r'''
 #include "tg2_sky.c"
 uint8_t g_rom[0x400000],g_ram[65536];
 const GVDPRasterRow *tg2v_filter_layers;
+int tg2v_crop_top_rows,tg2v_hide_overscan;
 int tg2v_window_at(const GVDP *v,int y,int x) {(void)v;(void)y;(void)x;return 0;}
 int main(int argc,char **argv) {
     if(argc!=2)return 2;
