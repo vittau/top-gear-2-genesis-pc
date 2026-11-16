@@ -418,7 +418,7 @@ implementation task:
 
 | Layer | Source | Per-line inputs | Notes |
 |---|---|---|---|
-| Sky | plane B atlas row 448 (a flat colour band) or the backdrop `reg[7]&63` | VSRAM[1] pinned so the row repeats (measured: 86 identical rows at frame 8347) | optional Gradient skies replaces only winning sky texels with an output-resolution OKLab ramp; [task 42](tasks/42-gradient-skies.md) |
+| Sky | plane B atlas row 448 (a flat colour band) or the backdrop `reg[7]&63` | VSRAM[1] pinned so the row repeats (measured: 86 identical rows at frame 8347) | optional SKY GRADIENTS replaces only winning sky texels with an output-resolution OKLab ramp; [task 42](tasks/42-gradient-skies.md) |
 | Skyline / panorama | plane B rows 448–511 | H-scroll and VSRAM per line, authored wrap | widescreen keeps the wrap |
 | Ground / hills | plane B rows 432–447 | per-line H/V scroll; half-transparent grass halves | margin rules must not wrap into the transparent half |
 | Road | plane B rows 0–431 | VSRAM[1] (atlas row), H-scroll (centre), palette bank | §1–2 |
@@ -432,7 +432,7 @@ implementation task:
 ### 4.2 What each needs at N×
 
 - **Sky**: N× is trivial if it is a flat colour (fill at output resolution).
-  Gradient skies draws its optional ramp at output resolution after native
+  SKY GRADIENTS draws its optional ramp at output resolution after native
   expansion, before native-art filtering and promoted actors. Each sub-row
   samples the ramp directly; it never expands an already quantised 1× ramp.
 - **Skyline/panorama/ground**: per-line scroll gives an exact horizontal

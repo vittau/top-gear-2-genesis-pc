@@ -134,9 +134,12 @@ void tg2_sky_paint(uint32_t *pixels,int stride,int width,int scale,int first) {
         int lo=split?half*112:first,hi=split?(half+1)*112:208;
         int top=lo,bottom=lo,seen=0;
         if(split && !half && tg2v_hide_overscan && tg2v_crop_top_rows==8) top=8;
-        for(int y=lo;y<hi;++y) if(valid[y]) {
+        /* Only the leading sky run belongs to this camera. A later 448
+         * at the split boundary can be the next camera's raster setup. */
+        int scan=lo<CROP_TOP?CROP_TOP:lo;
+        for(int y=scan;y<hi;++y) if(valid[y]) {
             if(atlas[y]==448) {seen=1;bottom=y;}
-            else if(seen)break;
+            else break;
         }
         /* The short split-screen camera can start inside the panorama:
          * all remaining sky holes are already at/below the clipped horizon.

@@ -800,9 +800,9 @@ the overscan-cropped 200-line race and viewport size changes. Nearest output
 is unchanged and a fresh configuration defaults to filtering Off. See
 [Metal edge captures and default-preference validation](LINEAR_FILTER.md).
 
-## Gradient skies
+## SKY GRADIENTS
 
-The optional **Gradient skies** mod (launcher Presentation and in-game Mods)
+The optional **SKY GRADIENTS** mod (launcher Presentation and in-game Mods)
 is Off by default, persists in `[mods.skies] enabled`, and toggles live.
 It uses the presented row's live palette-3 entry 15 and each race's base
 colour/weather class. The ramp spans the current pinned sky band, follows

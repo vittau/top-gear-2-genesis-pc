@@ -211,6 +211,11 @@ game's copyrighted art, so it is a riskier thing to host than code. Make it an o
 
 ### Gradient skies
 
+**Implemented and locally qualified:** [task 42](tasks/42-gradient-skies.md).
+The MODS option is **SKY GRADIENTS**, **ON / OFF**, default **OFF** in both
+launcher and in-game settings. Owner visual acceptance is pending; captures
+and the validation report are linked from the task document.
+
 *Owner request, 2026-11-06.*
 
 Race skies
