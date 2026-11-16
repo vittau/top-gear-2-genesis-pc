@@ -59,7 +59,7 @@ The other groups have no set order.
 | Visual | [High-resolution rendering](#high-resolution-rendering) | Races above 224 lines: road re-rasterised from the game's per-line state, most detailed sprite LOD, clean background, sharp HUD. **Priority 2.** | [29](tasks/29-highres-design.md) |
 | Visual | [NTSC filter and scanlines](#ntsc-filter-and-scanlines) | Blargg composite filter (`md_ntsc`) and *Animal Well*-style scanlines, with presets. **Paused (owner, 2026-11-09).** | [28](tasks/28-ntsc-scanlines.md) |
 | Visual | [HD menus, fonts and HUD pack](#hd-menus-fonts-and-hud-pack) | Optional replacement pack of faithful HD redraws, keyed by the original tiles. | |
-| Visual | [Gradient skies](#gradient-skies) | SNES-like vertical sky gradients derived from each track's own sky colour, weather and time of day. | |
+| Visual | [Gradient skies](#gradient-skies) | SNES-like vertical sky gradients derived from each track's own sky colour, weather and time of day. **On `main` (MODS → SKY GRADIENTS, default OFF); owner playtest pending.** | [42](tasks/42-gradient-skies.md) |
 | Visual | [Widescreen on the other screens](#widescreen-on-the-other-screens) | Track intro, menus, shop and results extended to widescreen. Deferred by the owner to the final phase. | [17](tasks/17-widescreen-menu-screens.md) |
 | Visual | [Arbitrary car colours](#arbitrary-car-colours) | HSL picker replacing the game's car-colour page, not limited to the Genesis palette. | |
 | Gameplay | [Analog control](#analog-control) | Proportional steering injected into the game's steering routine; triggers only if partial throttle makes sense. | |
